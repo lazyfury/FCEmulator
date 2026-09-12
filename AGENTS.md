@@ -361,14 +361,22 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 - `frontend/` Swift + Metal + CoreAudio 前端，含可验证的无头模式
 - 11 个教学 demo；15 个测试文件
 
-未完成：
+已知边界（都不阻塞使用）：
 
 ```
-PPU (its registers answer open bus today, which is where the ROM blocks)
-APU / Controllers
-Mappers 1, 2, 3, 4...
-Frontend (Swift + Metal)
-Bus-level cycle accuracy (RMW dummy write, mid-instruction interrupt sampling)
+未定位：某些帧的地面带出现屏幕固定的"空洞"
+        已验证不是盗版 ROM 的问题：标准 No-Intro 镜像 (Japan, USA)
+        与之前的镜像 CHR 逐字节相同、行为相同。渲染器在全屏含滚动下
+        验证正确，游戏也从不在危险窗口写 VRAM，输出是确定性的，
+        $2007 在可见期间零访问，sprite 0 hit 每帧在第 30 行触发。
+        需要 F12 截图来判断是 Core 还是 Metal。
+
+Mappers 1, 2, 3, 4...           只有 Mapper 0 (NROM)
+Bus-level cycle accuracy        RMW 伪写、中断采样时机、$2004 渲染期行为
+PPU sprite overflow bug         真机的那个著名 bug 没有复现
+非精确音频混音                   用标准公式近似，真机是非线性的
+无锁音频队列                    frontend 里用的 NSLock，实时性违规
+存档 / 读档 / 录像回放          Core 还没有 serialize
 ```
 
 ---
