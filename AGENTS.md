@@ -336,33 +336,32 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 
 # 7. Current Implementation Status
 
-当前：**Phase 0.4 完成**
+当前：**Phase 1 完成**
 
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架（115 个单元测试全通过）
-- `docs/computer-science/` 基础文档（binary / hexadecimal / twos-complement / bitwise / overflow-flag / cpu / assembly / addressing-modes）
+- GoogleTest 测试框架（154 个单元测试全通过）
+- `docs/computer-science/` 十章（binary / hexadecimal / twos-complement / bitwise / overflow-flag / cpu / assembly / addressing-modes / instruction-set / timing）
 - `src/core/types.hpp` 定宽整数类型
 - `src/core/bit.{hpp,cpp}` 位运算工具库
 - `src/core/alu.hpp` 加法器与 C/V/Z/N 标志
 - `src/core/bus.hpp` / `flat_bus.hpp` 总线抽象
 - `src/core/cpu/registers.hpp` A/X/Y/SP/P/PC 与 flag 读写
-- `src/core/cpu/opcode.{hpp,cpp}` 完整 256 项表 + Operation 枚举（151 合法、56 助记符）
+- `src/core/cpu/opcode.{hpp,cpp}` 256 项 opcode 表 + 256 项周期表
 - `src/core/cpu/disassembler.{hpp,cpp}` 字节流 <-> 汇编
 - `src/core/cpu/addressing.{hpp,cpp}` 有效地址计算（13 种模式）
-- `src/core/cpu/cpu.{hpp,cpp}` 表驱动派发；**42 个操作 / 101 个 opcode 已实现**
-- 5 个教学 demo；5 个测试文件
+- `src/core/cpu/cpu.{hpp,cpp}` **全部 56 个操作 / 151 个 opcode**、NMI/IRQ/BRK/RTI
+- 6 个教学 demo；8 个测试文件
 
 未完成：
 
 ```
-ADC SBC AND ORA EOR BIT
-PHA PHP PLA PLP
-JSR RTS RTI BRK
-per-opcode cycle table / interrupts / cycle accuracy
-NES Bus memory map / Cartridge / PPU / APU / Controller
-Frontend
+NES bus address decoding / RAM mirroring / PPU & APU register windows
+Cartridge / iNES / Mappers
+PPU / APU / Controller
+Frontend (Swift + Metal)
+RMW dummy write, bus-level cycle accuracy
 ```
 
 ---
@@ -372,22 +371,30 @@ Frontend
 下一步必须执行：
 
 ```
-Phase 1 — 完整 6502 指令集与周期精确
+Phase 2 — NES Bus（内存映射与地址译码）
 ```
+
+背景：现在 CPU 接的是一个平铺的 64KB `FlatBus`（`src/core/flat_bus.hpp`）。
+真正的 NES 总线要把 16 位地址译码成不同的设备。
 
 任务：
 
-1. 实现 ALU 类操作：`ADC` `SBC` `AND` `ORA` `EOR` `BIT`
-   - `ADC`/`SBC` 必须同时正确设置 C 和 V（见 `docs/computer-science/overflow-flag.md`）
-   - `BIT` 把操作数的 bit 6 复制到 V
-2. 实现栈操作：`PHA` `PHP` `PLA` `PLP`
-3. 实现子程序与中断：`JSR` `RTS` `RTI` `BRK`
-4. 把 `cycle_cost()` 换成真正的**每 opcode 周期表**（256 项）
-5. 实现三个中断向量（NMI / RESET / IRQ）与 I 屏蔽位
-6. 写 `docs/computer-science/instruction-set.md` 与 `timing.md`
-7. 用已知测试 ROM 或手写的小程序做集成验证
+1. 讲解 address bus / data bus / address decoding / memory mirroring
+2. 创建 `docs/nes/memory-map.md` 与 `docs/architecture/bus.md`
+3. 实现 `src/core/nes/bus.hpp`：内存映射
+   ```
+   $0000-$07FF  2KB RAM
+   $0800-$1FFF  RAM 镜像（每 2KB 重复 4 次）
+   $2000-$3FFF  PPU 寄存器（每 8 字节重复）
+   $4000-$4017  APU / IO
+   $4018-$401F  禁用
+   $4020-$FFFF  卡带（Phase 3）
+   ```
+4. 写 `Ram` 类与镜像测试（穷举 $0000-$1FFF 的镜像关系）
+5. 用真正的 NES Bus 替换 `FlatBus` 跑现有的 CPU 测试
+6. 接入 OAM DMA（$4014）—— 这是最简单的一个真实硬件交互
 
-完成标志：`2 + 2 = 4` 通过 `ADC` 算出来，且进位/溢出标志全部正确。
+**完成标志：写 `$0800` 与写 `$0000` 效果相同，且可以用穷举测试证明。**
 
 ---
 

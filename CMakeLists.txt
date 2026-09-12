@@ -62,6 +62,9 @@ target_link_libraries(demo_disasm PRIVATE fc_core)
 add_executable(demo_addressing tools/demo_addressing.cpp)
 target_link_libraries(demo_addressing PRIVATE fc_core)
 
+add_executable(demo_instructions tools/demo_instructions.cpp)
+target_link_libraries(demo_instructions PRIVATE fc_core)
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------

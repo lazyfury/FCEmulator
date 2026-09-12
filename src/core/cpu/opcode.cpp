@@ -122,11 +122,82 @@ constexpr OpcodeInfo kOpcodeTable[256] = {
 static_assert(sizeof(kOpcodeTable) / sizeof(kOpcodeTable[0]) == 256,
               "the opcode table must cover all 256 byte values");
 
+// ---------------------------------------------------------------------------
+// Cycle counts, from the NMOS 6502 datasheet.
+//
+// 16 rows of 16, in the same layout as the opcode matrix above, so the two
+// can be read side by side. These are the values every emulator is checked
+// against; they are data, not something to derive.
+//
+// Undefined opcodes are listed as 2 - the length we assume for them. Nothing
+// executes them, so the number never reaches the cycle counter (the CPU halts
+// on them first), but leaving it 0 would be misleading in a listing.
+// ---------------------------------------------------------------------------
+
+constexpr u8 kCycleTable[256] = {
+
+    // 0x0_   BRK  ORA  ---  ---  ---  ORA  ASL  ---  PHP  ORA  ASL  ---  ---  ORA  ASL  ---
+              7,   6,   2,   2,   2,   3,   5,   2,   3,   2,   2,   2,   2,   4,   6,   2,
+
+    // 0x1_   BPL  ORA  ---  ---  ---  ORA  ASL  ---  CLC  ORA  ---  ---  ---  ORA  ASL  ---
+              2,   5,   2,   2,   2,   4,   6,   2,   2,   4,   2,   2,   2,   4,   7,   2,
+
+    // 0x2_   JSR  AND  ---  ---  BIT  AND  ROL  ---  PLP  AND  ROL  ---  BIT  AND  ROL  ---
+              6,   6,   2,   2,   3,   3,   5,   2,   4,   2,   2,   2,   4,   4,   6,   2,
+
+    // 0x3_   BMI  AND  ---  ---  ---  AND  ROL  ---  SEC  AND  ---  ---  ---  AND  ROL  ---
+              2,   5,   2,   2,   2,   4,   6,   2,   2,   4,   2,   2,   2,   4,   7,   2,
+
+    // 0x4_   RTI  EOR  ---  ---  ---  EOR  LSR  ---  PHA  EOR  LSR  ---  JMP  EOR  LSR  ---
+              6,   6,   2,   2,   2,   3,   5,   2,   3,   2,   2,   2,   3,   4,   6,   2,
+
+    // 0x5_   BVC  EOR  ---  ---  ---  EOR  LSR  ---  CLI  EOR  ---  ---  ---  EOR  LSR  ---
+              2,   5,   2,   2,   2,   4,   6,   2,   2,   4,   2,   2,   2,   4,   7,   2,
+
+    // 0x6_   RTS  ADC  ---  ---  ---  ADC  ROR  ---  PLA  ADC  ROR  ---  JMP  ADC  ROR  ---
+              6,   6,   2,   2,   2,   3,   5,   2,   4,   2,   2,   2,   5,   4,   6,   2,
+
+    // 0x7_   BVS  ADC  ---  ---  ---  ADC  ROR  ---  SEI  ADC  ---  ---  ---  ADC  ROR  ---
+              2,   5,   2,   2,   2,   4,   6,   2,   2,   4,   2,   2,   2,   4,   7,   2,
+
+    // 0x8_   ---  STA  ---  ---  STY  STA  STX  ---  DEY  ---  TXA  ---  STY  STA  STX  ---
+              2,   6,   2,   2,   3,   3,   3,   2,   2,   2,   2,   2,   4,   4,   4,   2,
+
+    // 0x9_   BCC  STA  ---  ---  STY  STA  STX  ---  TYA  STA  TXS  ---  ---  STA  ---  ---
+              2,   6,   2,   2,   4,   4,   4,   2,   2,   5,   2,   2,   2,   5,   2,   2,
+
+    // 0xA_   LDY  LDA  LDX  ---  LDY  LDA  LDX  ---  TAY  LDA  TAX  ---  LDY  LDA  LDX  ---
+              2,   6,   2,   2,   3,   3,   3,   2,   2,   2,   2,   2,   4,   4,   4,   2,
+
+    // 0xB_   BCS  LDA  ---  ---  LDY  LDA  LDX  ---  CLV  LDA  TSX  ---  LDY  LDA  LDX  ---
+              2,   5,   2,   2,   4,   4,   4,   2,   2,   4,   2,   2,   4,   4,   4,   2,
+
+    // 0xC_   CPY  CMP  ---  ---  CPY  CMP  DEC  ---  INY  CMP  DEX  ---  CPY  CMP  DEC  ---
+              2,   6,   2,   2,   3,   3,   5,   2,   2,   2,   2,   2,   4,   4,   6,   2,
+
+    // 0xD_   BNE  CMP  ---  ---  ---  CMP  DEC  ---  CLD  CMP  ---  ---  ---  CMP  DEC  ---
+              2,   5,   2,   2,   2,   4,   6,   2,   2,   4,   2,   2,   2,   4,   7,   2,
+
+    // 0xE_   CPX  SBC  ---  ---  CPX  SBC  INC  ---  INX  SBC  NOP  ---  CPX  SBC  INC  ---
+              2,   6,   2,   2,   3,   3,   5,   2,   2,   2,   2,   2,   4,   4,   6,   2,
+
+    // 0xF_   BEQ  SBC  ---  ---  ---  SBC  INC  ---  SED  SBC  ---  ---  ---  SBC  INC  ---
+              2,   5,   2,   2,   2,   4,   6,   2,   2,   4,   2,   2,   2,   4,   7,   2,
+};
+
+static_assert(sizeof(kCycleTable) / sizeof(kCycleTable[0]) == 256,
+              "the cycle table must cover all 256 byte values");
+
 } // namespace
 
 const OpcodeInfo& opcode_info(u8 opcode) noexcept
 {
     return kOpcodeTable[opcode];
+}
+
+u8 opcode_cycles(u8 opcode) noexcept
+{
+    return kCycleTable[opcode];
 }
 
 } // namespace fc

@@ -23,13 +23,15 @@ docs/
 | [computer-science/cpu.md](computer-science/cpu.md) | ✅ |
 | [computer-science/assembly.md](computer-science/assembly.md) | ✅ |
 | [computer-science/addressing-modes.md](computer-science/addressing-modes.md) | ✅ |
+| [computer-science/instruction-set.md](computer-science/instruction-set.md) | ✅ |
+| [computer-science/timing.md](computer-science/timing.md) | ✅ |
 
 ## 待完成
 
 | 文档 | 阶段 |
 |------|------|
-| computer-science/instruction-set.md | Phase 1 |
-| computer-science/timing.md | Phase 1 |
+| architecture/overview.md | Phase 2 |
+| nes/memory-map.md | Phase 2 |
 | assembly/mnemonics.md | Phase 0.3 |
 | assembly/addressing-modes.md | Phase 0.4 |
 | nes/memory-map.md | Phase 2 |

@@ -269,11 +269,13 @@ TEST(Cpu, RunsAShortProgram)
     EXPECT_EQ(m.cpu.total_cycles(), 2u * 6);
 }
 
-TEST(Cpu, StopsAtAnUnimplementedOpcode)
+TEST(Cpu, StopsAtAnIllegalOpcode)
 {
+    // 0x02 is undefined on the official 6502: not "unimplemented by us",
+    // genuinely not an instruction. The CPU must stop rather than guess.
     Machine m;
     m.load({ 0xA9, 0x01,   // LDA #$01
-             0x00,         // BRK - not implemented in Phase 0.2
+             0x02,         // illegal
              0xA9, 0x02 }); // would never run
 
     m.cpu.step();
@@ -281,7 +283,7 @@ TEST(Cpu, StopsAtAnUnimplementedOpcode)
 
     m.cpu.step();
     EXPECT_TRUE(m.cpu.is_halted());
-    EXPECT_EQ(m.cpu.unimplemented_opcode(), 0x00);
+    EXPECT_EQ(m.cpu.unimplemented_opcode(), 0x02);
 
     // Running further does nothing: an emulator bug must not go unnoticed.
     const int extra = m.cpu.run(10);
@@ -321,44 +323,42 @@ TEST(Cpu, ImplementsAgreesWithExecution)
     }
 }
 
-TEST(Cpu, ImplementsThePhaseZeroPointFourSet)
+TEST(Cpu, ImplementsEveryLegalOpcodeAfterPhaseOne)
 {
-    // Phase 0.4 implements 42 operations. Because one handler covers every
-    // addressing mode an operation supports, that is 101 opcodes:
-    //
-    //   loads / stores   31   (LDA 8, LDX 5, LDY 5, STA 7, STX 3, STY 3)
-    //   implied          18   (6 transfers, 4 inc/dec, 7 flags, NOP)
-    //   compares         14   (CMP 8, CPX 3, CPY 3)
-    //   inc/dec memory    8   (INC 4, DEC 4)
-    //   shifts/rotates   20   (ASL/LSR/ROL/ROR, 5 modes each)
-    //   JMP               2   (absolute, indirect)
-    //   branches          8
-    //   ---------------------
-    //                   101
-    int count = 0;
+    // Phase 1 completes the instruction set: all 151 defined opcodes execute,
+    // and the only ones that halt are the 105 undefined ones.
+    int legal = 0;
+    int illegal = 0;
     for (int i = 0; i < 256; ++i) {
         if (Cpu::implements(static_cast<u8>(i))) {
-            ++count;
+            ++legal;
+        } else {
+            ++illegal;
         }
     }
-    EXPECT_EQ(count, 101);
 
-    // Spot checks across every addressing mode.
-    EXPECT_TRUE(Cpu::implements(0xA9));   // LDA #imm
-    EXPECT_TRUE(Cpu::implements(0xBD));   // LDA $8000,X
-    EXPECT_TRUE(Cpu::implements(0xB1));   // LDA ($42),Y
-    EXPECT_TRUE(Cpu::implements(0x9D));   // STA $8000,X
-    EXPECT_TRUE(Cpu::implements(0x6C));   // JMP ($8000)
-    EXPECT_TRUE(Cpu::implements(0xD0));   // BNE
-    EXPECT_TRUE(Cpu::implements(0x0A));   // ASL A
+    EXPECT_EQ(legal, 151);
+    EXPECT_EQ(legal + illegal, 256);
 
-    // Still Phase 1.
-    EXPECT_FALSE(Cpu::implements(0x69));  // ADC #imm
-    EXPECT_FALSE(Cpu::implements(0xE9));  // SBC #imm
-    EXPECT_FALSE(Cpu::implements(0x20));  // JSR
-    EXPECT_FALSE(Cpu::implements(0x48));  // PHA
-    EXPECT_FALSE(Cpu::implements(0x00));  // BRK
-    EXPECT_FALSE(Cpu::implements(0x02));  // illegal
+    // The operations that were still missing in Phase 0.4.
+    EXPECT_TRUE(Cpu::implements(0x69));  // ADC #imm
+    EXPECT_TRUE(Cpu::implements(0xE9));  // SBC #imm
+    EXPECT_TRUE(Cpu::implements(0x29));  // AND #imm
+    EXPECT_TRUE(Cpu::implements(0x09));  // ORA #imm
+    EXPECT_TRUE(Cpu::implements(0x49));  // EOR #imm
+    EXPECT_TRUE(Cpu::implements(0x24));  // BIT zp
+    EXPECT_TRUE(Cpu::implements(0x48));  // PHA
+    EXPECT_TRUE(Cpu::implements(0x08));  // PHP
+    EXPECT_TRUE(Cpu::implements(0x68));  // PLA
+    EXPECT_TRUE(Cpu::implements(0x28));  // PLP
+    EXPECT_TRUE(Cpu::implements(0x20));  // JSR
+    EXPECT_TRUE(Cpu::implements(0x60));  // RTS
+    EXPECT_TRUE(Cpu::implements(0x40));  // RTI
+    EXPECT_TRUE(Cpu::implements(0x00));  // BRK
+
+    // Genuinely undefined.
+    EXPECT_FALSE(Cpu::implements(0x02));
+    EXPECT_FALSE(Cpu::implements(0xFF));
 }
 
 // ===========================================================================
@@ -430,4 +430,38 @@ TEST(Cpu, StackPointerCyclesThroughEveryValueAndNeverLeavesPageOne)
 
     // 256 pushes is a whole cycle: SP comes back to where it started.
     EXPECT_EQ(m.cpu.registers().sp, 0xFD);
+}
+
+// ===========================================================================
+// Compare: the C flag is "no borrow"
+// ===========================================================================
+
+TEST(Cpu, CompareSetsCarryWhenRegisterIsGreaterOrEqual)
+{
+    // CMP  is  A - M  with the result thrown away.
+    //   C = 1  when A >= M   (no borrow)
+    //   Z = 1  when A == M
+    // Programs then use BCS/BCC to branch on it.
+    struct Case { u8 a; u8 m; bool expect_carry; bool expect_zero; };
+    const Case cases[] = {
+        { 0x05, 0x03, true,  false },   // 5 > 3
+        { 0x05, 0x05, true,  true  },   // 5 == 5
+        { 0x03, 0x05, false, false },   // 3 < 5  -> borrow
+        { 0x00, 0x00, true,  true  },
+        { 0xFF, 0x00, true,  false },
+        { 0x00, 0xFF, false, false },   // 0 - 255 borrows
+    };
+
+    for (const auto& c : cases) {
+        Machine m;
+        m.load({ 0xC9, c.m });        // CMP #imm
+        m.cpu.registers().a = c.a;
+        m.cpu.step();
+
+        const auto& r = m.cpu.registers();
+        EXPECT_EQ(r.flag(Flag::Carry), c.expect_carry)
+            << "A=" << static_cast<int>(c.a) << " M=" << static_cast<int>(c.m);
+        EXPECT_EQ(r.flag(Flag::Zero), c.expect_zero)
+            << "A=" << static_cast<int>(c.a) << " M=" << static_cast<int>(c.m);
+    }
 }

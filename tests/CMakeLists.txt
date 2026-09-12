@@ -26,6 +26,8 @@ add_executable(fc_tests
     test_cpu.cpp
     test_disassembler.cpp
     test_addressing.cpp
+    test_instruction_set.cpp
+    test_cycles.cpp
 )
 
 target_link_libraries(fc_tests PRIVATE

@@ -56,12 +56,8 @@ public:
     [[nodiscard]] const Registers& registers() const noexcept { return reg_; }
     [[nodiscard]] Registers& registers() noexcept { return reg_; }
 
-    /// Cycles accumulated so far.
-    ///
-    /// Phase 0.4 only approximates timing: the cost is derived from the
-    /// addressing mode plus a few operation adjustments, which is right for
-    /// most instructions but not all. Phase 1 replaces this with the real
-    /// per-opcode cycle table.
+    /// Cycles accumulated so far. Cycle accurate since Phase 1: the datasheet
+    /// table plus page-crossing and taken-branch penalties.
     [[nodiscard]] u64 total_cycles() const noexcept { return cycles_; }
 
     [[nodiscard]] u16 current_instruction_pc() const noexcept { return instruction_pc_; }
@@ -76,13 +72,41 @@ public:
     [[nodiscard]] u8 unimplemented_opcode() const noexcept { return unimplemented_opcode_; }
 
     /// True when this opcode is legal AND its operation is implemented.
+    ///
+    /// After Phase 1 every legal operation is implemented, so this is now
+    /// just "is the opcode defined at all".
     [[nodiscard]] static bool implements(u8 opcode) noexcept;
 
     /// True when the execute() switch knows this operation.
-    ///
-    /// This is an exhaustive switch with no `default:`, so adding a new
-    /// Operation to the enum is a compile error until it is classified here.
     [[nodiscard]] static bool handles(Operation op) noexcept;
+
+    // -- interrupts ----------------------------------------------------------
+    //
+    // The 6502 has three interrupt vectors:
+    //
+    //   $FFFA  NMI   non maskable, edge triggered by the PPU once per frame
+    //   $FFFC  RESET power on
+    //   $FFFE  IRQ   maskable by the I flag; BRK shares it
+    //
+    // The NES has no external IRQ source wired up, so IRQ is mostly a
+    // debugging feature - but BRK uses the same vector and does matter.
+
+    /// Latch an NMI. It will be serviced before the next instruction.
+    void request_nmi() noexcept { nmi_pending_ = true; }
+    [[nodiscard]] bool nmi_pending() const noexcept { return nmi_pending_; }
+
+    /// The IRQ line is level triggered: hold it high and it fires every time
+    /// I is clear.
+    void set_irq_line(bool asserted) noexcept { irq_line_ = asserted; }
+    [[nodiscard]] bool irq_line() const noexcept { return irq_line_; }
+
+    /// True when an interrupt is waiting and would be taken right now.
+    [[nodiscard]] bool interrupt_pending() const noexcept;
+
+    /// Force the CPU to service an interrupt immediately, for tests and for
+    /// the debugger.
+    void service_interrupt(bool is_break) noexcept;   // the $FFFE vector
+    void service_nmi() noexcept;                      // the $FFFA vector
 
     // -- stack ---------------------------------------------------------------
     //
@@ -91,6 +115,19 @@ public:
 
     void push(u8 value) noexcept;
     [[nodiscard]] u8 pop() noexcept;
+
+    void push_word(u16 value) noexcept;   // high byte first, as the 6502 does
+    [[nodiscard]] u16 pull_word() noexcept;
+
+    /// The byte that PHP / BRK / IRQ actually push.
+    ///
+    /// Bit 5 always reads as 1. Bit 4 is not a real flag - it only exists in
+    /// the pushed copy, and is set for PHP and BRK but clear for a hardware
+    /// interrupt, so software can tell them apart.
+    [[nodiscard]] u8 status_for_push(bool break_flag) const noexcept;
+
+    /// Load P from a value that came off the stack.
+    void restore_status(u8 value) noexcept;
 
 private:
     // -- bus helpers ---------------------------------------------------------
@@ -112,8 +149,12 @@ private:
     void execute(const OpcodeInfo& info, const Operand& operand) noexcept;
     void halt(u8 opcode) noexcept;
 
-    /// Approximate cycle cost. See the comment on total_cycles().
-    [[nodiscard]] int cycle_cost(const OpcodeInfo& info, const Operand& operand) const noexcept;
+    /// Datasheet cycle count plus the data dependent penalties.
+    [[nodiscard]] int cycle_cost(u8 opcode, const Operand& operand) const noexcept;
+
+    /// The common part of NMI / IRQ / BRK: push the return address and the
+    /// status, set I, and jump through `vector`.
+    void enter_interrupt(u16 vector, bool is_break) noexcept;
 
     // -- small operation helpers --------------------------------------------
     void compare(u8 left, u8 right) noexcept;
@@ -127,6 +168,9 @@ private:
     u8  last_opcode_ = 0;
 
     int branch_extra_cycles_ = 0;
+
+    bool nmi_pending_ = false;
+    bool irq_line_ = false;
 
     bool halted_ = false;
     u8   unimplemented_opcode_ = 0;

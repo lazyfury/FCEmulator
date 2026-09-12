@@ -299,6 +299,26 @@ inline constexpr int kOperationCount = 56;
 [[nodiscard]] const OpcodeInfo& opcode_info(u8 opcode) noexcept;
 
 // ---------------------------------------------------------------------------
+// Timing
+//
+// The 6502 datasheet gives a fixed cycle count per opcode. That count already
+// includes everything the instruction always pays: the opcode fetch, the
+// operand fetches, the memory access, and the read-modify-write write-back.
+//
+// Two things are NOT included, because they depend on the data:
+//
+//   1. Page crossing. An indexed READ that carries into a new page takes one
+//      extra cycle, because the address has to be fixed up.
+//   2. A branch that is taken takes one extra cycle, and one more if the jump
+//      crosses a page.
+//
+// Everything else is a constant, and that constant is this table.
+// ---------------------------------------------------------------------------
+
+/// Base cycle count for one opcode, from the datasheet.
+[[nodiscard]] u8 opcode_cycles(u8 opcode) noexcept;
+
+// ---------------------------------------------------------------------------
 // Behavioural classes of operations, used by the CPU and by cycle accounting.
 // ---------------------------------------------------------------------------
 
@@ -340,6 +360,21 @@ inline constexpr int kOperationCount = 56;
     default:
         return false;
     }
+}
+
+/// True when this (operation, mode) pair pays the extra page-crossing cycle.
+///
+/// Only the three indexed modes can cross a page at all, and only for READS.
+/// Writes and read-modify-writes pay a fixed, higher price instead, which the
+/// datasheet cycle count already includes.
+[[nodiscard]] constexpr bool pays_page_penalty(Operation op, AddressingMode mode) noexcept
+{
+    if (mode != AddressingMode::AbsoluteX &&
+        mode != AddressingMode::AbsoluteY &&
+        mode != AddressingMode::IndirectY) {
+        return false;
+    }
+    return !is_store_operation(op) && !is_read_modify_write(op);
 }
 
 } // namespace fc
