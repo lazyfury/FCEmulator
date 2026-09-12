@@ -1,0 +1,17 @@
+# Build output
+build/
+cmake-build-*/
+
+# macOS
+.DS_Store
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Apple / Xcode (future frontend)
+*.xcuserstate
+xcuserdata/
+DerivedData/
