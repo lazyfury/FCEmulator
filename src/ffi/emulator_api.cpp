@@ -3,9 +3,13 @@
 #include "core/nes/cartridge.hpp"
 #include "core/nes/machine.hpp"
 
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <new>
 #include <span>
 #include <string>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // The C API's implementation.
@@ -177,6 +181,117 @@ void fc_clear_samples(fc_machine* machine)
         return;
     }
     machine->machine.apu().clear_samples();
+}
+
+// ---------------------------------------------------------------------------
+// The lock free sample queue
+//
+// The two indices are the only shared state. The producer publishes its
+// writes with a release store to `write`; the consumer publishes the space it
+// has freed with a release store to `read`. Each side then loads the other's
+// index with acquire, so a sample is never read before it was written and
+// storage is never overwritten before the consumer is done with it. Nothing
+// here ever waits, which is the whole point: an audio callback that blocks on
+// a mutex is an audio callback that misses its deadline.
+// ---------------------------------------------------------------------------
+
+struct fc_audio_queue {
+    std::vector<float> data;
+
+    // Monotonic 64 bit positions. Wrapping is only a problem after about
+    // six million years of 44.1 kHz audio, so the arithmetic stays simple.
+    std::atomic<std::uint64_t> write{ 0 };
+    std::atomic<std::uint64_t> read{ 0 };
+    std::atomic<std::uint64_t> underruns{ 0 };
+};
+
+fc_audio_queue* fc_audio_queue_create(uint32_t capacity)
+{
+    if (capacity == 0) {
+        return nullptr;
+    }
+
+    auto* queue = new (std::nothrow) fc_audio_queue();
+    if (queue == nullptr) {
+        return nullptr;
+    }
+    queue->data.resize(capacity);
+    return queue;
+}
+
+void fc_audio_queue_destroy(fc_audio_queue* queue)
+{
+    delete queue;
+}
+
+uint32_t fc_audio_queue_push(fc_audio_queue* queue, const float* samples, uint32_t count)
+{
+    if (queue == nullptr || samples == nullptr || count == 0) {
+        return 0;
+    }
+
+    const std::uint64_t capacity = queue->data.size();
+    const std::uint64_t write = queue->write.load(std::memory_order_relaxed);
+    const std::uint64_t read = queue->read.load(std::memory_order_acquire);
+    const std::uint64_t space = capacity - (write - read);
+
+    const auto toWrite = static_cast<uint32_t>(std::min<std::uint64_t>(count, space));
+    for (uint32_t i = 0; i < toWrite; ++i) {
+        queue->data[(write + i) % capacity] = samples[i];
+    }
+
+    // Release: everything above is visible before the consumer sees the new
+    // write index.
+    queue->write.store(write + toWrite, std::memory_order_release);
+    return toWrite;
+}
+
+uint32_t fc_audio_queue_pop(fc_audio_queue* queue, float* out, uint32_t count)
+{
+    if (queue == nullptr || out == nullptr || count == 0) {
+        return 0;
+    }
+
+    const std::uint64_t capacity = queue->data.size();
+    const std::uint64_t read = queue->read.load(std::memory_order_relaxed);
+    const std::uint64_t write = queue->write.load(std::memory_order_acquire);
+    const std::uint64_t available = write - read;
+
+    const auto taken = static_cast<uint32_t>(std::min<std::uint64_t>(count, available));
+    for (uint32_t i = 0; i < taken; ++i) {
+        out[i] = queue->data[(read + i) % capacity];
+    }
+
+    // The callback asked for `count` samples, so the tail must be silence,
+    // never whatever happened to be in the buffer. An underrun is a short
+    // gap, not a burst of noise.
+    for (uint32_t i = taken; i < count; ++i) {
+        out[i] = 0.0f;
+    }
+    if (taken < count) {
+        queue->underruns.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    queue->read.store(read + taken, std::memory_order_release);
+    return taken;
+}
+
+uint32_t fc_audio_queue_fill(const fc_audio_queue* queue)
+{
+    if (queue == nullptr) {
+        return 0;
+    }
+    const std::uint64_t write = queue->write.load(std::memory_order_acquire);
+    const std::uint64_t read = queue->read.load(std::memory_order_acquire);
+    return static_cast<uint32_t>(write - read);
+}
+
+uint64_t fc_audio_queue_underruns(const fc_audio_queue* queue)
+{
+    if (queue == nullptr) {
+        return 0;
+    }
+    return queue->underruns.load(std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------

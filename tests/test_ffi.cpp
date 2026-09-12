@@ -419,3 +419,113 @@ TEST(CApi, DiagnosticsMoveAsTheMachineRuns)
     EXPECT_EQ(fc_cpu_pc(m.handle), 0x8000u);
     EXPECT_GT(fc_total_cycles(m.handle), 5u * 29000u) << "about 29780 cycles a frame";
 }
+
+// ===========================================================================
+// The lock free audio queue
+//
+// This is the only piece of the C API that is not about the NES: it exists so
+// the front end can move samples from the thread that runs the machine to the
+// real-time audio callback without a mutex. Its contract is small, but every
+// edge (underrun, overrun, wrapping) has to be exactly right or the speaker
+// makes noise that the emulator never produced.
+// ===========================================================================
+
+TEST(CApi, AudioQueueRoundTripsSamples)
+{
+    fc_audio_queue* queue = fc_audio_queue_create(16);
+    ASSERT_NE(queue, nullptr);
+
+    const float input[4] = { 0.1f, 0.2f, 0.3f, 0.4f };
+    EXPECT_EQ(fc_audio_queue_push(queue, input, 4), 4u);
+    EXPECT_EQ(fc_audio_queue_fill(queue), 4u);
+
+    float output[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    EXPECT_EQ(fc_audio_queue_pop(queue, output, 4), 4u);
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_FLOAT_EQ(output[i], input[i]);
+    }
+    EXPECT_EQ(fc_audio_queue_fill(queue), 0u);
+
+    fc_audio_queue_destroy(queue);
+}
+
+TEST(CApi, AudioQueueUnderrunIsSilenceNotStaleMemory)
+{
+    fc_audio_queue* queue = fc_audio_queue_create(16);
+    ASSERT_NE(queue, nullptr);
+
+    const float input[2] = { 0.5f, 0.5f };
+    (void)fc_audio_queue_push(queue, input, 2);
+
+    // Ask for more than there is. The callback demanded eight frames; it
+    // must get two real ones and six zeros, never whatever was in the buffer.
+    float output[8];
+    for (float& value : output) {
+        value = 99.0f;
+    }
+    EXPECT_EQ(fc_audio_queue_pop(queue, output, 8), 2u);
+    EXPECT_FLOAT_EQ(output[0], 0.5f);
+    EXPECT_FLOAT_EQ(output[1], 0.5f);
+    for (int i = 2; i < 8; ++i) {
+        EXPECT_FLOAT_EQ(output[i], 0.0f) << "index " << i;
+    }
+
+    EXPECT_EQ(fc_audio_queue_underruns(queue), 1u);
+    fc_audio_queue_destroy(queue);
+}
+
+TEST(CApi, AudioQueueOverrunDropsTheNewestSamples)
+{
+    fc_audio_queue* queue = fc_audio_queue_create(4);
+    ASSERT_NE(queue, nullptr);
+
+    const float input[6] = { 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f };
+    EXPECT_EQ(fc_audio_queue_push(queue, input, 6), 4u) << "only four fit";
+    EXPECT_EQ(fc_audio_queue_fill(queue), 4u);
+
+    float output[4] = {};
+    EXPECT_EQ(fc_audio_queue_pop(queue, output, 4), 4u);
+    EXPECT_FLOAT_EQ(output[0], 1.0f);
+    EXPECT_FLOAT_EQ(output[3], 4.0f) << "the queue kept the oldest four";
+
+    fc_audio_queue_destroy(queue);
+}
+
+TEST(CApi, AudioQueueSurvivesWrapping)
+{
+    fc_audio_queue* queue = fc_audio_queue_create(8);
+    ASSERT_NE(queue, nullptr);
+
+    // Fill, drain, and fill again so both indices pass the end of the ring.
+    for (int round = 0; round < 3; ++round) {
+        float input[8];
+        for (int i = 0; i < 8; ++i) {
+            input[i] = static_cast<float>(round * 10 + i);
+        }
+        EXPECT_EQ(fc_audio_queue_push(queue, input, 8), 8u);
+
+        float output[8] = {};
+        EXPECT_EQ(fc_audio_queue_pop(queue, output, 8), 8u);
+        for (int i = 0; i < 8; ++i) {
+            EXPECT_FLOAT_EQ(output[i], input[i]) << "round " << round << " index " << i;
+        }
+    }
+
+    fc_audio_queue_destroy(queue);
+}
+
+TEST(CApi, AudioQueueHandlesNullAndEmpty)
+{
+    EXPECT_EQ(fc_audio_queue_push(nullptr, nullptr, 4), 0u);
+    EXPECT_EQ(fc_audio_queue_pop(nullptr, nullptr, 4), 0u);
+    EXPECT_EQ(fc_audio_queue_fill(nullptr), 0u);
+    EXPECT_EQ(fc_audio_queue_underruns(nullptr), 0u);
+    EXPECT_EQ(fc_audio_queue_create(0), nullptr);
+
+    fc_audio_queue* queue = fc_audio_queue_create(4);
+    ASSERT_NE(queue, nullptr);
+    float sample = 0.0f;
+    EXPECT_EQ(fc_audio_queue_push(queue, &sample, 0), 0u);
+    EXPECT_EQ(fc_audio_queue_pop(queue, &sample, 0), 0u);
+    fc_audio_queue_destroy(queue);
+}

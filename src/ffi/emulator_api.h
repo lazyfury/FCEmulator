@@ -118,6 +118,43 @@ size_t fc_samples_pending(const fc_machine* machine);
 /* Drop everything queued. Useful after a pause. */
 void fc_clear_samples(fc_machine* machine);
 
+/* -- the lock free sample queue ------------------------------------------- */
+
+/* Moving samples from the thread that runs the machine to the real-time
+ * audio callback is the one place a front end must not use a mutex. The
+ * callback is not allowed to wait for anything, and the emulator thread can
+ * be busy for a whole frame; if they share a lock, the callback misses its
+ * deadline and the speaker crackles.
+ *
+ * This is a single producer / single consumer ring buffer built on
+ * release/acquire atomics. The producer fills and the consumer drains; only
+ * the indices are shared, and neither side ever blocks. If the producer
+ * overruns, the newest samples are dropped rather than corrupting the reads
+ * the consumer is in the middle of.
+ *
+ * Create it once at start up. Push from the emulator thread. Pop from the
+ * audio callback. It is not safe to have two producers or two consumers. */
+typedef struct fc_audio_queue fc_audio_queue;
+
+/* Capacity in samples. Returns NULL on allocation failure. */
+fc_audio_queue* fc_audio_queue_create(uint32_t capacity);
+void fc_audio_queue_destroy(fc_audio_queue* queue);
+
+/* Copy `count` samples in; returns how many fit. Producer only. */
+uint32_t fc_audio_queue_push(fc_audio_queue* queue, const float* samples, uint32_t count);
+
+/* Copy up to `count` samples out and zero-fill the rest of `out` so the
+ * callback never plays stale memory; returns how many were real. Consumer
+ * only. */
+uint32_t fc_audio_queue_pop(fc_audio_queue* queue, float* out, uint32_t count);
+
+/* Samples waiting right now. */
+uint32_t fc_audio_queue_fill(const fc_audio_queue* queue);
+
+/* How many times the consumer ran dry since the queue was created. A front
+ * end can show this; it is the first thing to look at when sound crackles. */
+uint64_t fc_audio_queue_underruns(const fc_audio_queue* queue);
+
 /* -- input ---------------------------------------------------------------- */
 
 /* `port` is 0 for controller 1, 1 for controller 2. */
@@ -127,6 +164,7 @@ void fc_set_button(fc_machine* machine, fc_button button, bool pressed, int port
 void fc_release_all_buttons(fc_machine* machine);
 
 /* -- diagnostics ---------------------------------------------------------- */
+
 
 /* Total CPU cycles since power on. */
 uint64_t fc_total_cycles(const fc_machine* machine);
