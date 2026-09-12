@@ -8,33 +8,38 @@
 
 ## 当前状态
 
-**Phase 3 完成** — Cartridge（iNES 与 Mapper 0）
+**Phase 4 完成** — PPU（画面渲染）
 
 - [x] CMake 4.4 + C++20 + Ninja
-- [x] GoogleTest 1.18 单元测试（205 个测试全通过，其中 12 个跑在真实 ROM 上）
+- [x] GoogleTest 1.18 单元测试（250 个测试全通过）
 - [x] `src/core/types.hpp` `bit.{hpp,cpp}` `alu.hpp`
 - [x] `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
 - [x] `src/core/cpu/` 全部 151 个 opcode、256 项周期表、反汇编器、寻址
 - [x] `src/core/nes/` 地址译码、2KB RAM 镜像、open bus、OAM DMA
 - [x] `src/core/nes/ines.{hpp,cpp}` **iNES 文件头解析**
 - [x] `src/core/nes/mapper.hpp` + `mapper0.hpp` **Mapper 0 (NROM)**
-- [x] `src/core/nes/cartridge.{hpp,cpp}` **真正的卡带：加载 .nes 文件**
-- [x] 8 个教学 demo；11 个测试文件
-- [x] `docs/` 十三章
+- [x] `src/core/nes/cartridge.{hpp,cpp}` 真正的卡带：加载 .nes 文件
+- [x] `src/core/nes/ppu.{hpp,cpp}` **PPU：渲染管线、精灵、滚动、sprite 0 hit**
+- [x] `src/core/nes/machine.{hpp,cpp}` **CPU/PPU 3:1 同步、NMI 传递**
+- [x] `src/core/nes/framebuffer.hpp` 256×240 输出
+- [x] 9 个教学 demo；12 个测试文件
+- [x] `docs/` 十四章
 
-**现在可以加载真实的 NES ROM 并执行它了：**
+**现在能运行真实的 NES ROM 并画出画面了：**
 
-```
-$8000  SEI             A=$00 X=$00 SP=$FD  ..-..I..
-$8001  CLD             A=$00 X=$00 SP=$FD  ..-..I..
-$8002  LDA #$10        A=$10 X=$00 SP=$FD  ..-..I..
-$8004  STA $2000       A=$10 X=$00 SP=$FD  ..-..I..
-$8007  LDX #$FF        A=$10 X=$FF SP=$FD  N.-..I..
-$8009  TXS             A=$10 X=$FF SP=$FF  N.-..I..
-$800A  LDA $2002       <- 停在这里，等 PPU
+```bash
+./build/demo_ppu "" 240
+sips -s format png frames/frame_240.ppm --out frame.png
 ```
 
-**下一步：** Phase 4 — PPU（让 `$2002` 真的有东西应答）
+```
+第 8-22 行   状态栏文字（MARIO / WORLD 1-1 / TIME）
+第 40-150 行 SUPER MARIO BROS. 大标题
+第 192-206 行 马里奥本人（精灵渲染正确）
+第 208-238 行 地面砖块
+```
+
+**下一步：** Phase 5 — Controller（按键输入）
 
 完整路线图见 [AGENTS.md](AGENTS.md)。
 
@@ -67,6 +72,7 @@ ctest --test-dir build --output-on-failure
 ./build/demo_instructions # 完整指令集、ADC、中断、周期
 ./build/demo_bus          # 地址译码、镜像、open bus、OAM DMA
 ./build/demo_cartridge    # iNES 文件头、Mapper 0、运行真实 ROM
+./build/demo_ppu          # 渲染真实游戏的画面 -> PPM
 ```
 
 用真实 ROM 跑测试（默认会查找 `tests/data/*.nes`）：
@@ -132,8 +138,9 @@ Phase 0.3 6502 汇编           [done]
 Phase 0.4 寻址模式            [done]
 Phase 1   完整 6502 + 周期精确  [done]
 Phase 2   NES Bus 内存映射      [done]
-Phase 3   Cartridge / Mapper   [done] <-- 你在这里
-Phase 4   PPU                  [next]
+Phase 3   Cartridge / Mapper   [done]
+Phase 4   PPU                  [done] <-- 你在这里
+Phase 5   Controller           [next]
 Phase 1   6502 CPU
 Phase 2   NES Bus
 Phase 3   Cartridge / Mapper

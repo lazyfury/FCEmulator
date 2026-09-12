@@ -27,13 +27,13 @@ docs/
 | [computer-science/timing.md](computer-science/timing.md) | ✅ |
 | [nes/memory-map.md](nes/memory-map.md) | ✅ |
 | [nes/ines-format.md](nes/ines-format.md) | ✅ |
+| [nes/ppu.md](nes/ppu.md) | ✅ |
 | [architecture/bus.md](architecture/bus.md) | ✅ |
 
 ## 待完成
 
 | 文档 | 阶段 |
 |------|------|
-| nes/ppu.md | Phase 4 |
 | nes/mappers.md | Phase 3 后续 |
 | assembly/mnemonics.md | Phase 0.3 |
 | assembly/addressing-modes.md | Phase 0.4 |

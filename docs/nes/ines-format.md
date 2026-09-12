@@ -153,42 +153,43 @@ $8000-$FFFF   PRG ROM           经由 mapper
 CHR ROM **不能从 CPU 访问**。它接在 PPU 自己的总线上——所以
 `read_chr`/`write_chr` 是独立于 `Device` 接口的函数，而不是 `read`/`write`。
 
-### 一个 tile 是 16 字节
+### 一个 tile 是 16 字节，而且位平面是**分离**的
+
+**这是读 pattern table 时最常见的错误：两个位平面不是交错的。**
 
 ```
-8x8 像素，每行 2 字节：
-
-    byte 0 = plane 0, row 0      byte 1 = plane 1, row 0
-    byte 2 = plane 0, row 1      byte 3 = plane 1, row 1
-    ...
-    byte 14 = plane 0, row 7     byte 15 = plane 1, row 7
+byte 0-7   = plane 0, row 0 .. row 7
+byte 8-15  = plane 1, row 0 .. row 7
 
 每个像素的颜色索引 = (plane1 的对应位 << 1) | plane0 的对应位
                    -> 0, 1, 2, 3 四种
 ```
 
-**这是"位平面"（bitplane）存储。** 8 个像素只需要 2 个字节，而不是 8 个——
-这是 1970 年代对 ROM 空间的节省。
+对着写：
 
 ```
-   plane1:  0 0 0 0 1 1 0 0
-   plane0:  0 1 0 1 0 1 0 0
-   --------------------------
-   索引:    0 1 0 1 2 3 0 0
+byte 0   plane 0, row 0      byte 8   plane 1, row 0
+byte 1   plane 0, row 1      byte 9   plane 1, row 1
+...                          ...
+byte 7   plane 0, row 7      byte 15  plane 1, row 7
 ```
+
+**如果是交错的（`byte 2y` / `byte 2y+1`），读出来的图形会完全错乱，
+但看起来又“像是”有图案，所以很难发现。** 这个项目一开始就犯了这个错，
+在 `demo_cartridge` 里画出了错误的 tile；PPU 实现反而是对的。
 
 ### 渲染出来（`demo_cartridge` 第 8 节）
 
 ```
   tile 0 ($0):
-      |    ooOO|
-      |   OOOOO|
-      |  o..O  |
-      | oO  OO |
-      |        |
-      |        |
-      |  oOOOOO|
-      | oOOOOOO|
+      |      ..|
+      |    ....|
+      |   .....|
+      |   .....|
+      |   OOOoo|
+      |  OooOoo|
+      |  OooOOo|
+      | OOooOOo|
 ```
 
 **注意这只显示形状。** 四种颜色由 PPU 的调色板决定，那是 Phase 4。

@@ -336,12 +336,12 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 
 # 7. Current Implementation Status
 
-当前：**Phase 3 完成**
+当前：**Phase 4 完成**
 
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架（205 个单元测试全通过，其中 12 个跑在真实 ROM 上）
+- GoogleTest 测试框架（250 个单元测试全通过）
 - `docs/` 十三篇（computer-science 十章 + nes 两篇 + architecture 一篇）
 - `src/core/bit.{hpp,cpp}` `types.hpp` `alu.hpp`
 - `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
@@ -352,8 +352,10 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 - `src/core/nes/ines.{hpp,cpp}` iNES 文件头解析
 - `src/core/nes/mapper.hpp` + `mapper0.hpp` Mapper 0 (NROM)
 - `src/core/nes/cartridge.{hpp,cpp}` 真正的卡带
+- `src/core/nes/ppu.{hpp,cpp}` PPU：8 个寄存器、VRAM、调色板、OAM、扫描线时序、背景/精灵渲染、sprite 0 hit
+- `src/core/nes/machine.{hpp,cpp}` CPU 与 PPU 的 3:1 同步与 NMI
 - `src/core/nes/ram_cartridge.hpp` 卡带槽占位（测试用）
-- 8 个教学 demo；11 个测试文件
+- 9 个教学 demo；12 个测试文件
 
 未完成：
 
@@ -372,37 +374,30 @@ Bus-level cycle accuracy (RMW dummy write, mid-instruction interrupt sampling)
 下一步必须执行：
 
 ```
-Phase 4 — PPU（让 $2002 真的有东西应答）
+Phase 5 — Controller（按键输入）
 ```
 
-背景：现在卡带和总线都完成了，但真实 ROM 会卡在 `$800A` 的 vblank 等待循环上，
-因为 `$2002` 没有设备应答，读回来的是 open bus，bit 7 永远为 0。
+背景：Phase 4 已经能渲染出正确画面。但游戏无法操作——`$4016`/`$4017`
+没有设备应答，读回来的是 open bus，所以按键永远是"没按"。
 
-### Step 1：让 ROM 动起来（先把边界推过去）
+任务：
 
-实现最小的 `src/core/nes/ppu.hpp`，作为 `Device` 接在 `$2000-$3FFF`：
+1. 讲解手柄的串行协议（strobe 锁存 + 逐位移出）
+2. 实现 `src/core/nes/controller.hpp`：
+   - `$4016` 写入：bit 0 是 strobe。写 1 锁存，写 0 开始移出
+   - `$4016`/`$4017` 读取：bit 0 是下一个按键位，其余位是 open bus
+   - 按键顺序固定：A, B, Select, Start, Up, Down, Left, Right
+   - `D` 键位在标准手柄上是空的（0）
+3. 把两个手柄接到 `NesBus` 的 `$4016`/`$4017`
+4. 写单元测试：strobe 行为、8 次读取的顺序、连续读取返回 1
+5. 写 `docs/nes/controllers.md`
+6. 在 `demo_ppu` 里加一个"模拟按键"的模式，让游戏真正开始
 
-1. 实现 8 个寄存器 `$2000-$2007` 的读写
-2. 实现 `PPUSTATUS ($2002)`：读返回状态寄存器的 bit 7（vblank），并清除它
-3. 实现 CPU/PPU 的 3:1 时钟比与扫描线计数器（262 条扫描线 × 341 周期）
-4. 实现 `PPUADDR ($2006)` / `PPUDATA ($2007)` 与 VRAM（2KB）+ 调色板（32B）
-5. 实现 OAM（256B）并接上 `OamTarget`
+**完成标志：能用程序模拟按下 Start 键，并观察到游戏从标题画面进入第一关。**
 
-**完成标志：真实 ROM 通过 vblank 等待，开始写 $2006/$2007 加载调色板。**
-
-### Step 2：渲染
-
-6. 实现背景的 tile 取指与 shift register
-7. 实现精灵（sprite）渲染、优先级、水平/垂直翻转
-8. 实现滚动（scroll）与 nametable 镜像
-9. 产出 256×240 的 framebuffer
-
-### Step 3：看它跑起来
-
-10. 用真实 ROM 跑若干帧，把 framebuffer 导出成 PPM/PNG
-11. 写 `docs/nes/ppu.md`
-
-完成标志：能用真实 ROM 渲染出正确的第一帧画面。
+> 注意：现在总线的 `$4000-$4017` 是整体转发给 `set_apu()` 的。
+> Phase 5 需要把 `$4016`/`$4017` 单独分出来给手柄，
+> 顺便把 `$4015`（APU 状态）也考虑进去。
 
 ---
 
@@ -410,24 +405,26 @@ Phase 4 — PPU（让 $2002 真的有东西应答）
 
 ## CPU
 
-- [ ] 完整 6502
-- [ ] cycle accurate
+- [x] 完整 6502（151/151 opcode）
+- [x] cycle accurate（指令级；总线级仍缺 RMW 伪写等）
 - [ ] test ROM 通过
 
 ## Memory
 
-- [ ] NES memory map
+- [x] NES memory map（含镜像与 open bus）
 
 ## Cartridge
 
-- [ ] iNES
-- [ ] Mapper
+- [x] iNES
+- [x] Mapper 0 (NROM)
+- [ ] Mapper 1/2/3/4
 
 ## Graphics
 
-- [ ] PPU
-- [ ] Sprite
-- [ ] Scrolling
+- [x] PPU（寄存器、VRAM、调色板、扫描线时序）
+- [x] Sprite（含 8x16、翻转、优先级）
+- [x] Scrolling（loopy v/t/x/w）
+- [x] 真实 ROM 渲染出正确画面
 
 ## Audio
 

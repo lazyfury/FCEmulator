@@ -333,17 +333,20 @@ void showGraphics(nes::Cartridge& cart)
         return;
     }
 
-    std::cout << "  CHR holds 8x8 tiles. Each tile is 16 bytes: two bit planes per\n";
-    std::cout << "  row, so eight rows of two bytes.\n\n";
-    std::cout << "      byte 0 = plane 0, row 0      byte 1 = plane 1, row 0\n";
+    std::cout << "  CHR holds 8x8 tiles, 16 bytes each: the first eight bytes are the\n";
+    std::cout << "  LOW bit plane for rows 0-7, the second eight are the HIGH plane.\n";
+    std::cout << "  The planes are NOT interleaved - that is the most common mistake\n";
+    std::cout << "  when reading a pattern table for the first time.\n\n";
+    std::cout << "      byte 0-7  = plane 0, rows 0-7\n";
+    std::cout << "      byte 8-15 = plane 1, rows 0-7\n";
     std::cout << "      pixel colour = (plane1 bit << 1) | plane0 bit\n\n";
     std::cout << "  Rendering shows the SHAPE only. The four colours are chosen later\n";
     std::cout << "  by the PPU's palette, which is Phase 4.\n\n";
 
     const auto render = [&](std::size_t tile) {
         for (int y = 0; y < 8; ++y) {
-            const u8 plane0 = chr[tile * 16 + static_cast<std::size_t>(y) * 2];
-            const u8 plane1 = chr[tile * 16 + static_cast<std::size_t>(y) * 2 + 1];
+            const u8 plane0 = chr[tile * 16 + static_cast<std::size_t>(y)];
+            const u8 plane1 = chr[tile * 16 + 8 + static_cast<std::size_t>(y)];
             std::string row;
             for (int x = 0; x < 8; ++x) {
                 const int bit = 7 - x;

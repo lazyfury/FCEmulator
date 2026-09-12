@@ -1,6 +1,6 @@
 # NES 硬件规范 nes/
 
-> 状态：**Phase 2 / 3 已完成**（内存映射 + 卡带），其余待 Phase 4-6 逐步填充
+> 状态：**Phase 2 / 3 / 4 已完成**（内存映射 + 卡带 + PPU），其余待 Phase 5-6 逐步填充
 
 ## 已完成
 
@@ -14,12 +14,20 @@
 | **Mapper 0 (NROM)** | [ines-format.md](ines-format.md) 第 3 节 |
 | **CHR 位平面与 tile 格式** | [ines-format.md](ines-format.md) 第 4 节 |
 | **真实 ROM 运行与调试** | [ines-format.md](ines-format.md) 第 5 节 |
+| **PPU 架构与 8 个寄存器** | [ppu.md](ppu.md) |
+| **滚动（v/t/x/w）** | [ppu.md](ppu.md) 第 3 节 |
+| **时序、vblank、NMI** | [ppu.md](ppu.md) 第 4 节 |
+| **取指流水线与像素合成** | [ppu.md](ppu.md) 第 5-6 节 |
+| **Sprite 0 hit** | [ppu.md](ppu.md) 第 7 节 |
+| **调色板与 $3F10 镜像** | [ppu.md](ppu.md) 第 9 节 |
 | 实现 | `src/core/nes/` |
-| 可运行讲解 | `tools/demo_bus.cpp` `tools/demo_cartridge.cpp` |
+| 实现 | `src/core/nes/ppu.{hpp,cpp}` `framebuffer.hpp` `machine.{hpp,cpp}` |
+| 可运行讲解 | `tools/demo_bus.cpp` `tools/demo_cartridge.cpp` `tools/demo_ppu.cpp` |
 
 ```bash
 ./build/demo_bus
 ./build/demo_cartridge [path/to/game.nes]
+./build/demo_ppu [path/to/game.nes] [frames]   # 渲染出真实画面
 ./build/tests/fc_tests --gtest_filter='NesBus.*:Ines.*:Mapper0.*:Cartridge.*:SuperMarioBros.*'
 ```
 
@@ -67,7 +75,6 @@ $4020 - $FFFF   卡带（Mapper 决定布局）
 
 ## 待写文档
 
-- `ppu.md` — 渲染管线、Tile、Sprite、滚动（Phase 4）
 - `apu.md` — 各声道与混音（Phase 6）
 - `mappers.md` — Mapper 1/2/3/4（Phase 3 后续）
 - `controllers.md` — 手柄协议（Phase 5）

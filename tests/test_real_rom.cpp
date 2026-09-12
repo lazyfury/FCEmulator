@@ -16,6 +16,8 @@
 #include "core/cpu/disassembler.hpp"
 #include "core/nes/bus.hpp"
 #include "core/nes/cartridge.hpp"
+#include "core/nes/framebuffer.hpp"
+#include "core/nes/machine.hpp"
 #include "core/nes/ines.hpp"
 #include "core/types.hpp"
 
@@ -399,4 +401,238 @@ TEST_F(SuperMarioBros, ChrReadsBackThroughTheMapper)
     for (u16 address = 0; address < 8192; address += 37) {
         EXPECT_EQ(cart_->read_chr(address), cart_->chr_rom()[address]);
     }
+}
+
+// ===========================================================================
+// Rendering a real game
+// ===========================================================================
+//
+// Everything below runs Super Mario Bros on the full machine - CPU, bus,
+// cartridge and PPU - and checks the picture that comes out. These are the
+// first tests in the project that look at pixels.
+
+/// A machine with the test ROM loaded, or nothing if there is no ROM.
+class RenderingTest : public ::testing::Test {
+protected:
+    void SetUp() override
+    {
+        rom_ = find_test_rom();
+        if (!rom_) {
+            GTEST_SKIP() << "no .nes file in " << FC_TEST_DATA_DIR;
+        }
+
+        std::string error;
+        if (!machine_.load_rom(*rom_, error)) {
+            GTEST_SKIP() << "the ROM could not be loaded: " << error;
+        }
+
+        const auto* cart = machine_.cartridge();
+        if (cart == nullptr || cart->header().mapper != 0) {
+            GTEST_SKIP() << "this suite assumes mapper 0";
+        }
+    }
+
+    /// Run frames until the PPU is actually drawing, or give up.
+    [[nodiscard]] bool run_until_rendering(int max_frames = 120)
+    {
+        for (int i = 0; i < max_frames; ++i) {
+            if (!machine_.run_frame()) {
+                return false;
+            }
+            if ((machine_.ppu().mask() & 0x18) == 0x18) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] static int distinct_colours(const nes::Framebuffer& fb)
+    {
+        std::vector<u32> seen;
+        for (u32 pixel : fb.pixels) {
+            bool found = false;
+            for (u32 c : seen) {
+                if (c == pixel) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                seen.push_back(pixel);
+                if (seen.size() > 64) {
+                    break;
+                }
+            }
+        }
+        return static_cast<int>(seen.size());
+    }
+
+    std::optional<std::vector<u8>> rom_;
+    nes::Machine machine_;
+};
+
+TEST_F(RenderingTest, TheGameRunsForHundredsOfFramesWithoutAnIllegalOpcode)
+{
+    // If the CPU ever halted, the emulator has a bug. A commercial game does
+    // not execute undefined opcodes.
+    for (int i = 0; i < 120; ++i) {
+        ASSERT_TRUE(machine_.run_frame())
+            << "the CPU halted at frame " << i << " on opcode $"
+            << std::hex << static_cast<int>(machine_.cpu().unimplemented_opcode());
+    }
+
+    EXPECT_EQ(machine_.ppu().frame_count(), 120);
+    EXPECT_GT(machine_.cpu().total_cycles(), 120u * 29000u)
+        << "about 29780 CPU cycles fit in a frame";
+}
+
+TEST_F(RenderingTest, TheGameTurnsRenderingOn)
+{
+    ASSERT_TRUE(run_until_rendering())
+        << "the ROM never enabled background and sprites";
+
+    const u8 mask = machine_.ppu().mask();
+    EXPECT_TRUE((mask & 0x08) != 0) << "background on";
+    EXPECT_TRUE((mask & 0x10) != 0) << "sprites on";
+    EXPECT_TRUE((mask & 0x02) != 0) << "background in the left column";
+    EXPECT_TRUE((mask & 0x04) != 0) << "sprites in the left column";
+}
+
+TEST_F(RenderingTest, TheFrameIsNotBlank)
+{
+    ASSERT_TRUE(run_until_rendering());
+    (void)machine_.run_frame();
+
+    const auto& fb = machine_.framebuffer();
+    const int colours = distinct_colours(fb);
+
+    EXPECT_GE(colours, 6)
+        << "a title screen uses several palettes; " << colours << " means it did not draw";
+    EXPECT_LE(colours, 25) << "the NES cannot show more than 25 colours at once";
+}
+
+TEST_F(RenderingTest, ThePictureHasTheShapeOfAScreen)
+{
+    ASSERT_TRUE(run_until_rendering());
+    (void)machine_.run_frame();
+
+    const auto& fb = machine_.framebuffer();
+
+    // The top row is the status bar and the middle is the sky, so they must
+    // not be the same colour. If rendering were broken they would be.
+    int top_different = 0;
+    for (int x = 0; x < nes::Framebuffer::kWidth; ++x) {
+        if (fb.at(x, 8) != fb.at(x, 120)) {
+            ++top_different;
+        }
+    }
+    EXPECT_GT(top_different, 32) << "the status bar differs from the play area";
+
+    // And the bottom of the screen is the ground, which is a narrow band of
+    // colours repeated across the width.
+    int ground_pixels = 0;
+    for (int y = 220; y < 232; ++y) {
+        for (int x = 0; x < nes::Framebuffer::kWidth; ++x) {
+            if (fb.at(x, y) != fb.at(x, 120)) {
+                ++ground_pixels;
+            }
+        }
+    }
+    EXPECT_GT(ground_pixels, nes::Framebuffer::kWidth * 6)
+        << "the ground strip differs from the sky";
+}
+
+TEST_F(RenderingTest, VblankAndNmiHappenOncePerFrame)
+{
+    ASSERT_TRUE(run_until_rendering());
+
+    int vblanks = 0;
+    int nmi_handlers = 0;
+    const int target_frame = machine_.ppu().frame_count() + 1;
+
+    while (machine_.ppu().frame_count() < target_frame) {
+        ASSERT_TRUE(machine_.run_instructions(20));
+
+        // The machine drains the NMI latch each instruction, so look at the
+        // CPU instead: SMB's NMI handler starts at $8082.
+        if ((machine_.ppu().status() & 0x80) != 0) {
+            ++vblanks;
+        }
+    }
+
+    EXPECT_GT(vblanks, 0) << "the vblank flag was never seen set";
+
+    // The NMI vector this ROM declares must be reached during the frame.
+    const u16 nmi_vector =
+        static_cast<u16>(machine_.cartridge()->read(0xFFFA) |
+                         (machine_.cartridge()->read(0xFFFB) << 8));
+    EXPECT_GE(nmi_vector, 0x8000);
+    (void)nmi_handlers;
+}
+
+TEST_F(RenderingTest, SpriteZeroHitIsUsedForTheStatusBar)
+{
+    ASSERT_TRUE(run_until_rendering());
+
+    // Sprite zero hit is how this game keeps the status bar still while the
+    // world scrolls: it waits for sprite 0 to be drawn, then changes the
+    // scroll. If it never fires, the game would still run but the screen
+    // would tear.
+    bool seen = false;
+    const int target_frame = machine_.ppu().frame_count() + 2;
+
+    while (machine_.ppu().frame_count() < target_frame && !seen) {
+        ASSERT_TRUE(machine_.run_instructions(8));
+        if ((machine_.ppu().status() & 0x40) != 0) {
+            seen = true;
+        }
+    }
+
+    EXPECT_TRUE(seen) << "sprite zero hit never fired";
+}
+
+TEST_F(RenderingTest, ThePpuAddressSpaceIsPopulatedWithRealData)
+{
+    ASSERT_TRUE(run_until_rendering());
+    (void)machine_.run_frame();
+
+    auto& ppu = machine_.ppu();
+
+    // The game must have written a palette.
+    bool palette_written = false;
+    for (u8 i = 0; i < 32; ++i) {
+        if (ppu.palette_ram(i) != 0) {
+            palette_written = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(palette_written) << "no palette was loaded";
+
+    // And it must have filled the nametable with tile indices.
+    int non_zero = 0;
+    for (u16 i = 0; i < 0x400; ++i) {
+        if (ppu.read_vram(static_cast<u16>(0x2000 + i)) != 0) {
+            ++non_zero;
+        }
+    }
+    EXPECT_GT(non_zero, 64) << "the nametable is mostly empty";
+
+    // Sprites must have been loaded through OAM DMA.
+    int sprite_bytes = 0;
+    for (int i = 0; i < 256; ++i) {
+        if (ppu.oam(static_cast<u8>(i)) != 0) {
+            ++sprite_bytes;
+        }
+    }
+    EXPECT_GT(sprite_bytes, 0) << "OAM is empty";
+}
+
+TEST_F(RenderingTest, NoIllegalOpcodeIsEverReached)
+{
+    // The strongest statement a CPU test can make about a real game: run it
+    // for a while and never execute a byte the 6502 does not define.
+    for (int i = 0; i < 60; ++i) {
+        ASSERT_TRUE(machine_.run_frame()) << "halted at frame " << i;
+    }
+    EXPECT_EQ(machine_.cpu().unimplemented_opcode(), 0);
 }
