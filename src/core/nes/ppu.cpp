@@ -84,6 +84,10 @@ void Ppu::reset() noexcept
     attr_lo_ = 0;
     attr_hi_ = 0;
 
+    vram_writes_visible_ = 0;
+    vram_writes_prerender_ = 0;
+    vram_writes_blanking_ = 0;
+
     sprite_line_ = {};
     sprite_count_ = 0;
     sprite_zero_in_range_ = false;
@@ -292,10 +296,22 @@ void Ppu::write(u16 address, u8 value)
         }
         break;
 
-    case 7:     // PPUDATA
+    case 7: {   // PPUDATA
+        // The CPU and the rendering pipeline share `v`. Writing here while
+        // the picture is being drawn moves the PPU's own fetch pointer, so
+        // the write and the fetch corrupt each other. vram_writes_visible()
+        // counts how often a game does that.
+        if (rendering_enabled() && scanline_ >= 0 && scanline_ < kVisibleScanlines) {
+            ++vram_writes_visible_;
+        } else if (rendering_enabled() && scanline_ == -1) {
+            ++vram_writes_prerender_;
+        } else {
+            ++vram_writes_blanking_;
+        }
         write_vram(static_cast<u16>(v_ & 0x3FFFu), value);
         v_ = static_cast<u16>((v_ + ((ctrl_ & 0x04u) ? 32u : 1u)) & 0x7FFFu);
         break;
+    }
 
     default:
         break;

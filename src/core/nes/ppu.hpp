@@ -142,6 +142,18 @@ public:
     /// How many sprites were selected for the scanline currently being drawn.
     [[nodiscard]] int sprites_on_scanline() const noexcept { return sprite_count_; }
 
+    /// Counts of $2007 accesses, split by whether the PPU was in the visible
+    /// part of the frame. A game that writes VRAM while the picture is being
+    /// drawn is fighting the PPU's own use of `v`, and the writes land in the
+    /// wrong place. Watching this counter is how you find out whether that is
+    /// happening, instead of guessing from a torn picture.
+    [[nodiscard]] u64 vram_writes_visible() const noexcept { return vram_writes_visible_; }
+    [[nodiscard]] u64 vram_writes_blanking() const noexcept { return vram_writes_blanking_; }
+
+    /// Writes during the pre-render line, where the fetch pipeline is also
+    /// running. Dangerous for the same reason as the visible range.
+    [[nodiscard]] u64 vram_writes_prerender() const noexcept { return vram_writes_prerender_; }
+
     /// Resolve a palette index to RGB, applying the greyscale bit.
     [[nodiscard]] static u32 colour(u8 palette_index, bool greyscale = false) noexcept;
 
@@ -196,6 +208,10 @@ private:
     bool sprite_zero_in_range_ = false;
     bool sprite_zero_hit_ = false;
     bool sprite_overflow_ = false;
+
+    u64 vram_writes_visible_ = 0;
+    u64 vram_writes_prerender_ = 0;
+    u64 vram_writes_blanking_ = 0;
 
     Framebuffer framebuffer_{};
     Cartridge* cartridge_ = nullptr;

@@ -794,3 +794,266 @@ TEST(Machine, ThreePpuDotsPerCpuCycle)
                          + machine.ppu().dot();
     EXPECT_EQ(dots_after - dots_before, 6);
 }
+
+// ===========================================================================
+// The background renderer over the WHOLE screen, and with scrolling
+// ===========================================================================
+//
+// The earlier tests only ever looked at the top-left 8x8 tile. That is not
+// enough: a bug in the coarse X/Y stepping, in the nametable selection or in
+// the attribute indexing would all be invisible there.
+
+namespace {
+
+/// A cartridge whose CHR has one solid tile at index 1 and another at 2.
+std::vector<u8> make_marker_chr()
+{
+    std::vector<u8> chr(8192, 0);
+    for (int row = 0; row < 8; ++row) {
+        chr[1 * 16 + row] = 0xFF;   // tile 1: solid, colour 1
+        chr[2 * 16 + row] = 0xFF;   // tile 2: solid, colour 1
+    }
+    return chr;
+}
+
+/// A PPU set up so that tile 1 is colour $21 and everything else is $0F.
+///
+/// Note the order in the constructor and in set_scroll(): the scroll must be
+/// written AFTER any $2006 access. The second $2006 write does `v = t`, so
+/// writing $2006 after $2005 throws the scroll away - which is a real trap,
+/// not a quirk of this test.
+struct PaintFixture {
+    Fixture f;
+
+    PaintFixture()
+    {
+        f.set_cartridge(make_ines_with_chr(make_marker_chr()));
+        f.write_vram(0x3F00, 0x0F);   // universal background
+        f.write_vram(0x3F01, 0x21);   // background palette 0, colour 1
+        f.ppu.write(0x2001, 0x0A);    // background on, including the left column
+        f.set_vram_address(0x0000);
+    }
+
+    void set_scroll(u8 x, u8 y)
+    {
+        f.ppu.write(0x2005, x);
+        f.ppu.write(0x2005, y);
+    }
+
+    void finish()
+    {
+        render_visible_frame(f.ppu);
+    }
+
+    [[nodiscard]] u32 foreground() const { return nes::Ppu::colour(0x21); }
+    [[nodiscard]] u32 background() const { return nes::Ppu::colour(0x0F); }
+};
+
+} // namespace
+
+TEST(Ppu, ABackgroundTileAppearsAtItsExactScreenPosition)
+{
+    // Nametable column 5, row 10 is pixels x=40..47, y=80..87.
+    PaintFixture p;
+    p.f.write_vram(0x2000 + 10 * 32 + 5, 1);
+    p.set_scroll(0, 0);
+    p.finish();
+
+    const auto& fb = p.f.ppu.framebuffer();
+
+    EXPECT_EQ(fb.at(40, 80), p.foreground()) << "top left of the tile";
+    EXPECT_EQ(fb.at(47, 87), p.foreground()) << "bottom right of the tile";
+
+    EXPECT_EQ(fb.at(39, 80), p.background()) << "one pixel to the left";
+    EXPECT_EQ(fb.at(48, 80), p.background()) << "one pixel to the right";
+    EXPECT_EQ(fb.at(40, 79), p.background()) << "one pixel above";
+    EXPECT_EQ(fb.at(40, 88), p.background()) << "one pixel below";
+}
+
+TEST(Ppu, AWholeRowOfMarkersLandsOnTheRightColumns)
+{
+    // Mark every 4th tile on nametable row 12, then check each one.
+    PaintFixture p;
+    for (int col = 0; col < 32; col += 4) {
+        p.f.write_vram(static_cast<u16>(0x2000 + 12 * 32 + col), 1);
+    }
+    p.set_scroll(0, 0);
+    p.finish();
+
+    const auto& fb = p.f.ppu.framebuffer();
+    for (int col = 0; col < 32; col += 4) {
+        const int x = col * 8;
+        const int y = 12 * 8;
+        if (col == 0) {
+            // The very first tile is the "left column" case, still drawn.
+            EXPECT_EQ(fb.at(x, y), p.foreground()) << "col " << col;
+        } else {
+            EXPECT_EQ(fb.at(x, y), p.foreground()) << "col " << col;
+        }
+        // Only every fourth tile was marked, so the tile right after each
+        // marker must be background.
+        EXPECT_EQ(fb.at(x + 8, y), p.background()) << "gap after col " << col;
+    }
+}
+
+TEST(Ppu, EveryMarkerOnTheLastNametableRowLandsCorrectly)
+{
+    // Row 29 is pixels y=232..239, the last visible row. An off-by-one in
+    // the vertical stepping shows up here first.
+    PaintFixture p;
+    for (int col = 0; col < 32; ++col) {
+        p.f.write_vram(static_cast<u16>(0x2000 + 29 * 32 + col), 1);
+    }
+    p.set_scroll(0, 0);
+    p.finish();
+
+    const auto& fb = p.f.ppu.framebuffer();
+    for (int col = 0; col < 32; ++col) {
+        EXPECT_EQ(fb.at(col * 8, 232), p.foreground()) << "col " << col;
+        EXPECT_EQ(fb.at(col * 8 + 7, 239), p.foreground()) << "col " << col;
+    }
+}
+
+TEST(Ppu, CoarseScrollMovesTheBackgroundByWholeTiles)
+{
+    PaintFixture p;
+    p.f.write_vram(0x2000 + 10 * 32 + 5, 1);
+    p.set_scroll(3 * 8, 2 * 8);   // three tiles right, two tiles down
+    p.finish();
+
+    const auto& fb = p.f.ppu.framebuffer();
+
+    // The tile was at (40, 80); scrolling right and down moves it up and left.
+    EXPECT_EQ(fb.at(40 - 24, 80 - 16), p.foreground());
+    EXPECT_EQ(fb.at(47 - 24, 87 - 16), p.foreground());
+}
+
+TEST(Ppu, FineScrollShiftsTheBackgroundByPixels)
+{
+    PaintFixture p;
+    p.f.write_vram(0x2000 + 10 * 32 + 5, 1);
+    p.set_scroll(4, 0);   // four pixels right
+    p.finish();
+
+    const auto& fb = p.f.ppu.framebuffer();
+
+    // The tile starts at x=40 and the view is shifted 4 pixels right, so the
+    // tile now starts at x=36. The leftmost four pixels come from the tile
+    // before it, which is blank.
+    EXPECT_EQ(fb.at(36, 80), p.foreground());
+    EXPECT_EQ(fb.at(43, 80), p.foreground());
+    EXPECT_EQ(fb.at(35, 80), p.background());
+    EXPECT_EQ(fb.at(44, 80), p.background());
+}
+
+TEST(Ppu, ScrollingPastTheRightEdgeUsesTheOtherNametable)
+{
+    // Vertical mirroring: $2000/$2800 are one nametable, $2400/$2C00 the other.
+    PaintFixture p;
+
+    // Put the marker only in nametable 1, one tile in from its left edge.
+    p.f.write_vram(0x2400, 1);
+
+    // Scroll right by 31 tiles + 8 pixels: the 32nd tile column is the first
+    // column of the next nametable.
+    p.set_scroll(31 * 8 + 0, 0);
+    p.finish();
+
+    const auto& fb = p.f.ppu.framebuffer();
+    EXPECT_EQ(fb.at(8, 0), p.foreground())
+        << "nametable 1 column 0 appears at x = 8 when scrolled 31 tiles";
+}
+
+TEST(Ppu, TheLastRealTileRowCanBeScrolledTo)
+{
+    PaintFixture p;
+
+    // Nametable row 29 is the last one that is really a tile row: pixels
+    // 232-239. Scrolling to it must show it, not the attribute table.
+    p.f.write_vram(0x2000 + 29 * 32, 1);   // row 29, column 0
+    p.set_scroll(0, 29 * 8);
+    p.finish();
+
+    const auto& fb = p.f.ppu.framebuffer();
+    EXPECT_EQ(fb.at(0, 0), p.foreground()) << "row 29 lands at the top of the screen";
+}
+
+TEST(Ppu, TheVerticalWrapHappensOnlyWhileRendering)
+{
+    // Rows 30 and 31 of a nametable are not tile rows at all: they are where
+    // the attribute table lives. Setting the scroll there directly reads
+    // attributes as if they were tiles, which is why no game does it.
+    //
+    // The wrap to row 0 happens through increment_y while rendering, not
+    // through the scroll registers, and only when coarse Y reaches 29 or 31.
+    PaintFixture p;
+
+    p.f.write_vram(0x2000 + 29 * 32, 1);   // row 29, column 0
+    p.set_scroll(0, 29 * 8 + 7);           // last scanline of row 29
+    p.finish();
+
+    const auto& fb = p.f.ppu.framebuffer();
+
+    // Scanline 0 shows the last row of tile row 29.
+    EXPECT_EQ(fb.at(0, 0), p.foreground());
+
+    // Scanline 1 is the next tile row, which wraps to row 0 of the OTHER
+    // nametable (because 29 wrapped). That nametable is empty, so it is
+    // background - not the attribute table, and not row 30.
+    EXPECT_EQ(fb.at(0, 1), p.background());
+}
+
+// ===========================================================================
+// When is it safe to write VRAM?
+// ===========================================================================
+
+TEST(Ppu, WritesDuringVisibleRenderingAreCountedSeparately)
+{
+    // The CPU and the rendering pipeline share the `v` address register. A
+    // $2007 write during the visible part of the frame moves the PPU's own
+    // fetch pointer, so the write and the fetch corrupt each other. Games
+    // avoid it; this counter is how you check whether one is doing it.
+    Fixture f;
+    f.ppu.write(0x2001, 0x1E);   // rendering on
+
+    // Run into the visible part of the frame.
+    run_to_scanline(f.ppu, 100);
+    ASSERT_GE(f.ppu.scanline(), 0);
+    ASSERT_LT(f.ppu.scanline(), 240);
+
+    f.set_vram_address(0x2000);
+    f.ppu.write(0x2007, 0x11);
+
+    EXPECT_EQ(f.ppu.vram_writes_visible(), 1u);
+    EXPECT_EQ(f.ppu.vram_writes_blanking(), 0u);
+}
+
+TEST(Ppu, WritesDuringVblankAreSafe)
+{
+    Fixture f;
+    f.ppu.write(0x2001, 0x1E);
+
+    run_to_scanline(f.ppu, 245);   // vblank
+    ASSERT_GE(f.ppu.scanline(), 241);
+
+    f.set_vram_address(0x2000);
+    f.ppu.write(0x2007, 0x22);
+
+    EXPECT_EQ(f.ppu.vram_writes_visible(), 0u);
+    EXPECT_EQ(f.ppu.vram_writes_blanking(), 1u);
+}
+
+TEST(Ppu, WritesWhileRenderingIsOffAreSafe)
+{
+    Fixture f;
+    f.ppu.write(0x2001, 0x00);   // rendering off, so the pipeline is idle
+
+    run_to_scanline(f.ppu, 100);
+
+    f.set_vram_address(0x2000);
+    f.ppu.write(0x2007, 0x33);
+
+    EXPECT_EQ(f.ppu.vram_writes_visible(), 0u)
+        << "no pipeline is using v, so a visible scanline is harmless";
+    EXPECT_EQ(f.ppu.vram_writes_blanking(), 1u);
+}
