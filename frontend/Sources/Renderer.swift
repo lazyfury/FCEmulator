@@ -26,7 +26,18 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let pipeline: MTLRenderPipelineState
     private let sampler: MTLSamplerState
     private var texture: MTLTexture?
-    private var scale = SIMD2<Float>(1, 1)
+
+    /// Multiplier applied to the texture coordinates, NOT to the vertices.
+    ///
+    /// This distinction is the whole trick to fitting a 256x240 image into
+    /// an arbitrary window. Squeezing the vertices is the obvious thing to
+    /// do and it is wrong: the full screen triangle is only just big enough
+    /// to cover the screen, so pulling its corners inward exposes the corner
+    /// of the screen (a black triangle) and drags the texture along the
+    /// diagonal. Leaving the vertices alone and stretching the coordinates
+    /// instead keeps the triangle covering everything; anything outside the
+    /// texture is painted black, which is the letterbox bar.
+    private var uvScale = SIMD2<Float>(1, 1)
 
     /// The framebuffer from the core. Not copied, not converted: the texture
     /// is filled straight from this pointer every frame.
@@ -55,29 +66,39 @@ final class Renderer: NSObject, MTKViewDelegate {
         };
 
         struct Uniforms {
-            float2 scale;
+            float2 uvScale;
         };
 
         // A single triangle that covers the screen. Two triangles would also
         // work; one is less to set up and has no seam down the diagonal.
+        // The corners overshoot the screen so that it is fully covered no
+        // matter how far the coordinates below are zoomed.
         vertex VertexOut vertex_main(uint vertex_id [[vertex_id]],
                                      constant Uniforms &uniforms [[buffer(0)]]) {
             const float2 corners[3] = { float2(-1.0, -1.0),
                                         float2( 3.0, -1.0),
                                         float2(-1.0,  3.0) };
-            const float2 uvs[3] = { float2(0.0, 1.0),
-                                    float2(2.0, 1.0),
-                                    float2(0.0, -1.0) };
+            const float2 base_uv[3] = { float2(0.0, 1.0),
+                                        float2(2.0, 1.0),
+                                        float2(0.0, -1.0) };
 
             VertexOut out;
-            out.position = float4(corners[vertex_id] * uniforms.scale, 0.0, 1.0);
-            out.uv = uvs[vertex_id];
+            out.position = float4(corners[vertex_id], 0.0, 1.0);
+            // Zoom about the centre of the image (0.5, 0.5).
+            out.uv = (base_uv[vertex_id] - 0.5) * uniforms.uvScale + 0.5;
             return out;
         }
 
         fragment float4 fragment_main(VertexOut in [[stage_in]],
                                       texture2d<float> screen [[texture(0)]],
                                       sampler nearest [[sampler(0)]]) {
+            // Outside the texture is the letterbox: black, not a smeared
+            // edge pixel, so clamp-to-edge sampling is never allowed to show
+            // up. This is also what keeps a resized window honest.
+            if (in.uv.x < 0.0 || in.uv.x > 1.0 ||
+                in.uv.y < 0.0 || in.uv.y > 1.0) {
+                return float4(0.0, 0.0, 0.0, 1.0);
+            }
             return screen.sample(nearest, in.uv);
         }
         """
@@ -163,7 +184,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             return
         }
 
-        var uniformValue = scale
+        var uniformValue = uvScale
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBytes(&uniformValue,
                                length: MemoryLayout<SIMD2<Float>>.size,
@@ -187,10 +208,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         let viewAspect = Float(size.width / max(size.height, 1))
         let imageAspect = Float(Emulator.width) / Float(Emulator.height)
 
+        // The image keeps its shape: whichever axis has room to spare shows
+        // a bar. The coordinate scale is the reciprocal of the fit scale,
+        // because shrinking the image means zooming into the texture.
         if viewAspect > imageAspect {
-            scale = SIMD2<Float>(imageAspect / viewAspect, 1)
+            uvScale = SIMD2<Float>(viewAspect / imageAspect, 1)
         } else {
-            scale = SIMD2<Float>(1, viewAspect / imageAspect)
+            uvScale = SIMD2<Float>(1, imageAspect / viewAspect)
         }
     }
 }

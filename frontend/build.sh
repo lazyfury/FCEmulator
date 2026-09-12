@@ -40,6 +40,7 @@ swiftc \
     -framework MetalKit \
     -framework AVFoundation \
     -framework CoreAudio \
+    -framework GameController \
     -o "$APP/Contents/MacOS/FCEmulator" \
     "$ROOT/frontend/Sources"/*.swift \
     "$BUILD/libfc_ffi.a" \

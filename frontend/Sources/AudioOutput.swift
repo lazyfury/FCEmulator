@@ -13,78 +13,58 @@ import Foundation
 /// Only the ring buffer is shared. The emulator itself is only ever touched
 /// by the thread that runs it, which is what makes this simple.
 ///
-/// The lock below is the one thing here that a real emulator would do
-/// differently. A lock in an audio callback is a real-time violation: if the
-/// emulator thread holds it, the callback blocks and the speaker glitches.
-/// The fix is a lock free single producer single consumer queue, which is
-/// about thirty lines of atomics. It is on the list, and it is written down
-/// here rather than quietly ignored.
+/// The ring itself lives in C (fc_audio_queue_*), because a ring buffer shared
+/// between an emulator thread and a real-time audio thread must not be guarded
+/// by a mutex: if the emulator holds the lock for a moment, the callback blocks
+/// and the speaker crackles. The C queue is a single producer / single
+/// consumer queue built on release/acquire atomics, so neither side ever
+/// waits. Swift cannot express those atomics directly, which is why the queue
+/// sits on the C side of the interface.
 final class AudioOutput {
 
     private let engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
 
-    private let lock = NSLock()
-    private var ring: [Float]
-    private var readIndex = 0
-    private var writeIndex = 0
-    private var available = 0
+    private let queue: OpaquePointer?
+    private let capacity: Int
 
     private(set) var isRunning = false
 
-    /// Set when the callback had to hand back silence because the ring ran
-    /// dry. A front end can show this, and it is the first thing to look at
-    /// when the sound crackles.
-    private(set) var underruns = 0
-
     init(capacity: Int = 32768) {
-        ring = [Float](repeating: 0, count: capacity)
+        self.capacity = capacity
+        queue = fc_audio_queue_create(UInt32(capacity))
+    }
+
+    deinit {
+        if let queue {
+            fc_audio_queue_destroy(queue)
+        }
+    }
+
+    /// How many times the callback had to hand back silence because the ring
+    /// ran dry. The first thing to look at when the sound crackles.
+    var underruns: UInt64 {
+        queue.map { fc_audio_queue_underruns($0) } ?? 0
     }
 
     // MARK: - The ring buffer
 
-    private var capacity: Int { ring.count }
-
     /// Called from the emulator thread.
     func push(_ samples: UnsafePointer<Float>, count: Int) {
-        guard count > 0 else { return }
-
-        lock.lock()
-        defer { lock.unlock() }
-
-        for i in 0..<count {
-            if available == capacity {
-                // The ring is full, which means the audio hardware is not
-                // keeping up. Drop the oldest sample rather than the newest:
-                // a tiny skip is better than falling further behind.
-                readIndex = (readIndex + 1) % capacity
-                available -= 1
-            }
-            ring[writeIndex] = samples[i]
-            writeIndex = (writeIndex + 1) % capacity
-            available += 1
-        }
+        guard count > 0, let queue else { return }
+        _ = fc_audio_queue_push(queue, samples, UInt32(count))
     }
 
-    /// Called from the audio thread.
+    /// Called from the audio thread. The C side zero-fills any shortfall, so
+    /// an underrun is a gap, never a burst of stale samples.
     private func pop(into out: UnsafeMutablePointer<Float>, count: Int) -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-
-        let taken = min(count, available)
-        for i in 0..<taken {
-            out[i] = ring[readIndex]
-            readIndex = (readIndex + 1) % capacity
-        }
-        available -= taken
-
-        if taken < count {
-            for i in taken..<count {
+        guard let queue else {
+            for i in 0..<count {
                 out[i] = 0.0
             }
-            underruns += 1
+            return 0
         }
-        return taken
+        return Int(fc_audio_queue_pop(queue, out, UInt32(count)))
     }
 
     // MARK: - Starting and stopping
@@ -144,8 +124,7 @@ final class AudioOutput {
     /// How full the ring is, as a fraction. A front end can use this to nudge
     /// the emulator's speed, which is how you keep audio from drifting.
     var fill: Double {
-        lock.lock()
-        defer { lock.unlock() }
-        return Double(available) / Double(capacity)
+        guard let queue else { return 0 }
+        return Double(fc_audio_queue_fill(queue)) / Double(capacity)
     }
 }

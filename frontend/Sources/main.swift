@@ -76,6 +76,10 @@ func printUsage() {
       return              Start
       right shift         Select
       R                   reset
+
+    gamepads:
+      any controller macOS knows about is picked up automatically, and
+      can come and go while the game is running
     """)
 }
 
@@ -214,24 +218,26 @@ final class Keyboard {
 
     /// Returns true if the key was one we care about.
     @discardableResult
-    func keyDown(keyCode: UInt16, emulator: Emulator) -> Bool {
+    func keyDown(keyCode: UInt16, input: InputManager) -> Bool {
         guard let button = button(for: keyCode) else { return false }
         pressed.insert(keyCode)
-        emulator.setButton(button, pressed: true)
+        input.set(button, pressed: true, from: .keyboard)
         return true
     }
 
     @discardableResult
-    func keyUp(keyCode: UInt16, emulator: Emulator) -> Bool {
+    func keyUp(keyCode: UInt16, input: InputManager) -> Bool {
         guard let button = button(for: keyCode) else { return false }
         pressed.remove(keyCode)
-        emulator.setButton(button, pressed: false)
+        input.set(button, pressed: false, from: .keyboard)
         return true
     }
 
-    func releaseAll(emulator: Emulator) {
+    /// Losing focus releases the keys, but not a gamepad the player is still
+    /// holding: that is a different source.
+    func releaseAll(input: InputManager) {
         pressed.removeAll()
-        emulator.releaseAllButtons()
+        input.releaseAll(from: .keyboard)
     }
 }
 
@@ -240,7 +246,7 @@ final class Keyboard {
 final class EmulatorView: MTKView {
 
     var keyboard: Keyboard?
-    var emulator: Emulator?
+    var input: InputManager?
 
     /// Keys that are not buttons.
     var onReset: (() -> Void)?
@@ -258,9 +264,9 @@ final class EmulatorView: MTKView {
     }
 
     override func keyDown(with event: NSEvent) {
-        guard let keyboard, let emulator else { return }
+        guard let keyboard, let input else { return }
 
-        if keyboard.keyDown(keyCode: event.keyCode, emulator: emulator) {
+        if keyboard.keyDown(keyCode: event.keyCode, input: input) {
             return
         }
 
@@ -279,8 +285,8 @@ final class EmulatorView: MTKView {
     }
 
     override func keyUp(with event: NSEvent) {
-        guard let keyboard, let emulator else { return }
-        if !keyboard.keyUp(keyCode: event.keyCode, emulator: emulator) {
+        guard let keyboard, let input else { return }
+        if !keyboard.keyUp(keyCode: event.keyCode, input: input) {
             super.keyUp(with: event)
         }
     }
@@ -288,8 +294,8 @@ final class EmulatorView: MTKView {
     /// Losing focus must release everything, or the last key you held stays
     /// held forever while the game keeps running.
     override func resignFirstResponder() -> Bool {
-        if let keyboard, let emulator {
-            keyboard.releaseAll(emulator: emulator)
+        if let keyboard, let input {
+            keyboard.releaseAll(input: input)
         }
         return super.resignFirstResponder()
     }
@@ -304,6 +310,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var renderer: Renderer?
     private var audio: AudioOutput?
     private let keyboard = Keyboard()
+    private var input: InputManager?
+    private var gamepad: GamepadInput?
 
     private var emulator: Emulator?
     private var frameBuffer = [Float](repeating: 0, count: 8192)
@@ -329,6 +337,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.renderer = renderer
 
+        // One manager for every source: the keyboard and any gamepads all
+        // report into it, and it keeps the console's eight switches straight.
+        let input = InputManager(emulator: emulator)
+        self.input = input
+        let gamepad = GamepadInput(input: input)
+        self.gamepad = gamepad
+
         let view = EmulatorView(frame: NSRect(x: 0, y: 0,
                                               width: Emulator.width * 3,
                                               height: Emulator.height * 3),
@@ -340,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // otherwise run the game at double speed.
         view.preferredFramesPerSecond = 60
         view.keyboard = keyboard
-        view.emulator = emulator
+        view.input = input
         view.delegate = renderer
 
         view.onReset = { [weak self] in
@@ -426,10 +441,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard let emulator else { return }
         let fill = audio.map { Int($0.fill * 100) } ?? 0
+        let underruns = audio?.underruns ?? 0
+        let pads = gamepad?.connectedCount ?? 0
         let speed = framesPerTick == 1 ? "" : "  [fast forward]"
+        let pad = pads > 0 ? "  -  pad \(pads)" : ""
         window?.title = String(
-            format: "FCEmulator  -  %.1f fps  -  frame %d  -  audio %d%%%@",
-            fps, emulator.frameCount, fill, speed)
+            format: "FCEmulator  -  %.1f fps  -  frame %d  -  audio %d%%  -  underruns %llu%@%@",
+            fps, emulator.frameCount, fill, underruns, speed, pad)
     }
 
     /// Write what the core produced, not what the window shows.
@@ -451,6 +469,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        input?.releaseEverything()
         audio?.stop()
     }
 
