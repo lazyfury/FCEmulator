@@ -21,6 +21,7 @@ endif()
 
 add_executable(fc_tests
     test_bit.cpp
+    test_alu.cpp
 )
 
 target_link_libraries(fc_tests PRIVATE

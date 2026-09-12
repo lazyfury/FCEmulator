@@ -11,11 +11,12 @@
 **Phase 0.1 完成** — 二进制基础
 
 - [x] CMake 4.4 + C++20 + Ninja
-- [x] GoogleTest 1.18 单元测试（17 个测试全通过）
+- [x] GoogleTest 1.18 单元测试（28 个测试全通过）
 - [x] `src/core/types.hpp` 定宽整数类型
 - [x] `src/core/bit.{hpp,cpp}` 位运算工具库
-- [x] `tools/demo_bitwise.cpp` 教学 demo
-- [x] `docs/computer-science/` 四章基础文档
+- [x] `src/core/alu.hpp` 加法器与 C/V/Z/N 标志
+- [x] `tools/demo_bitwise.cpp` / `tools/demo_overflow.cpp` 教学 demo
+- [x] `docs/computer-science/` 五章基础文档（含 V flag 专章）
 
 **下一步：** Phase 0.2 — CPU 基础（寄存器 / ALU / 取指译码执行）
 
@@ -42,7 +43,8 @@ ctest --test-dir build --output-on-failure
 运行教学 demo：
 
 ```bash
-./build/demo_bitwise
+./build/demo_bitwise    # 位、字节、数制、补码
+./build/demo_overflow   # C 与 V 标志、有符号比较
 ```
 
 ---
@@ -54,14 +56,15 @@ FCEmulator/
 ├── AGENTS.md            AI Agent 执行规范（本项目宪法）
 ├── CMakeLists.txt
 ├── docs/                学习文档
-│   ├── computer-science/  二进制 / 十六进制 / 补码 / 位运算
+│   ├── computer-science/  二进制 / 十六进制 / 补码 / 位运算 / V flag
 │   ├── architecture/      系统架构
 │   ├── assembly/          6502 汇编
 │   └── nes/               NES 硬件规范
 ├── src/
 │   ├── core/            纯 C++ 核心，禁止依赖 UI
 │   │   ├── types.hpp      定宽整数
-│   │   └── bit.{hpp,cpp}  位运算工具
+│   │   ├── bit.{hpp,cpp}  位运算工具
+│   │   └── alu.hpp        加法器与标志位
 │   └── frontend/        macOS 前端（Swift/Metal，待实现）
 ├── tools/               教学 demo 与命令行工具
 └── tests/               单元测试

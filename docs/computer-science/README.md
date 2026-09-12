@@ -11,11 +11,12 @@
 |---|------|---------|---------|
 | 1 | [binary.md](binary.md) | 为什么是 0/1？bit 怎么变成数字？ | 立刻 |
 | 2 | [hexadecimal.md](hexadecimal.md) | 为什么 `0x42` 就是 `0100 0010`？ | 立刻 |
-| 3 | [twos-complement.md](twos-complement.md) | CPU 没有减法器怎么做减法？C 和 V 有何不同？ | 立刻（Phase 1 前必须懂） |
+| 3 | [twos-complement.md](twos-complement.md) | CPU 没有减法器怎么做减法？ | 立刻 |
 | 4 | [bitwise-operations.md](bitwise-operations.md) | ALU 到底能做什么？ | 立刻 |
-| 5 | cpu.md | 寄存器、取指译码执行 | Phase 0.2（待写） |
-| 6 | assembly.md | 助记符、机器码、汇编器 | Phase 0.3（待写） |
-| 7 | addressing-modes.md | 六种寻址模式 | Phase 0.4（待写） |
+| 5 | [overflow-flag.md](overflow-flag.md) | **C 和 V 有什么区别？V 到底怎么算？** | 立刻（Phase 1 前必须懂） |
+| 6 | cpu.md | 寄存器、取指译码执行 | Phase 0.2（待写） |
+| 7 | assembly.md | 助记符、机器码、汇编器 | Phase 0.3（待写） |
+| 8 | addressing-modes.md | 六种寻址模式 | Phase 0.4（待写） |
 
 ---
 
@@ -42,9 +43,11 @@ docs/computer-science/binary.md             <->  src/core/bit.hpp  to_binary()
 docs/computer-science/hexadecimal.md        <->  src/core/bit.cpp  to_hex()
 docs/computer-science/twos-complement.md    <->  src/core/bit.hpp  negate(), as_signed()
 docs/computer-science/bitwise-operations.md <->  src/core/bit.hpp  test/set/clear/toggle/extract()
+docs/computer-science/overflow-flag.md      <->  src/core/alu.hpp  add(), trace_add(), AddResult
 
-可运行版本:  tools/demo_bitwise.cpp
-自动验证:    tests/test_bit.cpp
+demo:        tools/demo_bitwise.cpp
+demo:        tools/demo_overflow.cpp
+自动验证:    tests/test_bit.cpp, tests/test_alu.cpp
 ```
 
 ---
@@ -57,6 +60,7 @@ open docs/computer-science/binary.md
 
 # 2. 跑 demo，对照输出
 ./build/demo_bitwise
+./build/demo_overflow
 
 # 3. 跑测试，看每条断言
 ./build/tests/fc_tests --gtest_filter='TwosComplement.*'
@@ -75,7 +79,7 @@ open docs/computer-science/binary.md
 
 ## 检验标准
 
-学完这四章，你应该能**不看文档**回答：
+学完这五章，你应该能**不看文档**回答：
 
 1. `0x42` 的二进制是什么？
 2. `-5` 的 8 位补码是什么？
@@ -84,5 +88,9 @@ open docs/computer-science/binary.md
 5. 如何只清掉一个 byte 的 bit 5？
 6. 为什么 NES 需要 16 位地址？
 7. `0xFF` 为什么可以既是 255 又是 -1？
+8. 已知 `A - M` 后 `N=0, V=1`，有符号意义下 A 和 M 谁大？
+9. `0xC0 + 0xC0` 的 C 和 V 各是多少？
 
 如果第 3、4、7 题有迟疑，回到 [twos-complement.md](twos-complement.md)。
+
+如果 C 和 V 的区别说不清，回到 [overflow-flag.md](overflow-flag.md)。

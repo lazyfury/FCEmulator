@@ -245,6 +245,20 @@ Agent 在进入下一阶段前必须确认用户理解：
 
 必须解释为什么 `0xFF` 可以表示 `255`，也可以表示 `-1`
 
+## Overflow Flag (V)
+
+必须解释 C 与 V 的区别：
+
+```
+C = 无符号溢出（bit 7 的进位出）
+V = 有符号溢出（carry_into_bit7 XOR carry_out_of_bit7）
+N = result 的 bit 7，不是判决
+```
+
+并必须解释：`A - M` 后的真实符号是 `N XOR V`。
+
+见 `docs/computer-science/overflow-flag.md` 与 `src/core/alu.hpp`。
+
 ## CPU Concepts
 
 ### Register
@@ -327,11 +341,13 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架
-- `docs/computer-science/` 基础文档（binary / hexadecimal / twos-complement / bitwise）
+- GoogleTest 测试框架（28 个单元测试全通过）
+- `docs/computer-science/` 基础文档（binary / hexadecimal / twos-complement / bitwise / overflow-flag）
+- `src/core/types.hpp` 定宽整数类型
 - `src/core/bit.{hpp,cpp}` 位运算工具库
-- `tools/demo_bitwise.cpp` 教学 demo
-- `tests/test_bit.cpp` 单元测试
+- `src/core/alu.hpp` 加法器与 C/V/Z/N 标志
+- `tools/demo_bitwise.cpp` `tools/demo_overflow.cpp` 教学 demo
+- `tests/test_bit.cpp` `tests/test_alu.cpp` 单元测试
 
 未完成：
 

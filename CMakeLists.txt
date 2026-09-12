@@ -46,6 +46,9 @@ target_include_directories(fc_core PUBLIC
 add_executable(demo_bitwise tools/demo_bitwise.cpp)
 target_link_libraries(demo_bitwise PRIVATE fc_core)
 
+add_executable(demo_overflow tools/demo_overflow.cpp)
+target_link_libraries(demo_overflow PRIVATE fc_core)
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
