@@ -336,12 +336,12 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 
 # 7. Current Implementation Status
 
-当前：**Phase 5 完成**
+当前：**Phase 6 完成**
 
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架（286 个单元测试全通过）
+- GoogleTest 测试框架（325 个单元测试全通过）
 - `docs/` 十三篇（computer-science 十章 + nes 两篇 + architecture 一篇）
 - `src/core/bit.{hpp,cpp}` `types.hpp` `alu.hpp`
 - `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
@@ -355,8 +355,9 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 - `src/core/nes/ppu.{hpp,cpp}` PPU：8 个寄存器、VRAM、调色板、OAM、扫描线时序、背景/精灵渲染、sprite 0 hit
 - `src/core/nes/machine.{hpp,cpp}` CPU 与 PPU 的 3:1 同步、NMI、脚本输入接口
 - `src/core/nes/controller.hpp` 手柄串行协议，接在 `$4016`/`$4017`
+- `src/core/nes/apu.{hpp,cpp}` 五个声道、包络、长度/线性计数器、扫频、帧序列器、非线性混音、DMC
 - `src/core/nes/ram_cartridge.hpp` 卡带槽占位（测试用）
-- 10 个教学 demo；13 个测试文件
+- 11 个教学 demo；14 个测试文件
 
 未完成：
 
@@ -375,48 +376,76 @@ Bus-level cycle accuracy (RMW dummy write, mid-instruction interrupt sampling)
 下一步必须执行：
 
 ```
-Phase 6 — APU（声音）
+Phase 7 — macOS 前端（画面 + 声音 + 键盘）
 ```
 
-背景：Phase 5 让游戏可以操作了。但 `$4000-$4013` 和 `$4015` 还没有设备应答 ——
-`set_apu()` 从来没被调用过，读回来是 open bus，写进去石沉大海。
+背景：Core 已经完整了 —— CPU、总线、卡带、PPU、手柄、APU 全部工作，
+而且可以在无头环境下跑。现在缺的是把它放到屏幕上。
 
-NES 的 APU 在 CPU 芯片内部（Ricoh 2A03），有五个声道：
+**架构规则（AGENTS.md 第 3 节）：Core 不得依赖 UI。**
+
+也就是说 `src/core/` 里不能出现 `#include <Metal/Metal.h>`，不能出现 `NSWindow`。
+Core 只产出两样东西：
 
 ```
-Pulse 1    方波，可调占空比 12.5/25/50/75%
-Pulse 2    同上
-Triangle   三角波，无音量控制（要么响要么不响）
-Noise      伪随机噪声，15 位/93 位 LFSR
-DMC        差分脉宽调制，采样回放（还能触发 IRQ）
+    Ppu::framebuffer()      256x240 的 u32 像素数组
+    Apu::take_samples()     44100 Hz 的 f32 采样
 ```
 
-任务：
+前端负责把这两样东西送到屏幕和扬声器。
 
-1. 讲解 pulse / triangle / noise / DMC、包络、扫频、长度计数器
-2. 实现 `src/core/nes/apu.hpp`，作为 `Device` 接在 `$4000-$4017`：
-   - 15 个寄存器 `$4000-$4013`
-   - `$4015`：声道使能（写）与状态（读）
-   - `$4017`：帧计数器（4 步 / 5 步模式），同时控制帧 IRQ
-   - 帧序列器：240Hz 的四分频与二分频时钟
-3. 实现 LFSR 噪声、长度计数器、包络、扫频
-4. 混音成 44.1kHz 的采样流，暴露 `std::span<const f32> take_samples()`
-5. 写 `docs/nes/apu.md`
-6. 在 demo 里导出 WAV，用真实游戏听
+技术选型：
 
-**完成标志：能导出真实游戏的 WAV，并且能听出音效。**
+```
+Swift + AppKit  窗口、菜单、键盘事件
+Metal           把 framebuffer 上传成纹理并绘制
+CoreAudio       播放采样流
+```
 
-> 注意：DMC 会读 CPU 内存（`$C000-$FFFF`），所以它需要访问 Bus。
-> 这是第一个需要反向持有总线指针的设备 —— 设计时要小心依赖方向。
-> 如果不想破坏架构，可以先不做 DMC（很多游戏只靠前四个声道也能听）。
+分步骤：
 
-### 关于时序
+### Step 1：让 Core 可以被 Swift 调用
 
-APU 的时钟是 CPU 时钟的**一半**（1.789773 MHz / 2 = 894.886 kHz）。
-帧序列器驱动长度计数器（240 Hz）和包络/扫频（120 Hz）。
+1. 在 `src/` 下加一个 C 接口层（`src/ffi/emulator_api.h` / `.cpp`）：
+   ```c
+   fc_machine* fc_create(void);
+   void        fc_destroy(fc_machine*);
+   bool        fc_load_rom(fc_machine*, const uint8_t* data, size_t size);
+   void        fc_run_frame(fc_machine*);
+   const uint32_t* fc_framebuffer(fc_machine*);
+   size_t      fc_take_samples(fc_machine*, float* out, size_t max);
+   void        fc_set_button(fc_machine*, int button, bool pressed);
+   ```
+   **纯 C 接口**，这样 Swift 可以直接调，不需要 C++ 互操作。
 
-混音不是精确的 —— 真实 2A03 的混音是非线性的。用线性混音能听，
-但要完全一致需要查表。这一阶段先做到"能听出正确的音"。
+2. 把 Core 编译成一个静态库或 xcframework
+
+### Step 2：Metal 渲染
+
+3. `MTLTexture` 上传 256×240 的像素（`MTLPixelFormatBGRA8Unorm`）
+4. 一个全屏四边形 + 最近邻采样（**不要线性过滤** —— NES 是像素艺术）
+5. 处理 Retina 缩放与整数倍放大
+
+### Step 3：声音
+
+6. `AVAudioEngine` 或 `AudioQueue`，44100 Hz f32 单声道
+7. 一个环形缓冲区，Core 在后台线程跑，音频线程消费
+
+### Step 4：输入
+
+8. 键盘映射到 `Controller::Button`
+9. **手柄手感要放在前端**：连发、组合键、按键重映射都属于前端或游戏，
+   Core 的 Controller 只是一个带锁存的移位寄存器
+
+### Step 5：主循环
+
+10. Core 跑在自己的线程上，按 60.0988 Hz 推进
+11. 用 `CVDisplayLink` 或 Metal 的 drawable 回调驱动
+
+**完成标志：能打开窗口、用键盘玩超级玛丽、听到声音。**
+
+> 注意：NES 是 NTSC 60.0988 Hz，不是 60.000。跑满速要按这个数。
+> 前端要允许"不跳帧"和"音频同步"两种节流方式，否则声音会断续。
 
 ---
 
@@ -447,7 +476,9 @@ APU 的时钟是 CPU 时钟的**一半**（1.789773 MHz / 2 = 894.886 kHz）。
 
 ## Audio
 
-- [ ] APU（Phase 6）
+- [x] APU（五声道、包络、帧序列器、混音、DMC）
+- [x] 真实游戏导出 WAV
+- [ ] 精确混音曲线（现为标准公式近似）
 
 ## Input
 

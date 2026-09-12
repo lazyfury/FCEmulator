@@ -17,12 +17,15 @@
 #include "core/nes/bus.hpp"
 #include "core/nes/cartridge.hpp"
 #include "core/nes/framebuffer.hpp"
+#include "core/nes/apu.hpp"
 #include "core/nes/machine.hpp"
 #include "core/nes/ines.hpp"
 #include "core/types.hpp"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
@@ -793,4 +796,99 @@ TEST_F(InputTest, HoldingRightScrollsTheLevel)
 
     EXPECT_GT(pixel_difference(standing, machine_.framebuffer()), 10000)
         << "holding Right should have moved Mario and scrolled the view";
+}
+
+// ===========================================================================
+// Sound
+// ===========================================================================
+
+TEST_F(InputTest, TheTitleScreenIsSilent)
+{
+    // Super Mario Bros does not start its music until the game does, so a
+    // silent title screen is correct, not a broken APU.
+    ASSERT_TRUE(reach_the_title_screen());
+
+    (void)machine_.apu().take_samples();
+    for (int i = 0; i < 60; ++i) {
+        ASSERT_TRUE(machine_.run_frame());
+    }
+
+    EXPECT_EQ(machine_.apu().enabled_channels() & 0x0F, 0x00)
+        << "no tone channel is enabled yet";
+
+    double energy = 0.0;
+    std::size_t count = 0;
+    for (f32 sample : machine_.apu().take_samples()) {
+        energy += static_cast<double>(sample) * static_cast<double>(sample);
+        ++count;
+    }
+    ASSERT_GT(count, 0u) << "the APU is producing samples even so";
+    EXPECT_LT(std::sqrt(energy / static_cast<double>(count)), 0.001);
+}
+
+TEST_F(InputTest, TheGameMakesSoundOnceItStarts)
+{
+    ASSERT_TRUE(reach_the_title_screen());
+    ASSERT_TRUE(run_with_start(120, 5));
+
+    EXPECT_EQ(machine_.apu().enabled_channels() & 0x0F, 0x0F)
+        << "the game turned on pulse 1, pulse 2, triangle and noise";
+
+    (void)machine_.apu().take_samples();
+
+    double energy = 0.0;
+    std::size_t count = 0;
+    f32 peak = 0.0f;
+    for (int i = 0; i < 120; ++i) {
+        ASSERT_TRUE(machine_.run_frame());
+        for (f32 sample : machine_.apu().take_samples()) {
+            energy += static_cast<double>(sample) * static_cast<double>(sample);
+            peak = std::max(peak, sample);
+            ++count;
+        }
+    }
+
+    ASSERT_GT(count, 80000u) << "120 frames is 2 seconds, so about 88000 samples";
+    const double rms = std::sqrt(energy / static_cast<double>(count));
+
+    EXPECT_GT(rms, 0.01) << "there is music playing";
+    EXPECT_GT(peak, 0.05f);
+    EXPECT_LE(peak, 1.0f) << "the mixer stays inside its range";
+}
+
+TEST_F(InputTest, TheChannelsAreActuallyModulated)
+{
+    // A stuck channel would give a constant output. Music has to vary.
+    ASSERT_TRUE(reach_the_title_screen());
+    ASSERT_TRUE(run_with_start(120, 5));
+    (void)machine_.apu().take_samples();
+
+    f32 lowest = 1.0f;
+    f32 highest = 0.0f;
+    for (int i = 0; i < 120; ++i) {
+        ASSERT_TRUE(machine_.run_frame());
+        for (f32 sample : machine_.apu().take_samples()) {
+            lowest = std::min(lowest, sample);
+            highest = std::max(highest, sample);
+        }
+    }
+
+    EXPECT_GT(highest - lowest, 0.05f) << "the output swings, so something is playing";
+}
+
+TEST_F(InputTest, SoundKeepsComingWhileTheCpuRuns)
+{
+    // The APU is clocked from the same loop as the CPU and PPU. If the
+    // machine forgot to tick it the sample buffer would stop growing.
+    ASSERT_TRUE(reach_the_title_screen());
+    ASSERT_TRUE(run_with_start(120, 5));
+
+    (void)machine_.apu().take_samples();
+    ASSERT_TRUE(machine_.run_frame());
+    const std::size_t after_one = machine_.apu().samples_pending();
+    ASSERT_TRUE(machine_.run_frame());
+    const std::size_t after_two = machine_.apu().samples_pending();
+
+    EXPECT_GT(after_one, 500u) << "about 735 samples fit in a frame";
+    EXPECT_GT(after_two, after_one);
 }

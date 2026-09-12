@@ -33,6 +33,7 @@ add_executable(fc_tests
     test_real_rom.cpp
     test_ppu.cpp
     test_controller.cpp
+    test_apu.cpp
 )
 
 target_link_libraries(fc_tests PRIVATE

@@ -8,12 +8,19 @@
 //
 //     Cartridge ---+
 //                  |
-//     Ppu ---------+--- NesBus --- Cpu
+//     Ppu ---------+
 //                  |
-//     (controller) +
+//     Apu ---------+--- NesBus --- Cpu
+//                  |
+//     Controller --+
 //
-// The CPU and the PPU run at different speeds. The PPU clock is exactly three
-// times the CPU clock, and they are not synchronised in any other way - the
+// Three clocks, all derived from one crystal:
+//
+//     CPU   1.789773 MHz   the reference
+//     PPU   5.369319 MHz   exactly 3x the CPU
+//     APU   0.894886 MHz   exactly half the CPU
+//
+// The CPU and the PPU are not synchronised in any other way - the
 // PPU does not wait for the CPU and the CPU cannot see the PPU except through
 // eight registers. That relationship is the whole reason NES games are written
 // the way they are:
@@ -33,6 +40,7 @@
 
 #include "core/cpu/cpu.hpp"
 #include "core/nes/bus.hpp"
+#include "core/nes/apu.hpp"
 #include "core/nes/cartridge.hpp"
 #include "core/nes/controller.hpp"
 #include "core/nes/ppu.hpp"
@@ -69,6 +77,7 @@ public:
 
     [[nodiscard]] Cpu& cpu() noexcept { return cpu_; }
     [[nodiscard]] Ppu& ppu() noexcept { return ppu_; }
+    [[nodiscard]] Apu& apu() noexcept { return apu_; }
     [[nodiscard]] NesBus& bus() noexcept { return bus_; }
     [[nodiscard]] Cartridge* cartridge() noexcept { return cartridge_.get(); }
     [[nodiscard]] const Cartridge* cartridge() const noexcept { return cartridge_.get(); }
@@ -105,6 +114,7 @@ private:
     // Declaration order matters: each one is handed to the next.
     std::unique_ptr<Cartridge> cartridge_;
     Ppu ppu_;
+    Apu apu_;
     NesBus bus_;
     Cpu cpu_;
 };

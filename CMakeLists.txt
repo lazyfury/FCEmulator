@@ -42,6 +42,7 @@ add_library(fc_core
     src/core/nes/cartridge.cpp
     src/core/nes/ppu.cpp
     src/core/nes/machine.cpp
+    src/core/nes/apu.cpp
     src/core/cpu/opcode.cpp
     src/core/cpu/disassembler.cpp
 )
@@ -81,6 +82,9 @@ target_link_libraries(demo_ppu PRIVATE fc_core)
 
 add_executable(demo_input tools/demo_input.cpp)
 target_link_libraries(demo_input PRIVATE fc_core)
+
+add_executable(demo_apu tools/demo_apu.cpp)
+target_link_libraries(demo_apu PRIVATE fc_core)
 
 # ---------------------------------------------------------------------------
 # Tests

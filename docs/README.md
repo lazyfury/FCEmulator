@@ -29,13 +29,14 @@ docs/
 | [nes/ines-format.md](nes/ines-format.md) | ✅ |
 | [nes/ppu.md](nes/ppu.md) | ✅ |
 | [nes/controllers.md](nes/controllers.md) | ✅ |
+| [nes/apu.md](nes/apu.md) | ✅ |
 | [architecture/bus.md](architecture/bus.md) | ✅ |
 
 ## 待完成
 
 | 文档 | 阶段 |
 |------|------|
-| nes/apu.md | Phase 6 |
+| architecture/overview.md | Phase 7 |
 | nes/mappers.md | Phase 3 后续 |
 | assembly/mnemonics.md | Phase 0.3 |
 | assembly/addressing-modes.md | Phase 0.4 |

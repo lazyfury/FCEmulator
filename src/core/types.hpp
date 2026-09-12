@@ -23,6 +23,9 @@ using u16 = std::uint16_t;  // 2 bytes : a NES address (0x0000 - 0xFFFF)
 using u32 = std::uint32_t;
 using u64 = std::uint64_t;
 
+using f32 = float;
+using f64 = double;
+
 using s8  = std::int8_t;    // signed view of one byte (-128 .. 127)
 using s16 = std::int16_t;   // signed view of two bytes
 using s32 = std::int32_t;

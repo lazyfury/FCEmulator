@@ -1,6 +1,6 @@
 # NES 硬件规范 nes/
 
-> 状态：**Phase 2 / 3 / 4 / 5 已完成**（内存映射 + 卡带 + PPU + 手柄），其余待 Phase 6 填充
+> 状态：**Phase 2-6 全部完成**（内存映射 + 卡带 + PPU + 手柄 + APU）
 
 ## 已完成
 
@@ -23,8 +23,12 @@
 | **手柄串行协议** | [controllers.md](controllers.md) |
 | **锁存与两个端口** | [controllers.md](controllers.md) 第 2-3 节 |
 | **脚本输入与真实按键等价** | [controllers.md](controllers.md) 第 9 节 |
+| **五个声道** | [apu.md](apu.md) |
+| **包络 / 长度 / 扫频** | [apu.md](apu.md) 第 4-5 节 |
+| **帧序列器** | [apu.md](apu.md) 第 7 节 |
+| **非线性混音** | [apu.md](apu.md) 第 8 节 |
 | 实现 | `src/core/nes/` |
-| 实现 | `src/core/nes/ppu.{hpp,cpp}` `framebuffer.hpp` `machine.{hpp,cpp}` |
+| 实现 | `src/core/nes/ppu.{hpp,cpp}` `apu.{hpp,cpp}` `framebuffer.hpp` `machine.{hpp,cpp}` |
 | 可运行讲解 | `tools/demo_bus.cpp` `tools/demo_cartridge.cpp` `tools/demo_ppu.cpp` `tools/demo_input.cpp` |
 
 ```bash
@@ -79,5 +83,4 @@ $4020 - $FFFF   卡带（Mapper 决定布局）
 
 ## 待写文档
 
-- `apu.md` — 各声道与混音（Phase 6）
 - `mappers.md` — Mapper 1/2/3/4（Phase 3 后续）

@@ -9,6 +9,12 @@ Machine::Machine()
     // what receives an OAM DMA.
     bus_.set_ppu(&ppu_);
     bus_.set_oam_target(&ppu_);
+
+    // The APU answers $4000-$4017, and its DMC channel reads sample data back
+    // out of CPU memory. That read goes through the bus, which is why the APU
+    // is handed a pointer to it here rather than owning one.
+    bus_.set_apu(&apu_);
+    apu_.set_memory_reader(&bus_);
 }
 
 bool Machine::load_rom(std::span<const u8> rom, std::string& error)
@@ -31,6 +37,7 @@ bool Machine::load_rom(std::span<const u8> rom, std::string& error)
 void Machine::reset()
 {
     ppu_.reset();
+    apu_.reset();
     cpu_.reset();
 }
 
@@ -47,6 +54,9 @@ bool Machine::run_instructions(int count)
         // handshake: it simply gets three dots for every CPU cycle that
         // passed, and it does not care what the CPU was doing.
         ppu_.tick(cpu_cycles * Ppu::kPpuCyclesPerCpuCycle);
+
+        // The APU runs at half the CPU clock and divides internally.
+        apu_.tick_cpu(cpu_cycles);
 
         if (ppu_.consume_nmi()) {
             cpu_.request_nmi();
@@ -72,6 +82,7 @@ bool Machine::run_frame()
 
         const int cpu_cycles = cpu_.step();
         ppu_.tick(cpu_cycles * Ppu::kPpuCyclesPerCpuCycle);
+        apu_.tick_cpu(cpu_cycles);
 
         if (ppu_.consume_nmi()) {
             cpu_.request_nmi();
