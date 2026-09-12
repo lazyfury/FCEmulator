@@ -36,6 +36,7 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 add_library(fc_core
     src/core/bit.cpp
     src/core/cpu/cpu.cpp
+    src/core/cpu/addressing.cpp
     src/core/cpu/opcode.cpp
     src/core/cpu/disassembler.cpp
 )
@@ -57,6 +58,9 @@ target_link_libraries(demo_cpu PRIVATE fc_core)
 
 add_executable(demo_disasm tools/demo_disasm.cpp)
 target_link_libraries(demo_disasm PRIVATE fc_core)
+
+add_executable(demo_addressing tools/demo_addressing.cpp)
+target_link_libraries(demo_addressing PRIVATE fc_core)
 
 # ---------------------------------------------------------------------------
 # Tests

@@ -33,7 +33,7 @@ char hex_digit(u8 nibble)
 
 [[nodiscard]] std::string build_text(const DecodedInstruction& insn)
 {
-    const std::string name = insn.info.mnemonic;
+    const std::string name = insn.info.mnemonic();
 
     switch (insn.info.mode) {
     case AddressingMode::Implied:
@@ -132,7 +132,7 @@ DecodedInstruction disassemble(std::span<const u8> bytes, u16 address)
     insn.address = address;
 
     if (bytes.empty()) {
-        insn.info = OpcodeInfo{ "???", AddressingMode::Unknown };
+        insn.info = OpcodeInfo{ Operation::Unknown, AddressingMode::Unknown };
         insn.length = 0;
         insn.truncated = true;
         insn.text = "<no more bytes>";

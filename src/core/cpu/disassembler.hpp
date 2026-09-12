@@ -29,7 +29,7 @@ struct DecodedInstruction {
     u8   opcode    = 0;
     u8   operand_lo = 0;                       // first operand byte, if any
     u8   operand_hi = 0;                       // second operand byte, if any
-    OpcodeInfo info { "???", AddressingMode::Unknown };
+    OpcodeInfo info { Operation::Unknown, AddressingMode::Unknown };
     int  length    = 1;                        // total bytes, opcode included
     bool truncated = false;                    // ran off the end of the buffer
     std::string text;                          // "LDA #$42"

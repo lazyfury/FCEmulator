@@ -8,22 +8,30 @@
 
 ## 当前状态
 
-**Phase 0.3 完成** — 6502 汇编
+**Phase 0.4 完成** — 寻址模式
 
 - [x] CMake 4.4 + C++20 + Ninja
-- [x] GoogleTest 1.18 单元测试（79 个测试全通过）
+- [x] GoogleTest 1.18 单元测试（115 个测试全通过）
 - [x] `src/core/types.hpp` 定宽整数类型
 - [x] `src/core/bit.{hpp,cpp}` 位运算工具库
 - [x] `src/core/alu.hpp` 加法器与 C/V/Z/N 标志
 - [x] `src/core/bus.hpp` / `flat_bus.hpp` 总线抽象
 - [x] `src/core/cpu/registers.hpp` A/X/Y/SP/P/PC 与 flag 读写
-- [x] `src/core/cpu/cpu.{hpp,cpp}` 取指/译码/执行循环、栈、复位向量
-- [x] `src/core/cpu/opcode.{hpp,cpp}` 完整 256 项 opcode 表（151 合法）
+- [x] `src/core/cpu/opcode.{hpp,cpp}` 完整 256 项表 + Operation 枚举（151 合法）
 - [x] `src/core/cpu/disassembler.{hpp,cpp}` 字节流 ↔ 汇编
-- [x] 4 个教学 demo（bitwise / overflow / cpu / disasm）
-- [x] `docs/computer-science/` 七章基础文档
+- [x] `src/core/cpu/addressing.{hpp,cpp}` 有效地址计算（13 种模式）
+- [x] `src/core/cpu/cpu.{hpp,cpp}` 表驱动派发，**已实现 42 个操作 / 101 个 opcode**
+- [x] 5 个教学 demo
+- [x] `docs/computer-science/` 八章基础文档
 
-**下一步：** Phase 0.4 — 寻址模式（有效地址计算）
+**下一步：** Phase 1 — 完整指令集与周期精确
+
+```
+还差：ADC SBC AND ORA EOR BIT
+      PHA PHP PLA PLP
+      JSR RTS RTI BRK
+      + 每个 opcode 的精确周期表 + 中断
+```
 
 完整路线图见 [AGENTS.md](AGENTS.md)。
 
@@ -52,6 +60,7 @@ ctest --test-dir build --output-on-failure
 ./build/demo_overflow   # C 与 V 标志、有符号比较
 ./build/demo_cpu        # 取指 / 译码 / 执行循环
 ./build/demo_disasm     # 汇编 <-> 机器码
+./build/demo_addressing # 有效地址、zero page 回绕、JMP 硬件 bug
 ```
 
 ---
@@ -74,7 +83,7 @@ FCEmulator/
 │   │   ├── alu.hpp        加法器与标志位
 │   │   ├── bus.hpp        总线抽象
 │   │   ├── flat_bus.hpp   测试用 64KB 内存
-│   │   └── cpu/           寄存器、取指译码执行、opcode 表、反汇编器
+│   │   └── cpu/           寄存器、opcode 表、反汇编、寻址、表驱动派发
 │   └── frontend/        macOS 前端（Swift/Metal，待实现）
 ├── tools/               教学 demo 与命令行工具
 └── tests/               单元测试
@@ -105,8 +114,9 @@ FCEmulator/
 Phase 0   工程基础          [done]
 Phase 0.1 二进制基础        [done]
 Phase 0.2 CPU 基础          [done]
-Phase 0.3 6502 汇编         [done] <-- 你在这里
-Phase 0.4 寻址模式          [next]
+Phase 0.3 6502 汇编         [done]
+Phase 0.4 寻址模式          [done] <-- 你在这里
+Phase 1   完整 6502 + 周期精确  [next]
 Phase 1   6502 CPU
 Phase 2   NES Bus
 Phase 3   Cartridge / Mapper

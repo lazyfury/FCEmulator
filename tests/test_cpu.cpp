@@ -321,26 +321,44 @@ TEST(Cpu, ImplementsAgreesWithExecution)
     }
 }
 
-TEST(Cpu, ImplementsExactlyThePhaseZeroPointTwoSet)
+TEST(Cpu, ImplementsThePhaseZeroPointFourSet)
 {
-    const u8 implemented[] = {
-        0xA9, 0xA2, 0xA0,   // LDA/LDX/LDY #imm
-        0xAA, 0xA8, 0x8A, 0x98,  // TAX/TAY/TXA/TYA
-        0xE8, 0xC8, 0xCA, 0x88,  // INX/INY/DEX/DEY
-        0xEA,               // NOP
-    };
-
+    // Phase 0.4 implements 42 operations. Because one handler covers every
+    // addressing mode an operation supports, that is 101 opcodes:
+    //
+    //   loads / stores   31   (LDA 8, LDX 5, LDY 5, STA 7, STX 3, STY 3)
+    //   implied          18   (6 transfers, 4 inc/dec, 7 flags, NOP)
+    //   compares         14   (CMP 8, CPX 3, CPY 3)
+    //   inc/dec memory    8   (INC 4, DEC 4)
+    //   shifts/rotates   20   (ASL/LSR/ROL/ROR, 5 modes each)
+    //   JMP               2   (absolute, indirect)
+    //   branches          8
+    //   ---------------------
+    //                   101
     int count = 0;
     for (int i = 0; i < 256; ++i) {
         if (Cpu::implements(static_cast<u8>(i))) {
             ++count;
         }
     }
-    EXPECT_EQ(count, 12);
+    EXPECT_EQ(count, 101);
 
-    for (u8 op : implemented) {
-        EXPECT_TRUE(Cpu::implements(op)) << "opcode " << bit::to_hex(op);
-    }
+    // Spot checks across every addressing mode.
+    EXPECT_TRUE(Cpu::implements(0xA9));   // LDA #imm
+    EXPECT_TRUE(Cpu::implements(0xBD));   // LDA $8000,X
+    EXPECT_TRUE(Cpu::implements(0xB1));   // LDA ($42),Y
+    EXPECT_TRUE(Cpu::implements(0x9D));   // STA $8000,X
+    EXPECT_TRUE(Cpu::implements(0x6C));   // JMP ($8000)
+    EXPECT_TRUE(Cpu::implements(0xD0));   // BNE
+    EXPECT_TRUE(Cpu::implements(0x0A));   // ASL A
+
+    // Still Phase 1.
+    EXPECT_FALSE(Cpu::implements(0x69));  // ADC #imm
+    EXPECT_FALSE(Cpu::implements(0xE9));  // SBC #imm
+    EXPECT_FALSE(Cpu::implements(0x20));  // JSR
+    EXPECT_FALSE(Cpu::implements(0x48));  // PHA
+    EXPECT_FALSE(Cpu::implements(0x00));  // BRK
+    EXPECT_FALSE(Cpu::implements(0x02));  // illegal
 }
 
 // ===========================================================================

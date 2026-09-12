@@ -159,9 +159,9 @@ TEST(OpcodeTable, CoversAllTwoHundredFiftySixCodes)
         const auto& info = opcode_info(static_cast<u8>(i));
         if (info.is_legal()) {
             ++legal;
-            EXPECT_STRNE(info.mnemonic, "???") << "opcode " << i;
+            EXPECT_STRNE(info.mnemonic(), "???") << "opcode " << i;
         } else {
-            EXPECT_STREQ(info.mnemonic, "???") << "opcode " << i;
+            EXPECT_STREQ(info.mnemonic(), "???") << "opcode " << i;
         }
     }
 
@@ -245,7 +245,7 @@ TEST(OpcodeTable, IncDecGroupHasNoAccumulatorMode)
     };
 
     for (const auto& c : cases) {
-        EXPECT_STREQ(opcode_info(static_cast<u8>(c.base + 0x00)).mnemonic, c.name);
+        EXPECT_STREQ(opcode_info(static_cast<u8>(c.base + 0x00)).mnemonic(), c.name);
         EXPECT_EQ(opcode_info(static_cast<u8>(c.base + 0x00)).mode, AddressingMode::ZeroPage);
         EXPECT_EQ(opcode_info(static_cast<u8>(c.base + 0x08)).mode, AddressingMode::Absolute);
         EXPECT_EQ(opcode_info(static_cast<u8>(c.base + 0x10)).mode, AddressingMode::ZeroPageX);
@@ -253,12 +253,12 @@ TEST(OpcodeTable, IncDecGroupHasNoAccumulatorMode)
 
         // The +0x04 slot belongs to that row's implied column, NOT to DEC/INC.
         // There is no "DEC A" on the 6502.
-        EXPECT_STREQ(opcode_info(c.implied_opcode).mnemonic, c.implied_name);
+        EXPECT_STREQ(opcode_info(c.implied_opcode).mnemonic(), c.implied_name);
         EXPECT_EQ(opcode_info(c.implied_opcode).mode, AddressingMode::Implied);
 
         // And the +0x14 slot is simply undefined for these rows.
         EXPECT_FALSE(opcode_info(static_cast<u8>(c.base + 0x14)).is_legal());
-        EXPECT_STRNE(opcode_info(static_cast<u8>(c.base + 0x04)).mnemonic, c.name);
+        EXPECT_STRNE(opcode_info(static_cast<u8>(c.base + 0x04)).mnemonic(), c.name);
     }
 }
 

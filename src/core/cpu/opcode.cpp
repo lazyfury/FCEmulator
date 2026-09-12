@@ -4,6 +4,7 @@ namespace fc {
 namespace {
 
 using AM = AddressingMode;
+using Op = Operation;
 
 // ---------------------------------------------------------------------------
 // The official NMOS 6502 opcode matrix.
@@ -11,9 +12,9 @@ using AM = AddressingMode;
 // Layout: 16 rows of 16. The row is the high nibble, the column the low one.
 // Read it in groups of four to keep the rows scannable.
 //
-// "???" with AM::Unknown marks the 105 codes the official chip leaves
-// undefined. Those are the illegal opcodes - some of them do something on
-// real hardware, but nothing here relies on that.
+// Op::Unknown marks the 105 codes the official chip leaves undefined.
+// Those are the illegal opcodes - some of them do something on real
+// hardware, but nothing here relies on that.
 //
 // The table is mechanical but it is also the single source of truth for
 // instruction length and operand layout. It is worth reading once, slowly.
@@ -22,100 +23,100 @@ using AM = AddressingMode;
 constexpr OpcodeInfo kOpcodeTable[256] = {
 
     // 0x0_ : BRK ORA     ASL PHP
-    { "BRK", AM::Implied },   { "ORA", AM::IndirectX }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "ORA", AM::ZeroPage },  { "ASL", AM::ZeroPage }, { "???", AM::Unknown },
-    { "PHP", AM::Implied },   { "ORA", AM::Immediate }, { "ASL", AM::Accumulator }, { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "ORA", AM::Absolute },  { "ASL", AM::Absolute }, { "???", AM::Unknown },
+    { Op::BRK, AM::Implied },   { Op::ORA, AM::IndirectX }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::ORA, AM::ZeroPage },  { Op::ASL, AM::ZeroPage }, { Op::Unknown, AM::Unknown },
+    { Op::PHP, AM::Implied },   { Op::ORA, AM::Immediate }, { Op::ASL, AM::Accumulator }, { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::ORA, AM::Absolute },  { Op::ASL, AM::Absolute }, { Op::Unknown, AM::Unknown },
 
     // 0x1_ : BPL ORA     ASL CLC
-    { "BPL", AM::Relative },  { "ORA", AM::IndirectY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "ORA", AM::ZeroPageX }, { "ASL", AM::ZeroPageX }, { "???", AM::Unknown },
-    { "CLC", AM::Implied },   { "ORA", AM::AbsoluteY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "ORA", AM::AbsoluteX }, { "ASL", AM::AbsoluteX }, { "???", AM::Unknown },
+    { Op::BPL, AM::Relative },  { Op::ORA, AM::IndirectY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::ORA, AM::ZeroPageX }, { Op::ASL, AM::ZeroPageX }, { Op::Unknown, AM::Unknown },
+    { Op::CLC, AM::Implied },   { Op::ORA, AM::AbsoluteY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::ORA, AM::AbsoluteX }, { Op::ASL, AM::AbsoluteX }, { Op::Unknown, AM::Unknown },
 
     // 0x2_ : JSR AND BIT ROL PLP
-    { "JSR", AM::Absolute },  { "AND", AM::IndirectX }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "BIT", AM::ZeroPage },  { "AND", AM::ZeroPage },  { "ROL", AM::ZeroPage }, { "???", AM::Unknown },
-    { "PLP", AM::Implied },   { "AND", AM::Immediate }, { "ROL", AM::Accumulator }, { "???", AM::Unknown },
-    { "BIT", AM::Absolute },  { "AND", AM::Absolute },  { "ROL", AM::Absolute }, { "???", AM::Unknown },
+    { Op::JSR, AM::Absolute },  { Op::AND, AM::IndirectX }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::BIT, AM::ZeroPage },  { Op::AND, AM::ZeroPage },  { Op::ROL, AM::ZeroPage }, { Op::Unknown, AM::Unknown },
+    { Op::PLP, AM::Implied },   { Op::AND, AM::Immediate }, { Op::ROL, AM::Accumulator }, { Op::Unknown, AM::Unknown },
+    { Op::BIT, AM::Absolute },  { Op::AND, AM::Absolute },  { Op::ROL, AM::Absolute }, { Op::Unknown, AM::Unknown },
 
     // 0x3_ : BMI AND ROL SEC
-    { "BMI", AM::Relative },  { "AND", AM::IndirectY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "AND", AM::ZeroPageX }, { "ROL", AM::ZeroPageX }, { "???", AM::Unknown },
-    { "SEC", AM::Implied },   { "AND", AM::AbsoluteY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "AND", AM::AbsoluteX }, { "ROL", AM::AbsoluteX }, { "???", AM::Unknown },
+    { Op::BMI, AM::Relative },  { Op::AND, AM::IndirectY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::AND, AM::ZeroPageX }, { Op::ROL, AM::ZeroPageX }, { Op::Unknown, AM::Unknown },
+    { Op::SEC, AM::Implied },   { Op::AND, AM::AbsoluteY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::AND, AM::AbsoluteX }, { Op::ROL, AM::AbsoluteX }, { Op::Unknown, AM::Unknown },
 
     // 0x4_ : RTI EOR LSR PHA JMP
-    { "RTI", AM::Implied },   { "EOR", AM::IndirectX }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "EOR", AM::ZeroPage },  { "LSR", AM::ZeroPage }, { "???", AM::Unknown },
-    { "PHA", AM::Implied },   { "EOR", AM::Immediate }, { "LSR", AM::Accumulator }, { "???", AM::Unknown },
-    { "JMP", AM::Absolute },  { "EOR", AM::Absolute },  { "LSR", AM::Absolute }, { "???", AM::Unknown },
+    { Op::RTI, AM::Implied },   { Op::EOR, AM::IndirectX }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::EOR, AM::ZeroPage },  { Op::LSR, AM::ZeroPage }, { Op::Unknown, AM::Unknown },
+    { Op::PHA, AM::Implied },   { Op::EOR, AM::Immediate }, { Op::LSR, AM::Accumulator }, { Op::Unknown, AM::Unknown },
+    { Op::JMP, AM::Absolute },  { Op::EOR, AM::Absolute },  { Op::LSR, AM::Absolute }, { Op::Unknown, AM::Unknown },
 
     // 0x5_ : BVC EOR LSR CLI
-    { "BVC", AM::Relative },  { "EOR", AM::IndirectY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "EOR", AM::ZeroPageX }, { "LSR", AM::ZeroPageX }, { "???", AM::Unknown },
-    { "CLI", AM::Implied },   { "EOR", AM::AbsoluteY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "EOR", AM::AbsoluteX }, { "LSR", AM::AbsoluteX }, { "???", AM::Unknown },
+    { Op::BVC, AM::Relative },  { Op::EOR, AM::IndirectY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::EOR, AM::ZeroPageX }, { Op::LSR, AM::ZeroPageX }, { Op::Unknown, AM::Unknown },
+    { Op::CLI, AM::Implied },   { Op::EOR, AM::AbsoluteY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::EOR, AM::AbsoluteX }, { Op::LSR, AM::AbsoluteX }, { Op::Unknown, AM::Unknown },
 
     // 0x6_ : RTS ADC ROR PLA JMP(ind)
-    { "RTS", AM::Implied },   { "ADC", AM::IndirectX }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "ADC", AM::ZeroPage },  { "ROR", AM::ZeroPage }, { "???", AM::Unknown },
-    { "PLA", AM::Implied },   { "ADC", AM::Immediate }, { "ROR", AM::Accumulator }, { "???", AM::Unknown },
-    { "JMP", AM::Indirect },  { "ADC", AM::Absolute },  { "ROR", AM::Absolute }, { "???", AM::Unknown },
+    { Op::RTS, AM::Implied },   { Op::ADC, AM::IndirectX }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::ADC, AM::ZeroPage },  { Op::ROR, AM::ZeroPage }, { Op::Unknown, AM::Unknown },
+    { Op::PLA, AM::Implied },   { Op::ADC, AM::Immediate }, { Op::ROR, AM::Accumulator }, { Op::Unknown, AM::Unknown },
+    { Op::JMP, AM::Indirect },  { Op::ADC, AM::Absolute },  { Op::ROR, AM::Absolute }, { Op::Unknown, AM::Unknown },
 
     // 0x7_ : BVS ADC ROR SEI
-    { "BVS", AM::Relative },  { "ADC", AM::IndirectY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "ADC", AM::ZeroPageX }, { "ROR", AM::ZeroPageX }, { "???", AM::Unknown },
-    { "SEI", AM::Implied },   { "ADC", AM::AbsoluteY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "ADC", AM::AbsoluteX }, { "ROR", AM::AbsoluteX }, { "???", AM::Unknown },
+    { Op::BVS, AM::Relative },  { Op::ADC, AM::IndirectY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::ADC, AM::ZeroPageX }, { Op::ROR, AM::ZeroPageX }, { Op::Unknown, AM::Unknown },
+    { Op::SEI, AM::Implied },   { Op::ADC, AM::AbsoluteY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::ADC, AM::AbsoluteX }, { Op::ROR, AM::AbsoluteX }, { Op::Unknown, AM::Unknown },
 
     // 0x8_ : STA STX STY DEY TXA
-    { "???", AM::Unknown },   { "STA", AM::IndirectX }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "STY", AM::ZeroPage },  { "STA", AM::ZeroPage },  { "STX", AM::ZeroPage }, { "???", AM::Unknown },
-    { "DEY", AM::Implied },   { "???", AM::Unknown },   { "TXA", AM::Implied },  { "???", AM::Unknown },
-    { "STY", AM::Absolute },  { "STA", AM::Absolute },  { "STX", AM::Absolute }, { "???", AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::STA, AM::IndirectX }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::STY, AM::ZeroPage },  { Op::STA, AM::ZeroPage },  { Op::STX, AM::ZeroPage }, { Op::Unknown, AM::Unknown },
+    { Op::DEY, AM::Implied },   { Op::Unknown, AM::Unknown },   { Op::TXA, AM::Implied },  { Op::Unknown, AM::Unknown },
+    { Op::STY, AM::Absolute },  { Op::STA, AM::Absolute },  { Op::STX, AM::Absolute }, { Op::Unknown, AM::Unknown },
 
     // 0x9_ : BCC STA STY STX TYA TXS
-    { "BCC", AM::Relative },  { "STA", AM::IndirectY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "STY", AM::ZeroPageX }, { "STA", AM::ZeroPageX }, { "STX", AM::ZeroPageY }, { "???", AM::Unknown },
-    { "TYA", AM::Implied },   { "STA", AM::AbsoluteY }, { "TXS", AM::Implied },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "STA", AM::AbsoluteX }, { "???", AM::Unknown },  { "???", AM::Unknown },
+    { Op::BCC, AM::Relative },  { Op::STA, AM::IndirectY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::STY, AM::ZeroPageX }, { Op::STA, AM::ZeroPageX }, { Op::STX, AM::ZeroPageY }, { Op::Unknown, AM::Unknown },
+    { Op::TYA, AM::Implied },   { Op::STA, AM::AbsoluteY }, { Op::TXS, AM::Implied },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::STA, AM::AbsoluteX }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
 
     // 0xA_ : LDY LDX LDA TAY TAX
-    { "LDY", AM::Immediate }, { "LDA", AM::IndirectX }, { "LDX", AM::Immediate }, { "???", AM::Unknown },
-    { "LDY", AM::ZeroPage },  { "LDA", AM::ZeroPage },  { "LDX", AM::ZeroPage }, { "???", AM::Unknown },
-    { "TAY", AM::Implied },   { "LDA", AM::Immediate }, { "TAX", AM::Implied },  { "???", AM::Unknown },
-    { "LDY", AM::Absolute },  { "LDA", AM::Absolute },  { "LDX", AM::Absolute }, { "???", AM::Unknown },
+    { Op::LDY, AM::Immediate }, { Op::LDA, AM::IndirectX }, { Op::LDX, AM::Immediate }, { Op::Unknown, AM::Unknown },
+    { Op::LDY, AM::ZeroPage },  { Op::LDA, AM::ZeroPage },  { Op::LDX, AM::ZeroPage }, { Op::Unknown, AM::Unknown },
+    { Op::TAY, AM::Implied },   { Op::LDA, AM::Immediate }, { Op::TAX, AM::Implied },  { Op::Unknown, AM::Unknown },
+    { Op::LDY, AM::Absolute },  { Op::LDA, AM::Absolute },  { Op::LDX, AM::Absolute }, { Op::Unknown, AM::Unknown },
 
     // 0xB_ : BCS LDA LDY CLV TSX
-    { "BCS", AM::Relative },  { "LDA", AM::IndirectY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "LDY", AM::ZeroPageX }, { "LDA", AM::ZeroPageX }, { "LDX", AM::ZeroPageY }, { "???", AM::Unknown },
-    { "CLV", AM::Implied },   { "LDA", AM::AbsoluteY }, { "TSX", AM::Implied },  { "???", AM::Unknown },
-    { "LDY", AM::AbsoluteX }, { "LDA", AM::AbsoluteX }, { "LDX", AM::AbsoluteY }, { "???", AM::Unknown },
+    { Op::BCS, AM::Relative },  { Op::LDA, AM::IndirectY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::LDY, AM::ZeroPageX }, { Op::LDA, AM::ZeroPageX }, { Op::LDX, AM::ZeroPageY }, { Op::Unknown, AM::Unknown },
+    { Op::CLV, AM::Implied },   { Op::LDA, AM::AbsoluteY }, { Op::TSX, AM::Implied },  { Op::Unknown, AM::Unknown },
+    { Op::LDY, AM::AbsoluteX }, { Op::LDA, AM::AbsoluteX }, { Op::LDX, AM::AbsoluteY }, { Op::Unknown, AM::Unknown },
 
     // 0xC_ : CPY CMP DEC INY DEX
-    { "CPY", AM::Immediate }, { "CMP", AM::IndirectX }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "CPY", AM::ZeroPage },  { "CMP", AM::ZeroPage },  { "DEC", AM::ZeroPage }, { "???", AM::Unknown },
-    { "INY", AM::Implied },   { "CMP", AM::Immediate }, { "DEX", AM::Implied },  { "???", AM::Unknown },
-    { "CPY", AM::Absolute },  { "CMP", AM::Absolute },  { "DEC", AM::Absolute }, { "???", AM::Unknown },
+    { Op::CPY, AM::Immediate }, { Op::CMP, AM::IndirectX }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::CPY, AM::ZeroPage },  { Op::CMP, AM::ZeroPage },  { Op::DEC, AM::ZeroPage }, { Op::Unknown, AM::Unknown },
+    { Op::INY, AM::Implied },   { Op::CMP, AM::Immediate }, { Op::DEX, AM::Implied },  { Op::Unknown, AM::Unknown },
+    { Op::CPY, AM::Absolute },  { Op::CMP, AM::Absolute },  { Op::DEC, AM::Absolute }, { Op::Unknown, AM::Unknown },
 
     // 0xD_ : BNE CMP DEC CLD
-    { "BNE", AM::Relative },  { "CMP", AM::IndirectY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "CMP", AM::ZeroPageX }, { "DEC", AM::ZeroPageX }, { "???", AM::Unknown },
-    { "CLD", AM::Implied },   { "CMP", AM::AbsoluteY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "CMP", AM::AbsoluteX }, { "DEC", AM::AbsoluteX }, { "???", AM::Unknown },
+    { Op::BNE, AM::Relative },  { Op::CMP, AM::IndirectY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::CMP, AM::ZeroPageX }, { Op::DEC, AM::ZeroPageX }, { Op::Unknown, AM::Unknown },
+    { Op::CLD, AM::Implied },   { Op::CMP, AM::AbsoluteY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::CMP, AM::AbsoluteX }, { Op::DEC, AM::AbsoluteX }, { Op::Unknown, AM::Unknown },
 
     // 0xE_ : CPX SBC INC INX NOP
-    { "CPX", AM::Immediate }, { "SBC", AM::IndirectX }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "CPX", AM::ZeroPage },  { "SBC", AM::ZeroPage },  { "INC", AM::ZeroPage }, { "???", AM::Unknown },
-    { "INX", AM::Implied },   { "SBC", AM::Immediate }, { "NOP", AM::Implied },  { "???", AM::Unknown },
-    { "CPX", AM::Absolute },  { "SBC", AM::Absolute },  { "INC", AM::Absolute }, { "???", AM::Unknown },
+    { Op::CPX, AM::Immediate }, { Op::SBC, AM::IndirectX }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::CPX, AM::ZeroPage },  { Op::SBC, AM::ZeroPage },  { Op::INC, AM::ZeroPage }, { Op::Unknown, AM::Unknown },
+    { Op::INX, AM::Implied },   { Op::SBC, AM::Immediate }, { Op::NOP, AM::Implied },  { Op::Unknown, AM::Unknown },
+    { Op::CPX, AM::Absolute },  { Op::SBC, AM::Absolute },  { Op::INC, AM::Absolute }, { Op::Unknown, AM::Unknown },
 
     // 0xF_ : BEQ SBC INC SED
-    { "BEQ", AM::Relative },  { "SBC", AM::IndirectY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "SBC", AM::ZeroPageX }, { "INC", AM::ZeroPageX }, { "???", AM::Unknown },
-    { "SED", AM::Implied },   { "SBC", AM::AbsoluteY }, { "???", AM::Unknown },  { "???", AM::Unknown },
-    { "???", AM::Unknown },   { "SBC", AM::AbsoluteX }, { "INC", AM::AbsoluteX }, { "???", AM::Unknown },
+    { Op::BEQ, AM::Relative },  { Op::SBC, AM::IndirectY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::SBC, AM::ZeroPageX }, { Op::INC, AM::ZeroPageX }, { Op::Unknown, AM::Unknown },
+    { Op::SED, AM::Implied },   { Op::SBC, AM::AbsoluteY }, { Op::Unknown, AM::Unknown },  { Op::Unknown, AM::Unknown },
+    { Op::Unknown, AM::Unknown },   { Op::SBC, AM::AbsoluteX }, { Op::INC, AM::AbsoluteX }, { Op::Unknown, AM::Unknown },
 };
 
 static_assert(sizeof(kOpcodeTable) / sizeof(kOpcodeTable[0]) == 256,

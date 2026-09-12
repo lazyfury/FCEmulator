@@ -336,29 +336,31 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 
 # 7. Current Implementation Status
 
-当前：**Phase 0.3 完成**
+当前：**Phase 0.4 完成**
 
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架（79 个单元测试全通过）
-- `docs/computer-science/` 基础文档（binary / hexadecimal / twos-complement / bitwise / overflow-flag / cpu / assembly）
+- GoogleTest 测试框架（115 个单元测试全通过）
+- `docs/computer-science/` 基础文档（binary / hexadecimal / twos-complement / bitwise / overflow-flag / cpu / assembly / addressing-modes）
 - `src/core/types.hpp` 定宽整数类型
 - `src/core/bit.{hpp,cpp}` 位运算工具库
 - `src/core/alu.hpp` 加法器与 C/V/Z/N 标志
 - `src/core/bus.hpp` / `flat_bus.hpp` 总线抽象
 - `src/core/cpu/registers.hpp` A/X/Y/SP/P/PC 与 flag 读写
-- `src/core/cpu/cpu.{hpp,cpp}` 取指/译码/执行循环、栈、复位向量
-- `src/core/cpu/opcode.{hpp,cpp}` 完整 256 项 opcode 表（151 合法）
+- `src/core/cpu/opcode.{hpp,cpp}` 完整 256 项表 + Operation 枚举（151 合法、56 助记符）
 - `src/core/cpu/disassembler.{hpp,cpp}` 字节流 <-> 汇编
-- 4 个教学 demo（bitwise / overflow / cpu / disasm）
-- 10 个测试文件中的 5 个
+- `src/core/cpu/addressing.{hpp,cpp}` 有效地址计算（13 种模式）
+- `src/core/cpu/cpu.{hpp,cpp}` 表驱动派发；**42 个操作 / 101 个 opcode 已实现**
+- 5 个教学 demo；5 个测试文件
 
 未完成：
 
 ```
-addressing mode resolution (effective address)
-6502 complete instruction set / cycle accuracy
+ADC SBC AND ORA EOR BIT
+PHA PHP PLA PLP
+JSR RTS RTI BRK
+per-opcode cycle table / interrupts / cycle accuracy
 NES Bus memory map / Cartridge / PPU / APU / Controller
 Frontend
 ```
@@ -370,20 +372,22 @@ Frontend
 下一步必须执行：
 
 ```
-Phase 0.4 — Opcode / Addressing Mode 执行语义
+Phase 1 — 完整 6502 指令集与周期精确
 ```
 
 任务：
 
-1. 讲解“有效地址”（effective address）的概念
-2. 创建 `docs/computer-science/addressing-modes.md`
-3. 实现 `src/core/cpu/addressing.{hpp,cpp}`：把寻址模式变成有效地址
-4. 重点讲解 Zero Page 的页内回绕（`$42,X` 当 X=$C0 时读到 `$0002`）
-5. 重点讲解 `(zp,X)` 与 `(zp),Y` 的区别
-6. 为 13 种模式写单元测试，包括回绕、边界、跨页
-7. 把 `cpu.cpp` 的 `switch` 重构为基于 opcode 表的派发（消除重复）
+1. 实现 ALU 类操作：`ADC` `SBC` `AND` `ORA` `EOR` `BIT`
+   - `ADC`/`SBC` 必须同时正确设置 C 和 V（见 `docs/computer-science/overflow-flag.md`）
+   - `BIT` 把操作数的 bit 6 复制到 V
+2. 实现栈操作：`PHA` `PHP` `PLA` `PLP`
+3. 实现子程序与中断：`JSR` `RTS` `RTI` `BRK`
+4. 把 `cycle_cost()` 换成真正的**每 opcode 周期表**（256 项）
+5. 实现三个中断向量（NMI / RESET / IRQ）与 I 屏蔽位
+6. 写 `docs/computer-science/instruction-set.md` 与 `timing.md`
+7. 用已知测试 ROM 或手写的小程序做集成验证
 
-完成标志：`LDA $0200,X` 能真正从 `$0200 + X` 读出值。
+完成标志：`2 + 2 = 4` 通过 `ADC` 算出来，且进位/溢出标志全部正确。
 
 ---
 

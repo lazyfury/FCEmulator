@@ -1,6 +1,6 @@
 # 6502 汇编 assembly/
 
-> 状态：**Phase 0.3 已完成**（主体文档在 `../computer-science/assembly.md`）
+> 状态：**Phase 0.3 / 0.4 已完成**（主体文档在 `../computer-science/assembly.md` 和 `../computer-science/addressing-modes.md`）
 
 ## 已完成
 
@@ -8,23 +8,26 @@
 |------|------|
 | 助记符 / 机器码 / 汇编器 / 反汇编器 | `../computer-science/assembly.md` |
 | `#` `$` `()` `,` 四个符号 | `../computer-science/assembly.md` 第 3 节 |
+| **有效地址计算** | `../computer-science/addressing-modes.md` |
+| **Zero page 回绕** | `../computer-science/addressing-modes.md` 第 3 节 |
+| **JMP ($xxFF) 硬件 bug** | `../computer-science/addressing-modes.md` 第 4 节 |
 | 13 种寻址模式的语法 | `src/core/cpu/opcode.hpp` |
+| 13 种模式的求值 | `src/core/cpu/addressing.{hpp,cpp}` |
 | 完整 256 项 opcode 表 | `src/core/cpu/opcode.cpp` |
 | 反汇编器 | `src/core/cpu/disassembler.{hpp,cpp}` |
-| 可运行讲解 | `tools/demo_disasm.cpp` |
+| 表驱动派发 | `src/core/cpu/cpu.cpp` |
+| 可运行讲解 | `tools/demo_disasm.cpp` `tools/demo_addressing.cpp` |
 
 ```bash
 ./build/demo_disasm
+./build/demo_addressing
 ```
 
-## 待完成（Phase 0.4）
-
-寻址模式的**执行语义**——即"如何算出有效地址"。
-Phase 0.3 只做到"知道语法和长度"，Phase 0.4 才能"真正取到数据"：
+## 两个阶段的分工
 
 ```
-Phase 0.3   0xBD 00 02  ->  "LDA $0200,X"     （知道它是什么）
-Phase 0.4   0xBD 00 02  ->  读出 内存[$0200 + X] 的值  （知道怎么取）
+Phase 0.3   0xBD 00 02  ->  "LDA $0200,X"        知道它是什么
+Phase 0.4   0xBD 00 02  ->  读出 内存[$0200 + X]  知道怎么取
 ```
 
 ## 最小例子
