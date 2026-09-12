@@ -21,12 +21,13 @@ docs/
 | [computer-science/bitwise-operations.md](computer-science/bitwise-operations.md) | ✅ |
 | [computer-science/overflow-flag.md](computer-science/overflow-flag.md) | ✅ |
 | [computer-science/cpu.md](computer-science/cpu.md) | ✅ |
+| [computer-science/assembly.md](computer-science/assembly.md) | ✅ |
 
 ## 待完成
 
 | 文档 | 阶段 |
 |------|------|
-| computer-science/assembly.md | Phase 0.3 |
+| computer-science/addressing-modes.md | Phase 0.4 |
 | assembly/mnemonics.md | Phase 0.3 |
 | assembly/addressing-modes.md | Phase 0.4 |
 | nes/memory-map.md | Phase 2 |

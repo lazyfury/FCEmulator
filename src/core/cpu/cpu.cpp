@@ -126,6 +126,29 @@ void Cpu::halt(u8 opcode) noexcept
 //          not "the operand is stored at address 0x42".
 // ---------------------------------------------------------------------------
 
+bool Cpu::implements(u8 opcode) noexcept
+{
+    // Keep this list in step with the switch below. The test
+    // Cpu.ImplementsAgreesWithExecution checks that they never drift apart.
+    switch (opcode) {
+    case 0xA9: // LDA #imm
+    case 0xA2: // LDX #imm
+    case 0xA0: // LDY #imm
+    case 0xAA: // TAX
+    case 0xA8: // TAY
+    case 0x8A: // TXA
+    case 0x98: // TYA
+    case 0xE8: // INX
+    case 0xC8: // INY
+    case 0xCA: // DEX
+    case 0x88: // DEY
+    case 0xEA: // NOP
+        return true;
+    default:
+        return false;
+    }
+}
+
 void Cpu::execute(u8 opcode) noexcept
 {
     switch (opcode) {

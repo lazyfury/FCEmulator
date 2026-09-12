@@ -300,6 +300,50 @@ TEST(Cpu, RunRespectsMaxSteps)
 }
 
 // ===========================================================================
+// implements() must never drift away from execute()
+// ===========================================================================
+
+TEST(Cpu, ImplementsAgreesWithExecution)
+{
+    // Cpu::implements() is a hand written list that duplicates the switch in
+    // execute(). Duplication like that rots. This test walks all 256 opcodes
+    // and checks the list against what actually happens.
+    for (int i = 0; i < 256; ++i) {
+        const u8 opcode = static_cast<u8>(i);
+
+        Machine m;
+        // Two dummy operand bytes, in case the instruction needs them.
+        m.load({ opcode, 0x00, 0x00, 0xEA });
+        m.cpu.step();
+
+        EXPECT_EQ(Cpu::implements(opcode), !m.cpu.is_halted())
+            << "mismatch for opcode " << bit::to_hex(opcode);
+    }
+}
+
+TEST(Cpu, ImplementsExactlyThePhaseZeroPointTwoSet)
+{
+    const u8 implemented[] = {
+        0xA9, 0xA2, 0xA0,   // LDA/LDX/LDY #imm
+        0xAA, 0xA8, 0x8A, 0x98,  // TAX/TAY/TXA/TYA
+        0xE8, 0xC8, 0xCA, 0x88,  // INX/INY/DEX/DEY
+        0xEA,               // NOP
+    };
+
+    int count = 0;
+    for (int i = 0; i < 256; ++i) {
+        if (Cpu::implements(static_cast<u8>(i))) {
+            ++count;
+        }
+    }
+    EXPECT_EQ(count, 12);
+
+    for (u8 op : implemented) {
+        EXPECT_TRUE(Cpu::implements(op)) << "opcode " << bit::to_hex(op);
+    }
+}
+
+// ===========================================================================
 // The stack lives in page 1 and grows downward
 // ===========================================================================
 

@@ -85,6 +85,13 @@ public:
     /// 0 when nothing went wrong, otherwise the opcode we could not execute.
     [[nodiscard]] u8 unimplemented_opcode() const noexcept { return unimplemented_opcode_; }
 
+    /// True when execute() knows this opcode in the current phase.
+    ///
+    /// This duplicates the switch inside execute(). That duplication is a
+    /// known smell, and tests/test_cpu.cpp checks the two never disagree.
+    /// Phase 1 removes it by driving both from one opcode table.
+    [[nodiscard]] static bool implements(u8 opcode) noexcept;
+
 private:
     // -- bus helpers ---------------------------------------------------------
 

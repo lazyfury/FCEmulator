@@ -1,24 +1,31 @@
 # 6502 汇编 assembly/
 
-> 状态：Phase 0.3 / 0.4 待填充
+> 状态：**Phase 0.3 已完成**（主体文档在 `../computer-science/assembly.md`）
 
-## 计划内容
+## 已完成
 
-- `mnemonics.md` — 56 条合法指令、助记符、机器码对照
-- `addressing-modes.md` — Immediate / Zero Page / Absolute / Indexed / Indirect / Relative
-- `opcode-table.md` — 256 个 opcode 完整表
+| 内容 | 位置 |
+|------|------|
+| 助记符 / 机器码 / 汇编器 / 反汇编器 | `../computer-science/assembly.md` |
+| `#` `$` `()` `,` 四个符号 | `../computer-science/assembly.md` 第 3 节 |
+| 13 种寻址模式的语法 | `src/core/cpu/opcode.hpp` |
+| 完整 256 项 opcode 表 | `src/core/cpu/opcode.cpp` |
+| 反汇编器 | `src/core/cpu/disassembler.{hpp,cpp}` |
+| 可运行讲解 | `tools/demo_disasm.cpp` |
 
-## 已经可以解释的知识点
+```bash
+./build/demo_disasm
+```
 
-AGENTS.md 要求出现下列符号必须解释：
+## 待完成（Phase 0.4）
 
-| 符号 | 含义 | 例子 |
-|------|------|------|
-| `LDA` | 助记符：Load Accumulator | `LDA #$42` → `A = 0x42` |
-| `#` | Immediate，操作数是立即数而非地址 | `#$42` = 数字 66 |
-| `$` | 十六进制前缀（等价 C 的 `0x`） | `$42` = `0x42` |
-| `()` | Indirect，先取地址再取内容 | `($0200)` |
-| `,` | Indexed，加索引寄存器 | `$8000,X` |
+寻址模式的**执行语义**——即"如何算出有效地址"。
+Phase 0.3 只做到"知道语法和长度"，Phase 0.4 才能"真正取到数据"：
+
+```
+Phase 0.3   0xBD 00 02  ->  "LDA $0200,X"     （知道它是什么）
+Phase 0.4   0xBD 00 02  ->  读出 内存[$0200 + X] 的值  （知道怎么取）
+```
 
 ## 最小例子
 
@@ -29,10 +36,15 @@ Machine:    A9 42
                ^^ operand (0x42)
 ```
 
-CPU 执行后：`A = 0x42`，且 `Z` flag 清零（结果非零），`N` flag 清零（bit7 = 0）。
+CPU 执行后：`A = 0x42`，`Z` 清零（结果非零），`N` 清零（bit7 = 0）。
 
-## 前置知识
+## 关键事实速查
 
-必须先读完 [../computer-science/twos-complement.md](../computer-science/twos-complement.md)
-和 [../computer-science/bitwise-operations.md](../computer-science/bitwise-operations.md)，
-否则无法理解相对寻址的偏移量和标志位。
+```
+合法 opcode          151 / 256
+助记符               56
+寻址模式             13
+指令长度             1 字节 29 个 / 2 字节 74 个 / 3 字节 48 个
+分支范围             -128 .. +127
+分支目标公式         target = 分支地址 + 2 + (有符号)偏移
+```

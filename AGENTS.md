@@ -336,27 +336,29 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 
 # 7. Current Implementation Status
 
-当前：**Phase 0.2 完成**
+当前：**Phase 0.3 完成**
 
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架（58 个单元测试全通过）
-- `docs/computer-science/` 基础文档（binary / hexadecimal / twos-complement / bitwise / overflow-flag / cpu）
+- GoogleTest 测试框架（79 个单元测试全通过）
+- `docs/computer-science/` 基础文档（binary / hexadecimal / twos-complement / bitwise / overflow-flag / cpu / assembly）
 - `src/core/types.hpp` 定宽整数类型
 - `src/core/bit.{hpp,cpp}` 位运算工具库
 - `src/core/alu.hpp` 加法器与 C/V/Z/N 标志
 - `src/core/bus.hpp` / `flat_bus.hpp` 总线抽象
 - `src/core/cpu/registers.hpp` A/X/Y/SP/P/PC 与 flag 读写
 - `src/core/cpu/cpu.{hpp,cpp}` 取指/译码/执行循环、栈、复位向量
-- `tools/demo_bitwise.cpp` `tools/demo_overflow.cpp` `tools/demo_cpu.cpp` 教学 demo
-- `tests/test_bit.cpp` `tests/test_alu.cpp` `tests/test_registers.cpp` `tests/test_cpu.cpp`
+- `src/core/cpu/opcode.{hpp,cpp}` 完整 256 项 opcode 表（151 合法）
+- `src/core/cpu/disassembler.{hpp,cpp}` 字节流 <-> 汇编
+- 4 个教学 demo（bitwise / overflow / cpu / disasm）
+- 10 个测试文件中的 5 个
 
 未完成：
 
 ```
-6502 complete instruction set / addressing modes
-Assembler knowledge / Disassembler
+addressing mode resolution (effective address)
+6502 complete instruction set / cycle accuracy
 NES Bus memory map / Cartridge / PPU / APU / Controller
 Frontend
 ```
@@ -368,19 +370,20 @@ Frontend
 下一步必须执行：
 
 ```
-Phase 0.3 — 6502 汇编
+Phase 0.4 — Opcode / Addressing Mode 执行语义
 ```
 
 任务：
 
-1. 讲解 mnemonic / machine code / assembler / disassembler
-2. 创建 `docs/computer-science/assembly.md`
-3. 解释 `#` `$` `()` `,` 四个符号
-4. 实现 `src/core/cpu/disassembler.{hpp,cpp}`：把字节流变成 `LDA #$42`
-5. 为反汇编器写单元测试（可用已知等价对：`A9 42` <-> `LDA #$42`）
-6. 用反汇编器改进 `demo_cpu` 的轨迹输出
+1. 讲解“有效地址”（effective address）的概念
+2. 创建 `docs/computer-science/addressing-modes.md`
+3. 实现 `src/core/cpu/addressing.{hpp,cpp}`：把寻址模式变成有效地址
+4. 重点讲解 Zero Page 的页内回绕（`$42,X` 当 X=$C0 时读到 `$0002`）
+5. 重点讲解 `(zp,X)` 与 `(zp),Y` 的区别
+6. 为 13 种模式写单元测试，包括回绕、边界、跨页
+7. 把 `cpu.cpp` 的 `switch` 重构为基于 opcode 表的派发（消除重复）
 
-注意：此时仍不实现新的 opcode，只实现“看懂字节”的能力。
+完成标志：`LDA $0200,X` 能真正从 `$0200 + X` 读出值。
 
 ---
 
