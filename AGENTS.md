@@ -336,29 +336,31 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 
 # 7. Current Implementation Status
 
-当前：**Phase 2 完成**
+当前：**Phase 3 完成**
 
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架（172 个单元测试全通过）
-- `docs/` 十二章（computer-science 十章 + nes/memory-map + architecture/bus）
-- `src/core/types.hpp` 定宽整数类型
-- `src/core/bit.{hpp,cpp}` 位运算工具库
-- `src/core/alu.hpp` 加法器与 C/V/Z/N 标志
-- `src/core/bus.hpp` 总线抽象，含 `take_stall_cycles()`
-- `src/core/cpu/` 全部 56 个操作 / 151 个 opcode、256 项周期表、反汇编器
+- GoogleTest 测试框架（205 个单元测试全通过，其中 12 个跑在真实 ROM 上）
+- `docs/` 十三篇（computer-science 十章 + nes 两篇 + architecture 一篇）
+- `src/core/bit.{hpp,cpp}` `types.hpp` `alu.hpp`
+- `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
+- `src/core/cpu/` 全部 151 个 opcode、256 项周期表、反汇编器、13 种寻址
 - `src/core/nes/device.hpp` Device / OamTarget 接口
 - `src/core/nes/ram.hpp` 2KB RAM（掩码就是未接的地址线）
-- `src/core/nes/bus.{hpp,cpp}` 完整地址译码、镜像、open bus、OAM DMA
-- `src/core/nes/ram_cartridge.hpp` 卡带槽占位
-- 7 个教学 demo；9 个测试文件
+- `src/core/nes/bus.{hpp,cpp}` 地址译码、镜像、open bus、OAM DMA
+- `src/core/nes/ines.{hpp,cpp}` iNES 文件头解析
+- `src/core/nes/mapper.hpp` + `mapper0.hpp` Mapper 0 (NROM)
+- `src/core/nes/cartridge.{hpp,cpp}` 真正的卡带
+- `src/core/nes/ram_cartridge.hpp` 卡带槽占位（测试用）
+- 8 个教学 demo；11 个测试文件
 
 未完成：
 
 ```
-iNES parser / PRG & CHR ROM / Mapper 0 (and beyond)
-PPU / APU / Controllers
+PPU (its registers answer open bus today, which is where the ROM blocks)
+APU / Controllers
+Mappers 1, 2, 3, 4...
 Frontend (Swift + Metal)
 Bus-level cycle accuracy (RMW dummy write, mid-instruction interrupt sampling)
 ```
@@ -370,28 +372,37 @@ Bus-level cycle accuracy (RMW dummy write, mid-instruction interrupt sampling)
 下一步必须执行：
 
 ```
-Phase 3 — Cartridge（iNES 格式与 Mapper 0）
+Phase 4 — PPU（让 $2002 真的有东西应答）
 ```
 
-背景：卡带槽现在是 `RamCartridge`（`src/core/nes/ram_cartridge.hpp`），
-一块 48KB 的 RAM 占位。真正的卡带要读 `.nes` 文件。
+背景：现在卡带和总线都完成了，但真实 ROM 会卡在 `$800A` 的 vblank 等待循环上，
+因为 `$2002` 没有设备应答，读回来的是 open bus，bit 7 永远为 0。
 
-任务：
+### Step 1：让 ROM 动起来（先把边界推过去）
 
-1. 讲解 ROM / PRG ROM / CHR ROM / mapper / bank switching
-2. 创建 `docs/nes/ines-format.md` 与 `docs/nes/mappers.md`
-3. 实现 `src/core/nes/cartridge.hpp`：iNES 文件头解析
-   - 16 字节文件头：`NES\x1A`、PRG 页数、CHR 页数、flags 6/7
-   - 识别 mapper 号（flags 6 高 4 位 + flags 7 高 4 位）
-   - 识别镜像模式（水平 / 垂直 / 四屏）
-4. 实现 Mapper 0（NROM）：
-   - 16KB PRG 镜像到 `$8000-$BFFF` 和 `$C000-$FFFF`
-   - 32KB PRG 直接映射
-   - 8KB CHR ROM 无 bank 切换
-5. 写一个小的测试 ROM（手工拼接字节，不需要真游戏）
-6. 用真实 Cartridge 替换 `RamCartridge` 跑集成测试
+实现最小的 `src/core/nes/ppu.hpp`，作为 `Device` 接在 `$2000-$3FFF`：
 
-**完成标志：能从字节流解析出一个合法的 iNES 头，并让 Mapper 0 正确应答 `$8000-$FFFF`。**
+1. 实现 8 个寄存器 `$2000-$2007` 的读写
+2. 实现 `PPUSTATUS ($2002)`：读返回状态寄存器的 bit 7（vblank），并清除它
+3. 实现 CPU/PPU 的 3:1 时钟比与扫描线计数器（262 条扫描线 × 341 周期）
+4. 实现 `PPUADDR ($2006)` / `PPUDATA ($2007)` 与 VRAM（2KB）+ 调色板（32B）
+5. 实现 OAM（256B）并接上 `OamTarget`
+
+**完成标志：真实 ROM 通过 vblank 等待，开始写 $2006/$2007 加载调色板。**
+
+### Step 2：渲染
+
+6. 实现背景的 tile 取指与 shift register
+7. 实现精灵（sprite）渲染、优先级、水平/垂直翻转
+8. 实现滚动（scroll）与 nametable 镜像
+9. 产出 256×240 的 framebuffer
+
+### Step 3：看它跑起来
+
+10. 用真实 ROM 跑若干帧，把 framebuffer 导出成 PPM/PNG
+11. 写 `docs/nes/ppu.md`
+
+完成标志：能用真实 ROM 渲染出正确的第一帧画面。
 
 ---
 

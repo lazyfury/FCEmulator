@@ -29,11 +29,19 @@ add_executable(fc_tests
     test_instruction_set.cpp
     test_cycles.cpp
     test_nes_bus.cpp
+    test_cartridge.cpp
+    test_real_rom.cpp
 )
 
 target_link_libraries(fc_tests PRIVATE
     fc_core
     GTest::gtest_main
+)
+
+# Where the real-ROM tests look for a .nes file. Nothing is committed there;
+# the tests skip themselves when the folder is empty.
+target_compile_definitions(fc_tests PRIVATE
+    FC_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
 )
 
 include(GoogleTest)

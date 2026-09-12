@@ -1,6 +1,6 @@
 # NES 硬件规范 nes/
 
-> 状态：**Phase 2 已完成**（内存映射），其余待 Phase 3-6 逐步填充
+> 状态：**Phase 2 / 3 已完成**（内存映射 + 卡带），其余待 Phase 4-6 逐步填充
 
 ## 已完成
 
@@ -10,12 +10,17 @@
 | 镜像（unwired address lines） | [memory-map.md](memory-map.md) 第 2-3 节 |
 | Open bus | [memory-map.md](memory-map.md) 第 4 节 |
 | OAM DMA | [memory-map.md](memory-map.md) 第 5 节 |
-| 实现 | `src/core/nes/bus.{hpp,cpp}` `ram.hpp` |
-| 可运行讲解 | `tools/demo_bus.cpp` |
+| **iNES 文件格式** | [ines-format.md](ines-format.md) |
+| **Mapper 0 (NROM)** | [ines-format.md](ines-format.md) 第 3 节 |
+| **CHR 位平面与 tile 格式** | [ines-format.md](ines-format.md) 第 4 节 |
+| **真实 ROM 运行与调试** | [ines-format.md](ines-format.md) 第 5 节 |
+| 实现 | `src/core/nes/` |
+| 可运行讲解 | `tools/demo_bus.cpp` `tools/demo_cartridge.cpp` |
 
 ```bash
 ./build/demo_bus
-./build/tests/fc_tests --gtest_filter='NesBus.*'
+./build/demo_cartridge [path/to/game.nes]
+./build/tests/fc_tests --gtest_filter='NesBus.*:Ines.*:Mapper0.*:Cartridge.*:SuperMarioBros.*'
 ```
 
 ## NES 硬件速览
@@ -64,6 +69,5 @@ $4020 - $FFFF   卡带（Mapper 决定布局）
 
 - `ppu.md` — 渲染管线、Tile、Sprite、滚动（Phase 4）
 - `apu.md` — 各声道与混音（Phase 6）
-- `ines-format.md` — 卡带文件格式（Phase 3）
-- `mappers.md` — Mapper 0/1/2/3/4（Phase 3）
+- `mappers.md` — Mapper 1/2/3/4（Phase 3 后续）
 - `controllers.md` — 手柄协议（Phase 5）

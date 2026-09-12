@@ -38,6 +38,8 @@ add_library(fc_core
     src/core/cpu/cpu.cpp
     src/core/cpu/addressing.cpp
     src/core/nes/bus.cpp
+    src/core/nes/ines.cpp
+    src/core/nes/cartridge.cpp
     src/core/cpu/opcode.cpp
     src/core/cpu/disassembler.cpp
 )
@@ -68,6 +70,9 @@ target_link_libraries(demo_instructions PRIVATE fc_core)
 
 add_executable(demo_bus tools/demo_bus.cpp)
 target_link_libraries(demo_bus PRIVATE fc_core)
+
+add_executable(demo_cartridge tools/demo_cartridge.cpp)
+target_link_libraries(demo_cartridge PRIVATE fc_core)
 
 # ---------------------------------------------------------------------------
 # Tests

@@ -20,3 +20,7 @@ cmake-build-*/
 *.xcuserstate
 xcuserdata/
 DerivedData/
+
+# Real ROMs are never committed (copyright, and they are big)
+*.nes
+tests/data/
