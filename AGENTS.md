@@ -336,12 +336,12 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 
 # 7. Current Implementation Status
 
-当前：**Phase 6 完成**
+当前：**Phase 7 完成 —— 项目完成**
 
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架（325 个单元测试全通过）
+- GoogleTest 测试框架（347 个单元测试全通过）
 - `docs/` 十三篇（computer-science 十章 + nes 两篇 + architecture 一篇）
 - `src/core/bit.{hpp,cpp}` `types.hpp` `alu.hpp`
 - `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
@@ -357,7 +357,9 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 - `src/core/nes/controller.hpp` 手柄串行协议，接在 `$4016`/`$4017`
 - `src/core/nes/apu.{hpp,cpp}` 五个声道、包络、长度/线性计数器、扫频、帧序列器、非线性混音、DMC
 - `src/core/nes/ram_cartridge.hpp` 卡带槽占位（测试用）
-- 11 个教学 demo；14 个测试文件
+- `src/ffi/emulator_api.h` 纯 C 接口（22 个测试）
+- `frontend/` Swift + Metal + CoreAudio 前端，含可验证的无头模式
+- 11 个教学 demo；15 个测试文件
 
 未完成：
 
@@ -376,76 +378,20 @@ Bus-level cycle accuracy (RMW dummy write, mid-instruction interrupt sampling)
 下一步必须执行：
 
 ```
-Phase 7 — macOS 前端（画面 + 声音 + 键盘）
+全部阶段完成。
 ```
 
-背景：Core 已经完整了 —— CPU、总线、卡带、PPU、手柄、APU 全部工作，
-而且可以在无头环境下跑。现在缺的是把它放到屏幕上。
+下一步可选方向（按价值排序）：
 
-**架构规则（AGENTS.md 第 3 节）：Core 不得依赖 UI。**
+1. **移植到一台真实机器上验证** —— 用测试 ROM（`nestest`、blargg 的 PPU/APU 测试）
+   找出保真度缺口。这比盯着超级玛丽看高效得多
+2. **更多 Mapper** —— Mapper 1 (MMC1)、2 (UxROM)、3 (CNROM)、4 (MMC3)
+3. **存档 / 读档** —— 需要给 Core 加 serialize
+4. **无锁音频队列** —— 把 `frontend/AudioOutput.swift` 里的 `NSLock` 换成原子 SPSC
+5. **录像回放** —— 接口已经支持（`set_button`），只差前端 UI
 
-也就是说 `src/core/` 里不能出现 `#include <Metal/Metal.h>`，不能出现 `NSWindow`。
-Core 只产出两样东西：
-
-```
-    Ppu::framebuffer()      256x240 的 u32 像素数组
-    Apu::take_samples()     44100 Hz 的 f32 采样
-```
-
-前端负责把这两样东西送到屏幕和扬声器。
-
-技术选型：
-
-```
-Swift + AppKit  窗口、菜单、键盘事件
-Metal           把 framebuffer 上传成纹理并绘制
-CoreAudio       播放采样流
-```
-
-分步骤：
-
-### Step 1：让 Core 可以被 Swift 调用
-
-1. 在 `src/` 下加一个 C 接口层（`src/ffi/emulator_api.h` / `.cpp`）：
-   ```c
-   fc_machine* fc_create(void);
-   void        fc_destroy(fc_machine*);
-   bool        fc_load_rom(fc_machine*, const uint8_t* data, size_t size);
-   void        fc_run_frame(fc_machine*);
-   const uint32_t* fc_framebuffer(fc_machine*);
-   size_t      fc_take_samples(fc_machine*, float* out, size_t max);
-   void        fc_set_button(fc_machine*, int button, bool pressed);
-   ```
-   **纯 C 接口**，这样 Swift 可以直接调，不需要 C++ 互操作。
-
-2. 把 Core 编译成一个静态库或 xcframework
-
-### Step 2：Metal 渲染
-
-3. `MTLTexture` 上传 256×240 的像素（`MTLPixelFormatBGRA8Unorm`）
-4. 一个全屏四边形 + 最近邻采样（**不要线性过滤** —— NES 是像素艺术）
-5. 处理 Retina 缩放与整数倍放大
-
-### Step 3：声音
-
-6. `AVAudioEngine` 或 `AudioQueue`，44100 Hz f32 单声道
-7. 一个环形缓冲区，Core 在后台线程跑，音频线程消费
-
-### Step 4：输入
-
-8. 键盘映射到 `Controller::Button`
-9. **手柄手感要放在前端**：连发、组合键、按键重映射都属于前端或游戏，
-   Core 的 Controller 只是一个带锁存的移位寄存器
-
-### Step 5：主循环
-
-10. Core 跑在自己的线程上，按 60.0988 Hz 推进
-11. 用 `CVDisplayLink` 或 Metal 的 drawable 回调驱动
-
-**完成标志：能打开窗口、用键盘玩超级玛丽、听到声音。**
-
-> 注意：NES 是 NTSC 60.0988 Hz，不是 60.000。跑满速要按这个数。
-> 前端要允许"不跳帧"和"音频同步"两种节流方式，否则声音会断续。
+**推荐先做 1。** 现在能玩、能看、能听，但"能玩"和"正确"是两件事，
+而测试 ROM 是唯一能把这两件事分开的工具。
 
 ---
 

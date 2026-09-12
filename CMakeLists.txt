@@ -51,6 +51,17 @@ target_include_directories(fc_core PUBLIC
 )
 
 # ---------------------------------------------------------------------------
+# The C interface. This is the only thing a frontend links against.
+# ---------------------------------------------------------------------------
+add_library(fc_ffi STATIC
+    src/ffi/emulator_api.cpp
+)
+target_link_libraries(fc_ffi PUBLIC fc_core)
+target_include_directories(fc_ffi PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+# ---------------------------------------------------------------------------
 # Teaching demos / command line tools.
 # ---------------------------------------------------------------------------
 add_executable(demo_bitwise tools/demo_bitwise.cpp)

@@ -34,9 +34,11 @@ add_executable(fc_tests
     test_ppu.cpp
     test_controller.cpp
     test_apu.cpp
+    test_ffi.cpp
 )
 
 target_link_libraries(fc_tests PRIVATE
+    fc_ffi
     fc_core
     GTest::gtest_main
 )

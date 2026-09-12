@@ -312,6 +312,14 @@ public:
     /// board, so a constant offset here is not a mistake.
     [[nodiscard]] std::vector<f32> take_samples();
 
+    /// Copy out at most `max_samples` and drop them, without allocating.
+    /// This is the one fc_take_samples() calls, because an audio callback
+    /// must never allocate or block.
+    std::size_t drain(f32* out, std::size_t max_samples) noexcept;
+
+    /// Throw away everything queued, for when playback is paused.
+    void clear_samples() noexcept { samples_.clear(); }
+
     [[nodiscard]] std::size_t samples_pending() const noexcept { return samples_.size(); }
 
     /// The mixer's current value without going through the sample buffer.

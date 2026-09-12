@@ -8,10 +8,10 @@
 
 ## 当前状态
 
-**Phase 6 完成** — APU（声音）
+**Phase 7 完成** — macOS 前端
 
 - [x] CMake 4.4 + C++20 + Ninja
-- [x] GoogleTest 1.18 单元测试（325 个测试全通过）
+- [x] GoogleTest 1.18 单元测试（347 个测试全通过）
 - [x] `src/core/types.hpp` `bit.{hpp,cpp}` `alu.hpp`
 - [x] `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
 - [x] `src/core/cpu/` 全部 151 个 opcode、256 项周期表、反汇编器、寻址
@@ -24,8 +24,10 @@
 - [x] `src/core/nes/framebuffer.hpp` 256×240 输出
 - [x] `src/core/nes/controller.hpp` 手柄串行协议，两个端口接在 `$4016`/`$4017`
 - [x] `src/core/nes/apu.{hpp,cpp}` **五个声道、包络、长度/线性计数器、扫频、帧序列器、非线性混音、DMC**
-- [x] 11 个教学 demo；14 个测试文件
-- [x] `docs/` 十六章
+- [x] 11 个教学 demo；15 个测试文件
+- [x] `docs/` 十七章
+- [x] `src/ffi/emulator_api.h` **纯 C 接口**
+- [x] `frontend/` **Swift + Metal + CoreAudio 前端**，含可验证的无头模式
 
 **现在能运行真实的 NES ROM 并画出画面了：**
 
@@ -67,7 +69,22 @@ afplay frames/game_audio.wav
   frames audible : 459 of 600
 ```
 
-**下一步：** Phase 7 — macOS Metal 前端
+**而且可以在窗口里玩了：**
+
+```bash
+./frontend/build.sh
+open frontend/build/FCEmulator.app --args /path/to/game.nes
+```
+
+```
+CPU  / Bus / Cartridge / PPU / APU / Controller   <- Core, 无需 UI
+                     |
+              src/ffi/emulator_api.h              <- 纯 C 边界
+                     |
+      AppKit + Metal + CoreAudio (Swift)          <- 前端
+```
+
+**项目完成。** 从二进制到屏幕上的像素，全链路打通。
 
 完整路线图见 [AGENTS.md](AGENTS.md)。
 
@@ -103,6 +120,10 @@ ctest --test-dir build --output-on-failure
 ./build/demo_ppu          # 渲染真实游戏的画面 -> PPM
 ./build/demo_input        # 模拟按键，标题画面 -> 开始游戏
 ./build/demo_apu          # 五个声道的波形 -> game_audio.wav
+
+# 前端
+./frontend/build.sh
+./frontend/build/FCEmulator.app/Contents/MacOS/FCEmulator <rom> --headless 700 --start --dump f.ppm
 ```
 
 用真实 ROM 跑测试（默认会查找 `tests/data/*.nes`）：
@@ -134,7 +155,10 @@ FCEmulator/
 │   │   ├── flat_bus.hpp   测试替身：64KB 平铺内存
 │   │   ├── cpu/           寄存器、opcode 表、反汇编、寻址、表驱动派发
 │   │   └── nes/           地址译码、卡带、PPU、APU、手柄、Machine
-│   └── frontend/        macOS 前端（Swift/Metal，待实现）
+│   └── ffi/            纯 C 接口（前端唯一需要链接的东西）
+├── frontend/           Swift + Metal + CoreAudio 前端
+│   ├── Sources/
+│   └── build.sh
 ├── tools/               教学 demo 与命令行工具
 └── tests/               单元测试
 ```
@@ -171,8 +195,8 @@ Phase 2   NES Bus 内存映射      [done]
 Phase 3   Cartridge / Mapper   [done]
 Phase 4   PPU                  [done]
 Phase 5   Controller           [done]
-Phase 6   APU                  [done] <-- 你在这里
-Phase 7   macOS Metal 前端      [next]
+Phase 6   APU                  [done]
+Phase 7   macOS Metal 前端      [done] <-- 全部完成
 Phase 1   6502 CPU
 Phase 2   NES Bus
 Phase 3   Cartridge / Mapper

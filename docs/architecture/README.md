@@ -1,6 +1,6 @@
 # 系统架构 architecture/
 
-> 状态：**Phase 2 已完成**（总线架构），其余待 Phase 3+ 填充
+> 状态：**Phase 2 和 Phase 7 已完成**（总线架构 + macOS 前端）
 
 ## 目标结构
 
@@ -27,6 +27,7 @@
 | 文档 | 内容 |
 |------|------|
 | [bus.md](bus.md) | 为什么需要 Bus、Device 接口、依赖方向、测试替身 |
+| [frontend.md](frontend.md) | C 接口、Metal 渲染、音频环形缓冲、主循环 |
 
 ### 当前实际结构
 
@@ -94,8 +95,29 @@ CPU 读 $2002  ->  Bus 判断：$2000-$3FFF?  -> PPU
 CPU 读 $0000  ->  Bus 判断：<$2000?       -> RAM
 ```
 
+## 完整的依赖方向
+
+```
+   frontend/ (Swift)          UI 层
+        |
+   src/ffi/emulator_api.h     C 接口 —— 唯一的边界
+        |
+   src/core/nes/              NES 硬件
+        |
+   src/core/cpu/              6502
+        |
+   src/core/bit.hpp          位与字节
+```
+
+**箭头只能向下。** Core 不知道窗口存在，CPU 不知道 NES 存在。
+
+```bash
+$ grep -rn '#include "core/nes/' src/core/cpu/
+  （无）
+$ grep -rln 'Metal\|NSWindow' src/core/
+  （无）
+```
+
 ## 待写文档
 
 - `overview.md` — 完整模块职责与依赖图
-- `render-pipeline.md` — Framebuffer 到 Metal 纹理（Phase 7）
-- `threading.md` — 主循环与音频同步（Phase 7）

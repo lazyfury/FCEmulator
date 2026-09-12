@@ -747,6 +747,23 @@ std::vector<f32> Apu::take_samples()
     return out;
 }
 
+std::size_t Apu::drain(f32* out, std::size_t max_samples) noexcept
+{
+    if (out == nullptr || max_samples == 0) {
+        return 0;
+    }
+
+    const std::size_t count = std::min(max_samples, samples_.size());
+    std::copy_n(samples_.begin(), count, out);
+
+    // Erasing from the front is O(n). That is fine here: the vector holds at
+    // most one frame of audio, and the alternative ring buffer would add
+    // index arithmetic to the one function that has to be obviously correct.
+    samples_.erase(samples_.begin(),
+                   samples_.begin() + static_cast<std::ptrdiff_t>(count));
+    return count;
+}
+
 u8 Apu::channel_status() const noexcept
 {
     u8 status = 0;

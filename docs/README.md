@@ -31,12 +31,10 @@ docs/
 | [nes/controllers.md](nes/controllers.md) | ✅ |
 | [nes/apu.md](nes/apu.md) | ✅ |
 | [architecture/bus.md](architecture/bus.md) | ✅ |
+| [architecture/frontend.md](architecture/frontend.md) | ✅ |
 
 ## 待完成
 
-| 文档 | 阶段 |
-|------|------|
-| architecture/overview.md | Phase 7 |
 | nes/mappers.md | Phase 3 后续 |
 | assembly/mnemonics.md | Phase 0.3 |
 | assembly/addressing-modes.md | Phase 0.4 |

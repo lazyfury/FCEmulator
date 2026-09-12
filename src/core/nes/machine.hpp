@@ -78,6 +78,13 @@ public:
     [[nodiscard]] Cpu& cpu() noexcept { return cpu_; }
     [[nodiscard]] Ppu& ppu() noexcept { return ppu_; }
     [[nodiscard]] Apu& apu() noexcept { return apu_; }
+
+    // Read only views, for the C interface and for anything that only wants
+    // to look. Ppu's framebuffer and Apu's pending count are both const, so
+    // a frontend can read them without being handed a mutable machine.
+    [[nodiscard]] const Cpu& cpu() const noexcept { return cpu_; }
+    [[nodiscard]] const Ppu& ppu() const noexcept { return ppu_; }
+    [[nodiscard]] const Apu& apu() const noexcept { return apu_; }
     [[nodiscard]] NesBus& bus() noexcept { return bus_; }
     [[nodiscard]] Cartridge* cartridge() noexcept { return cartridge_.get(); }
     [[nodiscard]] const Cartridge* cartridge() const noexcept { return cartridge_.get(); }
