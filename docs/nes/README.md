@@ -12,6 +12,12 @@
 | OAM DMA | [memory-map.md](memory-map.md) 第 5 节 |
 | **iNES 文件格式** | [ines-format.md](ines-format.md) |
 | **Mapper 0 (NROM)** | [ines-format.md](ines-format.md) 第 3 节 |
+| **Mapper 1 (MMC1)：串行移位寄存器、分页、运行时镜像** | [mappers.md](mappers.md) 第 4 节 |
+| **8KB CHR 分页 = 寄存器值 >> 1** | [mappers.md](mappers.md) 第 4.3 节 |
+| **Mapper 163 (Nanjing)：扩展区寄存器、防拷反馈位、自动 CHR 切换** | [mappers.md](mappers.md) 第 8.1 节 |
+| **Mapper 226 (76-in-1)：7 位 bank 拆在双寄存器** | [mappers.md](mappers.md) 第 8.2 节 |
+| **授权单芯片板：18/21/22/23/25/32/33/66/68/71/78/87** | [mappers.md](mappers.md) 第 7 节 |
+| **中文/多合一：162/164/178/190/242/227/246** | [mappers.md](mappers.md) 第 7 节 |
 | **CHR 位平面与 tile 格式** | [ines-format.md](ines-format.md) 第 4 节 |
 | **真实 ROM 运行与调试** | [ines-format.md](ines-format.md) 第 5 节 |
 | **PPU 架构与 8 个寄存器** | [ppu.md](ppu.md) |
@@ -81,6 +87,6 @@ $4020 - $FFFF   卡带（Mapper 决定布局）
 
 这正是 [../computer-science/binary.md](../computer-science/binary.md) 第 6 节讲的 `make_u16(lo, hi)`。
 
-## 待写文档
+## 下一步
 
-- `mappers.md` — Mapper 1/2/3/4（Phase 3 后续）
+- Mapper 2 (UxROM)、3 (CNROM)、4 (MMC3) — 见 [mappers.md](mappers.md) 第 7 节

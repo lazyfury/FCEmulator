@@ -341,7 +341,7 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架（347 个单元测试全通过）
+- GoogleTest 测试框架（370 个单元测试全通过）
 - `docs/` 十三篇（computer-science 十章 + nes 两篇 + architecture 一篇）
 - `src/core/bit.{hpp,cpp}` `types.hpp` `alu.hpp`
 - `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
@@ -350,7 +350,36 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 - `src/core/nes/ram.hpp` 2KB RAM（掩码就是未接的地址线）
 - `src/core/nes/bus.{hpp,cpp}` 地址译码、镜像、open bus、OAM DMA
 - `src/core/nes/ines.{hpp,cpp}` iNES 文件头解析
-- `src/core/nes/mapper.hpp` + `mapper0.hpp` Mapper 0 (NROM)
+- `src/core/nes/mapper.hpp` 映射器接口 + `mapper0.hpp` Mapper 0 (NROM)
+- `src/core/nes/mapper1.hpp` Mapper 1 (MMC1)：串行移位寄存器、4/8KB CHR 分页、
+  16/32KB PRG 分页、运行时可切换镜像（Zelda II、Tetris 用）
+- `src/core/nes/mapper2.hpp` Mapper 2 (UxROM)：16KB PRG 分页、CHR RAM（洛克人）
+- `src/core/nes/mapper3.hpp` Mapper 3 (CNROM)：8KB CHR 分页（越野摩托）
+- `src/core/nes/mapper4.hpp` Mapper 4 (MMC3)：8KB PRG、1/2KB CHR、**扫描线 IRQ**
+  （超级玛丽 3、星之卡比）；配套 `Mapper::on_ppu_address` / `irq_asserted` 钩子
+- `src/core/nes/mapper7.hpp` Mapper 7 (AxROM)：32KB PRG、单屏镜像（大理石疯疯）
+- `src/core/nes/mapper9.hpp` Mapper 9 (MMC2)：PPU 取 tile $FD/$FE 翻转 CHR latch
+- `src/core/nes/mapper10.hpp` Mapper 10 (MMC4)：同 MMC2 的 latch，16KB PRG
+- `src/core/nes/mapper11.hpp` Mapper 11 (Color Dreams)：8KB CHR 分页
+- `src/core/nes/mapper13.hpp` Mapper 13 (CPROM)：自带 16KB CHR RAM，4KB 分页
+- `src/core/nes/mapper15.hpp` Mapper 15 (100-in-1)：16KB PRG 可切换 + 顶部 16KB 固定、
+  单屏镜像、8KB CHR RAM（`100合1.NES` 1MB 多合一卡实测能启动到菜单）
+- `src/core/nes/mapper163.hpp` Mapper 163 (Nanjing FC-001)：32KB PRG 分页、
+  寄存器在扩展区 $5000、防拷反馈位、自动 4KB CHR RAM 切换。
+  （`金庸群侠传.nes` 2MB 实测能进标题并开始游戏）
+- `src/core/nes/mapper226.hpp` Mapper 226 (76-in-1)：7 位 PRG bank 拆在
+  $8000/$8001、32KB/16KB 两种模式、寄存器 bit6 选镜像。
+- `src/core/nes/mapper18.hpp` Mapper 18 (SS88006)、`mapper21.hpp`
+  Mapper 21/22/23/25 (VRC2/VRC4)：8KB PRG、1KB CHR、CPU 周期 IRQ
+  （靠新增的 `clocks_on_cpu_cycles()` / `on_cpu_cycle()` 钩子）
+- `src/core/nes/mapper32.hpp` (IREM)、`mapper33.hpp` (Taito)、
+  `mapper66.hpp` (GxROM)、`mapper68.hpp` (Sunsoft-4)、`mapper71.hpp`
+  (Codemasters)、`mapper78.hpp` / `mapper87.hpp` (Jaleco)
+- `src/core/nes/mapper162/164/178/242.hpp` (Waixing)、`mapper190.hpp`、
+  `mapper227.hpp` / `mapper246.hpp`（中文/多合一）
+- 接口钩子共六个（全部默认空实现）：`on_ppu_address` / `irq_asserted` /
+  `read_expansion` / `write_expansion` / `on_scanline` /
+  `clocks_on_cpu_cycles` + `on_cpu_cycle` / `has_work_ram`
 - `src/core/nes/cartridge.{hpp,cpp}` 真正的卡带
 - `src/core/nes/ppu.{hpp,cpp}` PPU：8 个寄存器、VRAM、调色板、OAM、扫描线时序、背景/精灵渲染、sprite 0 hit
 - `src/core/nes/machine.{hpp,cpp}` CPU 与 PPU 的 3:1 同步、NMI、脚本输入接口
@@ -359,23 +388,233 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 - `src/core/nes/ram_cartridge.hpp` 卡带槽占位（测试用）
 - `src/ffi/emulator_api.h` 纯 C 接口（22 个测试）
 - `frontend/` Swift + Metal + CoreAudio 前端，含可验证的无头模式
+- `frontend/Sources/Input.swift` 键盘与手柄汇入同一个 `InputManager`；
+  真实手柄走 GameController 框架（`GCExtendedGamepad` / `GCMicroGamepad`），
+  自动识别已连接的手柄，并处理游戏中插拔
 - 11 个教学 demo；15 个测试文件
+
+已修复：屏幕乱码 / 地面"空洞" / HUD 填充成一片 "0"
+
+```
+根因（PPU）：强制消隐期间渲染管线仍在动 v。
+
+v 既是 CPU 通过 $2006/$2007 写 VRAM 的地址，也是渲染取 tile 的
+指针，两者共用同一个 15 bit 寄存器。当 PPUMASK 把背景和精灵都
+关掉（forced blanking）时，真机不再推进 v，CPU 可以把整屏数据
+连续写进去；而我们之前在每条扫描线的 dot 256 无条件调用
+increment_y()、dot 257 无条件调用 copy_x()、预渲染线无条件调用
+copy_y()，于是 CPU 每写十几个字节就被管线把 v 拨走一次。
+
+超级玛丽每关开始都用 forced blanking 清空 nametable（填 $24 空格）。
+清屏循环在 $8E19，本应写 768 + 64 字节；由于 v 被拨走，实际只
+写了大约一行就散掉了，没写到的地方保留上电值 $00 —— 而 tile $00
+正是字库里的数字 "0"。这就是标题画面和 HUD 里成片的 "0"、地面
+固定列的空洞、以及按下 Start 后残留图形的来源。
+
+修复：render_dot() 中 increment_y / copy_x / copy_y / 精灵评估全部
+用 rendering_enabled() 包住。render_pixel() 仍在运行，所以消隐时
+屏幕正确显示 $3F00 背景色。
+
+回归测试：tests/test_ppu.cpp
+  Ppu.ABlockWriteDuringForcedBlankingLandsWhereItWasPointed
+复现方式：F12 截图（shot_0001.ppm 等）与 --headless --dump 完全一致，
+说明是 Core 而不是 Metal。349 → 350 个测试全通过。
+```
+
+已修复：窗口缩放 / 全屏时的黑角与斜向拉伸
+
+```
+根因（Metal 渲染器）：缩放改的是顶点而不是纹理坐标。
+
+全屏用一个 oversize 三角形覆盖屏幕，它只是刚好盖满 [-1,1]^2。
+之前 updateScale() 把三角形顶点乘上 s<1 来留黑边，等于把三角形的
+直角边往里拉，右上角 (1,1) 就露了出来（黑三角），而可见区域沿被
+切掉的斜边被非均匀拉伸（全屏右侧的斜向拉伸）。
+
+修复：顶点不动，改成缩放纹理坐标 uvScale = 1/s（围绕 0.5 缩放），
+片元里 uv 超出 [0,1] 就输出黑色，黑边由片元负责而不是几何负责。
+```
+
+已修复：背景音的"呲"/"沙沙"声
+
+```
+三个原因，最后一个是主因：
+
+1. Core APU：从 894886 Hz 降采样到 44100 Hz 用的是点采样，没有抗
+   混叠。现在每个输出样本对约 20 个 APU 周期取平均（box 低通）。
+2. Frontend：音频回调里的 NSLock 是实时性违规。现在换成 C 里的
+   无锁 SPSC 环形队列（fc_audio_queue_*，release/acquire 原子
+   操作），欠载时 C 侧补零并计数，标题栏显示 underruns。
+3. **APU 单位混淆（主因）**：数据手册的表以 CPU 周期为单位，而项目
+   的 APU tick 是半个 CPU 周期。把表直接当 tick 用，使得帧序列器、
+   噪声、DMC、三角波全部慢一半（低一个八度），只有脉冲波恰好正确。
+   耳机的表现：地上关卡的军鼓/踩镲变成一个持续的 "沙沙"；地下关卡
+   不用噪声声道，所以听不出来。
+   修法：噪声周期表和 DMC 速率表用前除以 2 再减 1；帧序列器 step
+   改为 3729 tick；三角波定时器每个 tick 走两次。
+   回归测试：tests/test_apu.cpp ApuRates.*
+```
+
+已修复：Zelda II 大地图全是方块 / 侧视关卡 tile 错位
+
+```
+根因（MMC1 的 8KB CHR 分页规则写错了）：
+
+Zelda II 用 8KB CHR 模式（control bit4 = 0），而且**只写 CHR bank 0，
+从不写 CHR bank 1**。正确规则是：
+
+    8KB bank = chr_bank0 >> 1
+
+因为寄存器里存的是 bank 号先左移了一位（bit0 在 8KB 模式下由 PPU 的
+A12 接管，所以被忽略）。游戏写 $02 是要 bank 1，写 $10 是要 bank 8。
+
+之前实现成了 (chr0 & 0x1E) | (chr1 & 1)：$10 -> 16（对 16 个 8KB
+bank 取模后变成 0），$02 -> 2。于是大地图（$8149 处写 CHR0=$10）
+用了标题画面的方块字库，整张地图一片方块；侧视关卡（写 $02）也偏了
+一个 bank。
+
+这个 bug 的隐蔽之处：游戏照常运行、不会崩，只是 tile 全部错位两个
+bank，所以光看“能不能跑”永远发现不了。
+
+修法：src/core/nes/mapper1.hpp 的 chr_offset() 8KB 分支改为 chr0 >> 1。
+回归测试：tests/test_cartridge.cpp
+  Mapper1.ChrEightKiloByteModeUsesBankZeroShiftedRight
+```
+
+Mapper 覆盖与工作量估计（累计新增 2/3/4/7/11、163/226，以及授权一批 + 中文一批）
+
+```
+已完成：0 NROM、1 MMC1、2 UxROM、3 CNROM、4 MMC3（含扫描线 IRQ）、
+       7 AxROM、9 MMC2、10 MMC4、11 Color Dreams、13 CPROM、15 100-in-1、
+       18 SS88006、21/22/23/25 VRC2/VRC4、32 IREM G-101、33 Taito TC0190、
+       66 GxROM、68 Sunsoft-4、71 Codemasters、78 Jaleco JF-16、
+       87 Jaleco JF-13、162/164/178/242 Waixing、163 Nanjing、
+       190 Magic Kid Goo Goo、226 76-in-1、227/246 多合一
+
+架构：Mapper 接口新增六个默认空实现钩子，已有 mapper 一行未改。
+  virtual void on_ppu_address(u16) {}              // PPU 地址总线（MMC3）
+  virtual bool irq_asserted() const { false; }     // 卡带 /IRQ 线
+  virtual u8   read_expansion(u16) { return 0; }   // 扩展区 $4020-$5FFF
+  virtual void write_expansion(u16, u8) {}         // 扩展区寄存器
+  virtual void on_scanline(int) {}                 // 位置（非地址）事件
+  virtual bool clocks_on_cpu_cycles() const { false; } // CPU 周期 IRQ
+  virtual void on_cpu_cycle() {}                   // VRC4/SS88006 用
+  virtual bool has_work_ram() const { true; }      // $6000 是 RAM 还是寄存器
+Mapper 163 靠扩展区放分页寄存器、靠 on_scanline 做自动 4KB CHR 切换；
+Mapper 18/21 靠 on_cpu_cycle 数 CPU 周期做 IRQ。
+
+剩余工作量（按投入排序）：
+  中   8/12/14 罕见                       ~100 行/个
+  中   16 Bandai / 48 Taito TC0690        ~200 行/个
+  中高 69 Sunsoft FME-7                   ~250 行   蝙蝠侠 ROTJ（带扩展音源）
+  中   45/74/191/192/195/199 MMC3 clone   ~150 行/个 中文卡
+  中   176 FK23C                          ~400 行   中文 RPG
+  中   185/210/248 多合一                 ~150~250 行
+  很高 5  MMC5         1000+ 行  Just Breed、Metal Slader Glory；建议单独立项
+  高   19 Namco 163    ~500 行   Rolling Thunder（带扩展音源）
+  高   24/26 VRC6      ~300 行   恶魔城传说(JP)（带扩展音源）
+  高   85 VRC7         ~400 行   Lagrange Point（FM 音源）
+  高   6  FDS          600+ 行   磁盘系统；建议单独立项
+```
+
+已修复：`100合1.NES`（1MB Mapper 15 多合一卡）无法启动
+
+```
+根因：Mapper 15 的分页粒度写错了。
+
+最初的实现按“32KB PRG bank”写。但那个 ROM 的复位向量在
+**最后一个 16KB** 的 $FFFC（= $C001）；32KB 分页会让 CPU 从 bank 0
+的 $FFFC（= $8000）读向量，跑进另一段程序，卡在等一个永远不来的
+标志位，画面就是一片方块。
+
+正确版式：
+  $8000-$BFFF  16KB 可切换（寄存器低位）
+  $C000-$FFFF  固定为最后一个 16KB（复位/NMI/IRQ 向量永远在此）
+  寄存器 bit6  单屏镜像
+  CHR          8KB CHR RAM（文件头写 0 页）
+
+修法：mapper15.hpp 的分页改为 16KB+顶部固定；cartridge.cpp 的 case 15
+在 chr_rom_pages==0 时分配 8KB CHR RAM。
+
+实测：`100合1.NES` 现在能启动到多合一菜单，Start 能切换页面，
+bank 寄存器从 0x3E→0x39（菜单的 $FFD0 表）正常工作。
+```
+
+已修复：超级玛丽 3 底部状态栏乱码（MMC3 的扫描线 IRQ 从不触发）
+
+```
+现象：SMB3 地图屏幕底部状态栏（应该是文字 + 3 个道具框）变成一整片
+重复的花砖图案，并且一直铺到屏幕最下方；`shot_0001.ppm` 与修复前的
+输出逐字节一致。
+
+根因（PPU + MMC3）：
+  MMC3 的扫描线计数器靠 PPU A12 的上升沿时钟。A12=1 只在 PPU 取
+  “精灵图案”时出现：背景图案表在 $0000 时，只有精灵取指会把 A12 拉高。
+  真机在**每一条扫描线**都做 8 次精灵取指，即使该行一个精灵都没有，
+  空槽会用 OAM 里的垃圾数据凑数，所以 A12 每行必有一次上升沿。
+
+  我们的 PPU 只在 `evaluate_sprites()` 里对**真正在画面上的**精灵读
+  CHR，空行一次 A12 上升沿都没有。实测：整个标题画面 3000 帧，
+  `irq_clock_count()` 一直是 0，MMC3 的 IRQ 永远不触发，于是靠 IRQ
+  分屏的状态栏直接画不出来。
+
+修法：`Ppu::evaluate_sprites()` 末尾对余下的精灵槽做 8 - N 次
+  “空取指”（读精灵图案表然后丢掉）。数据不影响渲染，只负责把 A12
+  拉高一次；MMC2/MMC4 的 tile $FD/$FE latch 不会被 tile 0 误触。
+
+验证：
+  修复前 clocks/帧 = 0        fires/帧 = 0
+  修复后 clocks/帧 = 240      fires/帧 = 1   （每扫描线一次、每帧一次）
+  地图屏幕底部恢复为文字 + 3 个道具框，下方干净；
+  其余 10 张 ROM 回归正常，424 个测试全通过。
+
+回归测试：tests/test_cartridge.cpp
+  Mapper4.TheCounterIsClockedOncePerScanlineEvenWithNoSprites
+  （把 64 个精灵全放到屏幕下方，跑一帧，断言计数器增加 ~240）
+```
+
+本轮新增：Mapper 163 (Nanjing FC-001) 与 Mapper 226 (76-in-1)
+
+```
+下载目录里出现两张之前无法加载的 ROM：
+  金庸群侠传.nes  ->  mapper 163，2MB PRG、CHR RAM、带电池
+  76合1.nes      ->  mapper 226，2MB PRG、CHR RAM
+
+Mapper 163（src/core/nes/mapper163.hpp）：
+  - 32KB 窗口，分页寄存器在扩展区 $5000/$5200/$5300；
+  - 复位时 mode bit2=0，把 A15/A16 强制为 11 —— 开机在 bank 3，
+    不是 bank 0（复位向量就写在 bank 3）；
+  - $5100/$5101 防拷反馈位，$5500 读回取反后的 F（D2）；
+  - $5000 bit7 打开自动 4KB CHR RAM 切换，用 on_scanline(127/239)
+    近似真机的 PPU A13/A9 锁存；
+  - 实测：标题画面稳定，按 Start 后进入正式游戏画面，音乐正常。
+
+Mapper 226（src/core/nes/mapper226.hpp）：
+  - 7 位 bank 号拆在 $8000（低 5 位 + bit5 模式 + bit6 镜像 + bit7
+    第 6 位）和 $8001（第 7 位）；
+  - 模式 0 = 一个 32KB bank（丢掉最低位）；模式 1 = 同一 16KB bank
+    出现在两个半区；1.5MB 卡带用 {0,0,1,2} 重排最高两位。
+
+接口变化（全部是默认空实现，已有 mapper 一行未改）：
+  read_expansion / write_expansion  扩展区 $4020-$5FFF
+  on_scanline                       扫描线事件
+
+测试：tests/test_cartridge.cpp 新增 13 个（Mapper163.* / Mapper226.*），
+389 -> 403 个测试全通过（上一轮：163/226）
+403 -> 423 个测试全通过（本轮：授权一批 + 中文一批，共 +20）
+423 -> 424（MMC3 / SMB3 状态栏回归）
+```
 
 已知边界（都不阻塞使用）：
 
 ```
-未定位：某些帧的地面带出现屏幕固定的"空洞"
-        已验证不是盗版 ROM 的问题：标准 No-Intro 镜像 (Japan, USA)
-        与之前的镜像 CHR 逐字节相同、行为相同。渲染器在全屏含滚动下
-        验证正确，游戏也从不在危险窗口写 VRAM，输出是确定性的，
-        $2007 在可见期间零访问，sprite 0 hit 每帧在第 30 行触发。
-        需要 F12 截图来判断是 Core 还是 Metal。
-
-Mappers 1, 2, 3, 4...           只有 Mapper 0 (NROM)
+MMC3 的 1KB CHR 模式            已实现（R0/R1 到高 4KB、+1 配对）；
+                               SMB3 标题/地图用 1KB 模式渲染正常
+Mappers 5, 6, 8, 12, 14         未实现，估计见上
+Mapper 163 的自动 CHR 切换      用扫描线近似真机的 PPU A13/A9 锁存
 Bus-level cycle accuracy        RMW 伪写、中断采样时机、$2004 渲染期行为
 PPU sprite overflow bug         真机的那个著名 bug 没有复现
 非精确音频混音                   用标准公式近似，真机是非线性的
-无锁音频队列                    frontend 里用的 NSLock，实时性违规
 存档 / 读档 / 录像回放          Core 还没有 serialize
 ```
 
@@ -393,10 +632,12 @@ PPU sprite overflow bug         真机的那个著名 bug 没有复现
 
 1. **移植到一台真实机器上验证** —— 用测试 ROM（`nestest`、blargg 的 PPU/APU 测试）
    找出保真度缺口。这比盯着超级玛丽看高效得多
-2. **更多 Mapper** —— Mapper 1 (MMC1)、2 (UxROM)、3 (CNROM)、4 (MMC3)
+2. **更多 Mapper** —— 授权常见板：21/22/23/25 (VRC2/4)、69 (FME-7)、
+   16 (Bandai)、18 (Jaleco)、66/71；中文板：176/178/190/191/195/199、
+   45/74/192、185/210/227/248；大件：5 (MMC5)、6 (FDS)、19 (Namco 163)、
+   24/26 (VRC6)、85 (VRC7)
 3. **存档 / 读档** —— 需要给 Core 加 serialize
-4. **无锁音频队列** —— 把 `frontend/AudioOutput.swift` 里的 `NSLock` 换成原子 SPSC
-5. **录像回放** —— 接口已经支持（`set_button`），只差前端 UI
+4. **录像回放** —— 接口已经支持（`set_button`），只差前端 UI
 
 **推荐先做 1。** 现在能玩、能看、能听，但"能玩"和"正确"是两件事，
 而测试 ROM 是唯一能把这两件事分开的工具。
@@ -419,7 +660,31 @@ PPU sprite overflow bug         真机的那个著名 bug 没有复现
 
 - [x] iNES
 - [x] Mapper 0 (NROM)
-- [ ] Mapper 1/2/3/4
+- [x] Mapper 1 (MMC1)
+- [x] Mapper 2 (UxROM)
+- [x] Mapper 3 (CNROM)
+- [x] Mapper 4 (MMC3，含扫描线 IRQ)
+- [x] Mapper 7 (AxROM)
+- [x] Mapper 9 (MMC2)
+- [x] Mapper 10 (MMC4)
+- [x] Mapper 11 (Color Dreams)
+- [x] Mapper 13 (CPROM)
+- [x] Mapper 15 (100-in-1)
+- [x] Mapper 18 (SS88006)
+- [x] Mapper 21 / 22 / 23 / 25 (VRC2/VRC4)
+- [x] Mapper 32 (IREM G-101)
+- [x] Mapper 33 (Taito TC0190)
+- [x] Mapper 66 (GxROM)
+- [x] Mapper 68 (Sunsoft-4)
+- [x] Mapper 71 (Codemasters)
+- [x] Mapper 78 (Jaleco JF-16)
+- [x] Mapper 87 (Jaleco JF-13)
+- [x] Mapper 162 / 164 / 178 / 242 (Waixing)
+- [x] Mapper 163 (Nanjing)
+- [x] Mapper 190 (Magic Kid Goo Goo)
+- [x] Mapper 226 (76-in-1)
+- [x] Mapper 227 / 246 (多合一)
+- [ ] Mapper 5/6/8/12/14/16/19/24/26/45/48/69/74/85/176/185/191/192/195/199/210/248
 
 ## Graphics
 
@@ -437,10 +702,12 @@ PPU sprite overflow bug         真机的那个著名 bug 没有复现
 ## Input
 
 - [x] Controller（串行协议、两个端口、脚本输入）
+- [x] 物理手柄（GameController 框架，player 1 / port 0）
+- [x] 键盘与手柄共存（两个 source 各自记状态，取 OR，互不覆盖）
 
 ## macOS
 
-- [ ] Metal renderer
+- [x] Metal renderer
 
 ## Tools
 

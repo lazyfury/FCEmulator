@@ -27,6 +27,7 @@ docs/
 | [computer-science/timing.md](computer-science/timing.md) | ✅ |
 | [nes/memory-map.md](nes/memory-map.md) | ✅ |
 | [nes/ines-format.md](nes/ines-format.md) | ✅ |
+| [nes/mappers.md](nes/mappers.md) | ✅ |
 | [nes/ppu.md](nes/ppu.md) | ✅ |
 | [nes/controllers.md](nes/controllers.md) | ✅ |
 | [nes/apu.md](nes/apu.md) | ✅ |
@@ -35,7 +36,7 @@ docs/
 
 ## 待完成
 
-| nes/mappers.md | Phase 3 后续 |
+| nes/mappers.md 的 Mapper 2/3/4 | Phase 3 后续 |
 | assembly/mnemonics.md | Phase 0.3 |
 | assembly/addressing-modes.md | Phase 0.4 |
 | nes/memory-map.md | Phase 2 |
