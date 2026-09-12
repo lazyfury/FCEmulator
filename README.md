@@ -11,17 +11,17 @@
 **Phase 7 完成** — macOS 前端
 
 - [x] CMake 4.4 + C++20 + Ninja
-- [x] GoogleTest 1.18 单元测试（424 个测试全通过）
+- [x] GoogleTest 1.18 单元测试（429 个测试全通过）
 - [x] `src/core/types.hpp` `bit.{hpp,cpp}` `alu.hpp`
 - [x] `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
 - [x] `src/core/cpu/` 全部 151 个 opcode、256 项周期表、反汇编器、寻址
 - [x] `src/core/nes/` 地址译码、2KB RAM 镜像、open bus、OAM DMA
 - [x] `src/core/nes/ines.{hpp,cpp}` **iNES 文件头解析**
-- [x] **Mapper 0 / 1 / 2 / 3 / 4 / 7 / 9 / 10 / 11 / 13 / 15 / 18 / 21 / 22 / 23 / 25 / 32 / 33 / 66 / 68 / 71 / 78 / 87 / 162 / 163 / 164 / 178 / 190 / 226 / 227 / 242 / 246**
+- [x] **Mapper 0 / 1 / 2 / 3 / 4 / 7 / 9 / 10 / 11 / 13 / 15 / 18 / 19 / 21 / 22 / 23 / 25 / 32 / 33 / 66 / 68 / 71 / 78 / 87 / 162 / 163 / 164 / 177 / 178 / 190 / 226 / 227 / 242 / 246 / 249**
       （NROM、MMC1、UxROM、CNROM、MMC3 含扫描线 IRQ、AxROM、
-      MMC2、MMC4、Color Dreams、CPROM、100-in-1、SS88006、VRC2/VRC4、
-      IREM、Taito、GxROM、Sunsoft-4、Codemasters、Jaleco、Waixing、
-      Nanjing、Magic Kid Goo Goo、多合一）
+      MMC2、MMC4、Color Dreams、CPROM、100-in-1、SS88006、Namco 163、
+      VRC2/VRC4、IREM、Taito、GxROM、Sunsoft-4、Codemasters、Jaleco、
+      Waixing、Nanjing、Henggedianzi、Magic Kid Goo Goo、多合一、T9552）
       `src/core/nes/mapper0.hpp` … `mapper15.hpp`
 - [x] `src/core/nes/cartridge.{hpp,cpp}` 真正的卡带：加载 .nes 文件
 - [x] `src/core/nes/ppu.{hpp,cpp}` **PPU：渲染管线、精灵、滚动、sprite 0 hit**

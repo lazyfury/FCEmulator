@@ -486,10 +486,11 @@ Mapper 覆盖与工作量估计（累计新增 2/3/4/7/11、163/226，以及授�
 ```
 已完成：0 NROM、1 MMC1、2 UxROM、3 CNROM、4 MMC3（含扫描线 IRQ）、
        7 AxROM、9 MMC2、10 MMC4、11 Color Dreams、13 CPROM、15 100-in-1、
-       18 SS88006、21/22/23/25 VRC2/VRC4、32 IREM G-101、33 Taito TC0190、
-       66 GxROM、68 Sunsoft-4、71 Codemasters、78 Jaleco JF-16、
-       87 Jaleco JF-13、162/164/178/242 Waixing、163 Nanjing、
-       190 Magic Kid Goo Goo、226 76-in-1、227/246 多合一
+       18 SS88006、19 Namco 163、21/22/23/25 VRC2/VRC4、32 IREM G-101、
+       33 Taito TC0190、66 GxROM、68 Sunsoft-4、71 Codemasters、
+       78 Jaleco JF-16、87 Jaleco JF-13、162/164/178/242 Waixing、
+       163 Nanjing、177 Henggedianzi、190 Magic Kid Goo Goo、
+       226 76-in-1、227/246/249 多合一/T9552
 
 架构：Mapper 接口新增六个默认空实现钩子，已有 mapper 一行未改。
   virtual void on_ppu_address(u16) {}              // PPU 地址总线（MMC3）
@@ -566,7 +567,7 @@ bank 寄存器从 0x3E→0x39（菜单的 $FFD0 表）正常工作。
   修复前 clocks/帧 = 0        fires/帧 = 0
   修复后 clocks/帧 = 240      fires/帧 = 1   （每扫描线一次、每帧一次）
   地图屏幕底部恢复为文字 + 3 个道具框，下方干净；
-  其余 10 张 ROM 回归正常，424 个测试全通过。
+  其余 10 张 ROM 回归正常，429 个测试全通过。
 
 回归测试：tests/test_cartridge.cpp
   Mapper4.TheCounterIsClockedOncePerScanlineEvenWithNoSprites
@@ -603,6 +604,7 @@ Mapper 226（src/core/nes/mapper226.hpp）：
 389 -> 403 个测试全通过（上一轮：163/226）
 403 -> 423 个测试全通过（本轮：授权一批 + 中文一批，共 +20）
 423 -> 424（MMC3 / SMB3 状态栏回归）
+424 -> 429（mapper 19/177/249）
 ```
 
 已知边界（都不阻塞使用）：
@@ -682,9 +684,13 @@ PPU sprite overflow bug         真机的那个著名 bug 没有复现
 - [x] Mapper 162 / 164 / 178 / 242 (Waixing)
 - [x] Mapper 163 (Nanjing)
 - [x] Mapper 190 (Magic Kid Goo Goo)
+- [x] Mapper 178 (Waixing)
+- [x] Mapper 177 (Henggedianzi)
+- [x] Mapper 19 (Namco 163)
 - [x] Mapper 226 (76-in-1)
 - [x] Mapper 227 / 246 (多合一)
-- [ ] Mapper 5/6/8/12/14/16/19/24/26/45/48/69/74/85/176/185/191/192/195/199/210/248
+- [x] Mapper 249 (Waixing T9552)
+- [ ] Mapper 5/6/8/12/14/16/24/26/45/48/69/74/85/176/185/191/192/195/199/210/248
 
 ## Graphics
 

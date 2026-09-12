@@ -12,6 +12,7 @@
 #include "core/nes/mapper13.hpp"
 #include "core/nes/mapper15.hpp"
 #include "core/nes/mapper18.hpp"
+#include "core/nes/mapper19.hpp"
 #include "core/nes/mapper21.hpp"
 #include "core/nes/mapper32.hpp"
 #include "core/nes/mapper33.hpp"
@@ -24,11 +25,13 @@
 #include "core/nes/mapper163.hpp"
 #include "core/nes/mapper164.hpp"
 #include "core/nes/mapper178.hpp"
+#include "core/nes/mapper177.hpp"
 #include "core/nes/mapper190.hpp"
 #include "core/nes/mapper226.hpp"
 #include "core/nes/mapper227.hpp"
 #include "core/nes/mapper242.hpp"
 #include "core/nes/mapper246.hpp"
+#include "core/nes/mapper249.hpp"
 
 namespace fc::nes {
 
@@ -174,6 +177,16 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
         break;
     }
 
+    case 19: {   // Namco 163
+        auto mapper = std::make_unique<Mapper19>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
     case 21:
     case 22:
     case 23:
@@ -273,6 +286,16 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
         break;
     }
 
+    case 177: {  // Henggedianzi
+        auto mapper = std::make_unique<Mapper177>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
     case 190: {  // Magic Kid Goo Goo
         auto mapper = std::make_unique<Mapper190>(cart.prg_rom_, cart.chr_rom_);
         if (header.chr_rom_pages == 0) {
@@ -319,14 +342,25 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
         break;
     }
 
+    case 249: {  // MMC3 clone with scrambled banks
+        auto mapper = std::make_unique<Mapper249>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
     default:
         error = "mapper " + std::to_string(header.mapper) +
                 " is not implemented yet (0 NROM, 1 MMC1, 2 UxROM, 3 CNROM, "
                 "4 MMC3, 7 AxROM, 9 MMC2, 10 MMC4, 11 Color Dreams, "
-                "13 CPROM, 15 100-in-1, 18 SS88006, 21/22/23/25 VRC2/4, "
-                "32 IREM, 33 Taito, 66 GxROM, 68 Sunsoft-4, 71 Codemasters, "
-                "78/87 Jaleco, 162/164/178/242 Waixing, 163 Nanjing, "
-                "190 Magic Kid Goo Goo, 226 76-in-1, 227/246 multicart are)";
+                "13 CPROM, 15 100-in-1, 18 SS88006, 19 Namco 163, "
+                "21/22/23/25 VRC2/4, 32 IREM, 33 Taito, 66 GxROM, "
+                "68 Sunsoft-4, 71 Codemasters, 78/87 Jaleco, "
+                "162/164/178/242 Waixing, 163 Nanjing, 177 Henggedianzi, "
+                "190 Magic Kid Goo Goo, 226 76-in-1, 227/246/249 multicart are)";
         return std::nullopt;
     }
 

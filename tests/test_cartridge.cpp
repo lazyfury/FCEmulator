@@ -133,6 +133,21 @@ std::vector<u8> make_mapper_ines_8k(u8 prg_pages, u8 chr_pages, int mapper)
     return rom;
 }
 
+/// Numbered at 8KB for PRG and 1KB for CHR, for the MMC3-shaped boards
+/// (mapper 19, 249) whose CHR registers count 1KB pages.
+std::vector<u8> make_8k_1k_ines(u8 prg_pages, u8 chr_pages, int mapper)
+{
+    std::vector<u8> rom = make_mapper_ines(prg_pages, chr_pages, mapper);
+    for (std::size_t i = 0; i < std::size_t(prg_pages) * 16384u; ++i) {
+        rom[16 + i] = static_cast<u8>(i / 0x2000u);
+    }
+    const std::size_t chr_base = 16 + std::size_t(prg_pages) * 16384u;
+    for (std::size_t i = 0; i < std::size_t(chr_pages) * 8192u; ++i) {
+        rom[chr_base + i] = static_cast<u8>(i / 0x400u);
+    }
+    return rom;
+}
+
 /// Reach a loaded cartridge's mapper as the concrete Nanjing chip, so a test
 /// can look at state the Mapper interface does not expose.
 nes::Mapper163& nanjing(nes::Cartridge& cart)
@@ -1572,6 +1587,112 @@ TEST(Mapper246, FourPrgAndFourChrWindowsAtSixThousand)
     cart->write_chr(0x0000, 0xBB);
     cart->write(0x6004, 0x00);
     EXPECT_EQ(cart->read_chr(0x0000), 0xAA);
+}
+
+// ===========================================================================
+// Mapper 19 (Namco 163), 177 (Henggedianzi), 249 (scrambled MMC3)
+// ===========================================================================
+
+TEST(Mapper177, OneRegisterSwitchesTheBankAndTheMirroring)
+{
+    std::string error;
+    auto cart = load(make_mapper_ines(8, 1, 177), error);   // 4 x 32KB
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    EXPECT_EQ(cart->read(0x8000), 0);
+
+    cart->write(0x8000, 0x03);
+    EXPECT_EQ(cart->read(0x8000), 6) << "32KB bank 3 starts at 16KB bank 6";
+    EXPECT_EQ(cart->mapper().mirroring(), nes::Mirroring::Vertical);
+
+    cart->write(0x8000, 0x20);
+    EXPECT_EQ(cart->read(0x8000), 0) << "bit 5 is not a bank bit";
+    EXPECT_EQ(cart->mapper().mirroring(), nes::Mirroring::Horizontal);
+}
+
+TEST(Mapper19, PrgAndChrBanks)
+{
+    std::string error;
+    auto cart = load(make_8k_1k_ines(8, 1, 19), error);   // 16 x 8KB PRG
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    EXPECT_EQ(cart->read(0x8000), 0);
+    EXPECT_EQ(cart->read(0xE000), 15) << "the top 8KB is pinned to the last bank";
+
+    cart->write(0xE000, 0x02);   // PRG slot 0
+    cart->write(0xE800, 0x03);   // PRG slot 1
+    cart->write(0xF000, 0x04);   // PRG slot 2
+    EXPECT_EQ(cart->read(0x8000), 2);
+    EXPECT_EQ(cart->read(0xA000), 3);
+    EXPECT_EQ(cart->read(0xC000), 4);
+    EXPECT_EQ(cart->read(0xE000), 15);
+
+    cart->write(0x8000, 0x02);   // CHR slot 0
+    cart->write(0xA000, 0x05);   // CHR slot 4
+    EXPECT_EQ(cart->read_chr(0x0000), 2);
+    EXPECT_EQ(cart->read_chr(0x1000), 5);
+}
+
+TEST(Mapper19, TheAudioRamIsAWindowWithAutoIncrement)
+{
+    std::string error;
+    auto cart = load(make_8k_1k_ines(8, 0, 19), error);
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    cart->write(0xF800, 0x00);   // address 0, no auto-increment
+    cart->write(0x4800, 0xAB);
+    EXPECT_EQ(cart->read(0x4800), 0xAB);
+
+    cart->write(0xF800, 0x80);   // address 0, auto-increment on
+    cart->write(0x4800, 0x11);
+    cart->write(0x4800, 0x22);
+
+    cart->write(0xF800, 0x80);   // back to address 0, auto-increment on
+    EXPECT_EQ(cart->read(0x4800), 0x11);
+    EXPECT_EQ(cart->read(0x4800), 0x22);
+}
+
+TEST(Mapper19, TheIrqCountsUpToSevenFfff)
+{
+    std::string error;
+    auto cart = load(make_8k_1k_ines(8, 0, 19), error);
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    EXPECT_TRUE(cart->mapper().clocks_on_cpu_cycles());
+
+    cart->write(0x5000, 0xFE);   // low = $7FFE
+    cart->write(0x5800, 0xFF);   // high = $FF: enables, and the IRQ is armed
+    EXPECT_EQ(cart->read(0x5000), 0xFE);
+    EXPECT_EQ(cart->read(0x5800), 0xFF);
+    EXPECT_FALSE(cart->mapper().irq_asserted());
+
+    cart->mapper().on_cpu_cycle();   // $7FFE -> $7FFF
+    EXPECT_TRUE(cart->mapper().irq_asserted());
+
+    cart->write(0x5000, 0x00);       // writing the low byte acknowledges
+    EXPECT_FALSE(cart->mapper().irq_asserted());
+}
+
+TEST(Mapper249, TheBoardPermutesPrgAndChrBanks)
+{
+    // A mapper 249 file is stored in the order the board produces when
+    // $5000=00, which is what this board's bank wiring has to undo. The
+    // mapping is fixed for the whole run.
+    std::string error;
+    auto cart = load(make_8k_1k_ines(8, 4, 249), error);
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    cart->write(0x8000, 6);      // select R6
+    cart->write(0x8001, 3);
+    EXPECT_EQ(cart->read(0x8000), 9) << "register 3 lands on physical bank 9";
+
+    cart->write(0x8000, 0x82);   // CHR mode 1, select R2 for 1KB slot 0
+    cart->write(0x8001, 8);
+    EXPECT_EQ(cart->read_chr(0x0000), 4) << "CHR page 8 lands on page 4";
+
+    // The fixed windows at the top are not permuted: they have to stay at
+    // the end of the ROM, because that is where the vectors live.
+    EXPECT_EQ(cart->read(0xE000), 15);
 }
 
 // ===========================================================================

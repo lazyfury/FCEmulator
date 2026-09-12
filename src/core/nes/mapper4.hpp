@@ -94,13 +94,13 @@ public:
         switch (address & 0xE000u) {
         case 0x8000u:
             // PRG mode bit 6 swaps which half R6 controls.
-            bank = (prg_mode_ == 0) ? prg_bank_[0] : second_last;
+            bank = (prg_mode_ == 0) ? map_prg_bank(prg_bank_[0]) : second_last;
             break;
         case 0xA000u:
-            bank = prg_bank_[1];
+            bank = map_prg_bank(prg_bank_[1]);
             break;
         case 0xC000u:
-            bank = (prg_mode_ == 0) ? second_last : prg_bank_[0];
+            bank = (prg_mode_ == 0) ? second_last : map_prg_bank(prg_bank_[0]);
             break;
         default:
             bank = last;
@@ -164,7 +164,8 @@ public:
             return 0;
         }
         const std::size_t slot = static_cast<std::size_t>(address >> 10) & 0x07u;
-        const std::size_t bank = static_cast<std::size_t>(chr_slot_[slot]) % banks;
+        const std::size_t bank =
+            map_chr_bank(slot, chr_slot_[slot]) % banks;
         return chr_[bank * 0x400u + static_cast<std::size_t>(address & 0x3FFu)];
     }
 
@@ -178,7 +179,8 @@ public:
             return;
         }
         const std::size_t slot = static_cast<std::size_t>(address >> 10) & 0x07u;
-        const std::size_t bank = static_cast<std::size_t>(chr_slot_[slot]) % banks;
+        const std::size_t bank =
+            map_chr_bank(slot, chr_slot_[slot]) % banks;
         chr_[bank * 0x400u + static_cast<std::size_t>(address & 0x3FFu)] = value;
     }
 
@@ -224,6 +226,26 @@ private:
         const std::size_t count = prg_.size() / 0x2000u;
         return (count == 0) ? 1 : count;
     }
+
+protected:
+    /// A subclass may permute the 8KB PRG bank a register selects. Mapper 249
+    /// is the reason this exists: its board wires the ROM address lines in a
+    /// scrambled order, so the same register value lands on a different
+    /// physical bank. The two hardware-fixed windows at the top are not sent
+    /// through here, because their whole job is to stay at the end of the ROM.
+    [[nodiscard]] virtual std::size_t map_prg_bank(std::size_t bank) const noexcept
+    {
+        return bank;
+    }
+
+    /// Same, for the 1KB CHR bank a window points at.
+    [[nodiscard]] virtual std::size_t map_chr_bank(std::size_t /*slot*/,
+                                                   std::size_t bank) const noexcept
+    {
+        return bank;
+    }
+
+private:
 
     void write_bank_data(u8 value)
     {

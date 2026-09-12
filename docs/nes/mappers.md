@@ -223,6 +223,7 @@ virtual void on_ppu_address(u16) {}
 | 13 | CPROM | 自带 16KB CHR RAM，4KB 分页 | Videomation |
 | 15 | 100-in-1 | **16KB PRG（顶部固定）、单屏镜像、8KB CHR RAM** | 多合一卡菜单 |
 | 18 | SS88006 | 8KB PRG/1KB CHR、**CPU 周期 IRQ** | Magical Doropie |
+| 19 | Namco 163 | 8KB PRG、8x1KB CHR、**CPU 周期 IRQ**、声音 RAM 端口 | 妖怪道中记、Rolling Thunder |
 | 21/22/23/25 | VRC2/VRC4 | 8KB PRG、8x1KB CHR、运行时镜像、**VRC4 有 CPU 周期 IRQ** | 魂斗罗(JP)、宇宙巡航机 II |
 | 32 | IREM G-101 | 8KB PRG 两种版式、8x1KB CHR | Image Fight |
 | 33 | Taito TC0190 | 8KB PRG、8x1KB CHR | Insector X |
@@ -233,9 +234,11 @@ virtual void on_ppu_address(u16) {}
 | 87 | Jaleco JF-13 | 32KB PRG、8KB CHR，寄存器在 $6000 且无 RAM | 飞龙之翼 |
 | 162/164/178/242 | Waixing | 寄存器在扩展区的 32KB/16KB 分页 | 中文 RPG |
 | 163 | Nanjing | **32KB PRG 分页**、防拷反馈位、自动 4KB CHR RAM 切换 | 金庸群侠传等南晶 RPG |
+| 177 | Henggedianzi | 一个寄存器同时选 32KB PRG 和镜像 | 爆笑三国等 |
 | 190 | Magic Kid Goo Goo | 16KB PRG（只低半可切）、4x2KB CHR | 中国人等 |
 | 226 | 76-in-1 | 7 位 PRG bank 拆在两个寄存器、32KB/16KB 两种模式 | 76合1、Super 42-in-1 |
 | 227/246 | 多合一 | 地址解码 bank / $6000 寄存器 | 1200-in-1 |
+| 249 | Waixing T9552 | MMC3 + **bank 线交叉**（按 pattern 0 还原） | 封神榜等 |
 
 代码位置：
 
@@ -253,6 +256,7 @@ src/core/nes/mapper11.hpp  Color Dreams
 src/core/nes/mapper13.hpp  CPROM
 src/core/nes/mapper15.hpp  100-in-1
 src/core/nes/mapper18.hpp  Jaleco SS88006（CPU 周期 IRQ）
+src/core/nes/mapper19.hpp  Namco 163（声音 RAM + CPU 周期 IRQ）
 src/core/nes/mapper21.hpp  VRC2 / VRC4（21/22/23/25，含 IRQ）
 src/core/nes/mapper32.hpp  IREM G-101
 src/core/nes/mapper33.hpp  Taito TC0190
@@ -264,12 +268,14 @@ src/core/nes/mapper87.hpp  Jaleco JF-13
 src/core/nes/mapper162.hpp Waixing 162
 src/core/nes/mapper163.hpp Nanjing FC-001
 src/core/nes/mapper164.hpp Waixing 164
+src/core/nes/mapper177.hpp Henggedianzi 177
 src/core/nes/mapper178.hpp Waixing 178
 src/core/nes/mapper190.hpp Magic Kid Goo Goo
 src/core/nes/mapper226.hpp 76-in-1
 src/core/nes/mapper227.hpp 227 多合一
 src/core/nes/mapper242.hpp Waixing 242
 src/core/nes/mapper246.hpp 246 多合一
+src/core/nes/mapper249.hpp Waixing T9552（交叉 bank 线）
 src/core/nes/cartridge.cpp 工厂：按文件头编号构造
 ```
 
@@ -337,7 +343,6 @@ $8001  .... ...H   bank 的第 7 位
 | 176 | FK23C | 中高 | 无 | ~400 行 | 中文 RPG |
 | 185/210/248 | 多合一 | 中 | 无 | ~150~250 行 | 1200-in-1 等 |
 | 5 | MMC5 | **很高** | ExRAM、属性扩展、垂直分割、乘除法、PCM | 1000+ 行 | Just Breed、Metal Slader Glory |
-| 19 | Namco 163 | **高** | 扩展波表音源 | ~500 行 | Rolling Thunder、Final Lap |
 | 24 / 26 | VRC6 | **高** | 扩展音源 | ~300 行 | 恶魔城传说(JP)、Esper Dream 2 |
 | 85 | VRC7 | **高** | FM 音源 | ~400 行 | Lagrange Point |
 | 6 | FDS | **高** | 磁盘镜像、BIOS、wavetable、IRQ | 600+ 行 | 磁盘版塞尔达 / 银河战士 |
@@ -355,8 +360,14 @@ $8001  .... ...H   bank 的第 7 位
 1. **授权单芯片板**：16 (Bandai)、48 (Taito TC0690)、69 (Sunsoft FME-7)；
 2. **中文/非授权卡**：45/74/191/192/195/199 (MMC3 clone)、176 (FK23C)、
    185/210/248 (多合一)；
-3. **大件**：5 (MMC5)、6 (FDS)，以及带扩展音源的 19 (Namco 163)、
-   24/26 (VRC6)、85 (VRC7)，各自是独立子项目。
+3. **大件**：5 (MMC5)、6 (FDS)，以及带扩展音源的 24/26 (VRC6)、
+   85 (VRC7)，各自是独立子项目。
+
+> **Mapper 19 的分页和 IRQ 已实现**（妖怪道中记能进标题），但 Namco 163
+> 的波形音源尚未混入音频，所以游戏没有声音。Mapper 249（Waixing 的
+> T9552）按 wiki 的 pattern-0 表实现；实测 `封神榜.nes` 能加载、不崩，
+> 但还不能运行——该板的 bank 交叉比 wiki 表描述的更复杂，需要更多
+> 逆向工作。
 
 实际要补哪个，以 ROM 加载时报的编号为准。
 
