@@ -636,3 +636,161 @@ TEST_F(RenderingTest, NoIllegalOpcodeIsEverReached)
     }
     EXPECT_EQ(machine_.cpu().unimplemented_opcode(), 0);
 }
+
+// ===========================================================================
+// Input
+// ===========================================================================
+//
+// The controller is the first part of the machine that has no effect at all
+// until something presses a button. These tests prove the loop closes: a
+// button press set from outside reaches the game, and the game visibly
+// changes what it draws.
+
+namespace {
+
+/// How many pixels differ between two frames.
+int pixel_difference(const nes::Framebuffer& a, const nes::Framebuffer& b)
+{
+    int count = 0;
+    for (std::size_t i = 0; i < a.pixels.size(); ++i) {
+        if (a.pixels[i] != b.pixels[i]) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+} // namespace
+
+class InputTest : public RenderingTest {
+protected:
+    /// Get to a point where the title screen is up and settled.
+    [[nodiscard]] bool reach_the_title_screen()
+    {
+        if (!run_until_rendering()) {
+            return false;
+        }
+        for (int i = 0; i < 240; ++i) {
+            if (!machine_.run_frame()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// Run `frames` frames, optionally holding Start for the first few.
+    [[nodiscard]] bool run_with_start(int frames, int hold_for)
+    {
+        if (hold_for > 0) {
+            machine_.set_button(nes::Controller::Button::Start, true);
+        }
+        for (int i = 0; i < frames; ++i) {
+            if (i == hold_for) {
+                machine_.set_button(nes::Controller::Button::Start, false);
+            }
+            if (!machine_.run_frame()) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+TEST_F(InputTest, TheTitleScreenIsNearlyStaticWithNoInput)
+{
+    ASSERT_TRUE(reach_the_title_screen());
+
+    const auto title = machine_.framebuffer();
+    for (int i = 0; i < 120; ++i) {
+        ASSERT_TRUE(machine_.run_frame());
+    }
+
+    // A blinking cursor is about all that should change.
+    EXPECT_LT(pixel_difference(title, machine_.framebuffer()), 2000)
+        << "nothing was pressed, so almost nothing should move";
+}
+
+TEST_F(InputTest, PressingStartLeavesTheTitleScreen)
+{
+    ASSERT_TRUE(reach_the_title_screen());
+
+    const auto title = machine_.framebuffer();
+
+    // The control run: identical timing, no input.
+    ASSERT_TRUE(run_with_start(120, 0));
+    const int idle_change = pixel_difference(title, machine_.framebuffer());
+
+    // Now the same 120 frames again, from that same starting point, but with
+    // a Start press at the beginning.
+    const auto baseline = machine_.framebuffer();
+    ASSERT_TRUE(run_with_start(120, 5));
+    const int started_change = pixel_difference(baseline, machine_.framebuffer());
+
+    // Without input the screen is static; with it, the game has begun.
+    EXPECT_GT(started_change, 20000)
+        << "pressing Start should have started the game";
+    EXPECT_GT(started_change, idle_change * 10)
+        << "and the difference must be caused by the press, not by time passing";
+}
+
+TEST_F(InputTest, AFiveFramePressIsEnough)
+{
+    // The game samples the controller once per frame, so a press only has to
+    // survive one vblank routine to be noticed. Five frames is generous.
+    ASSERT_TRUE(reach_the_title_screen());
+
+    const auto title = machine_.framebuffer();
+    ASSERT_TRUE(run_with_start(120, 5));
+
+    EXPECT_GT(pixel_difference(title, machine_.framebuffer()), 20000);
+}
+
+TEST_F(InputTest, AOneFramePressIsEnough)
+{
+    ASSERT_TRUE(reach_the_title_screen());
+
+    const auto title = machine_.framebuffer();
+    ASSERT_TRUE(run_with_start(120, 1));
+
+    EXPECT_GT(pixel_difference(title, machine_.framebuffer()), 20000)
+        << "one frame is longer than the game's own sampling interval";
+}
+
+TEST_F(InputTest, TheGameClocksTheControllerEveryFrame)
+{
+    // The port only advances when something reads it, so the read counter is
+    // a direct measure of whether the game is polling its controller. A game
+    // that stopped reading input would show up here immediately.
+    ASSERT_TRUE(reach_the_title_screen());
+
+    const u64 before = machine_.bus().controller(0).read_count();
+    ASSERT_TRUE(machine_.run_frame());
+    const u64 after_one = machine_.bus().controller(0).read_count();
+    ASSERT_TRUE(machine_.run_frame());
+    const u64 after_two = machine_.bus().controller(0).read_count();
+
+    EXPECT_GT(after_one, before) << "at least eight clocks happened";
+    EXPECT_GE(after_one - before, 8u) << "a full controller read is eight clocks";
+    EXPECT_GT(after_two, after_one) << "and again on the next frame";
+}
+
+TEST_F(InputTest, HoldingRightScrollsTheLevel)
+{
+    ASSERT_TRUE(reach_the_title_screen());
+    ASSERT_TRUE(run_with_start(120, 5));   // start the game
+
+    // Let the level settle, then hold Right and watch it move.
+    for (int i = 0; i < 60; ++i) {
+        ASSERT_TRUE(machine_.run_frame());
+    }
+    const auto standing = machine_.framebuffer();
+
+    machine_.set_button(nes::Controller::Button::Right, true);
+    for (int i = 0; i < 180; ++i) {
+        ASSERT_TRUE(machine_.run_frame());
+    }
+    machine_.set_button(nes::Controller::Button::Right, false);
+
+    EXPECT_GT(pixel_difference(standing, machine_.framebuffer()), 10000)
+        << "holding Right should have moved Mario and scrolled the view";
+}

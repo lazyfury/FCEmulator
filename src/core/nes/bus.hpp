@@ -31,9 +31,12 @@
 // ---------------------------------------------------------------------------
 
 #include "core/bus.hpp"
+#include "core/nes/controller.hpp"
 #include "core/nes/device.hpp"
 #include "core/nes/ram.hpp"
 #include "core/types.hpp"
+
+#include <array>
 
 namespace fc::nes {
 
@@ -62,6 +65,25 @@ public:
     /// Where OAM DMA writes. Phase 4 makes the PPU implement this.
     void set_oam_target(OamTarget* target) noexcept { oam_target_ = target; }
 
+    // -- the two controller ports -------------------------------------------
+    //
+    // $4016 write  sets the strobe on BOTH ports
+    // $4016 read   is controller 1
+    // $4017 read   is controller 2
+    // $4017 write  is the APU frame counter, not a controller
+    //
+    // That asymmetry is real: the two ports share one strobe wire.
+
+    [[nodiscard]] Controller& controller(int index) noexcept
+    {
+        return controllers_[static_cast<std::size_t>(index) & 1u];
+    }
+
+    [[nodiscard]] const Controller& controller(int index) const noexcept
+    {
+        return controllers_[static_cast<std::size_t>(index) & 1u];
+    }
+
     // -- observability -------------------------------------------------------
 
     /// The last byte that was on the data bus.
@@ -89,9 +111,12 @@ public:
 
 private:
     [[nodiscard]] u8 decode_read(u16 address);
+    [[nodiscard]] u8 read_controller(int index) noexcept;
     void start_oam_dma(u8 page);
 
     Ram ram_{};
+
+    std::array<Controller, 2> controllers_{};
 
     Device* cartridge_ = nullptr;
     Device* ppu_ = nullptr;

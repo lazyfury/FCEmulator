@@ -8,10 +8,10 @@
 
 ## 当前状态
 
-**Phase 4 完成** — PPU（画面渲染）
+**Phase 5 完成** — Controller（输入）
 
 - [x] CMake 4.4 + C++20 + Ninja
-- [x] GoogleTest 1.18 单元测试（250 个测试全通过）
+- [x] GoogleTest 1.18 单元测试（286 个测试全通过）
 - [x] `src/core/types.hpp` `bit.{hpp,cpp}` `alu.hpp`
 - [x] `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
 - [x] `src/core/cpu/` 全部 151 个 opcode、256 项周期表、反汇编器、寻址
@@ -22,8 +22,9 @@
 - [x] `src/core/nes/ppu.{hpp,cpp}` **PPU：渲染管线、精灵、滚动、sprite 0 hit**
 - [x] `src/core/nes/machine.{hpp,cpp}` **CPU/PPU 3:1 同步、NMI 传递**
 - [x] `src/core/nes/framebuffer.hpp` 256×240 输出
-- [x] 9 个教学 demo；12 个测试文件
-- [x] `docs/` 十四章
+- [x] `src/core/nes/controller.hpp` **手柄串行协议**，两个端口接在 `$4016`/`$4017`
+- [x] 10 个教学 demo；13 个测试文件
+- [x] `docs/` 十五章
 
 **现在能运行真实的 NES ROM 并画出画面了：**
 
@@ -39,7 +40,19 @@ sips -s format png frames/frame_240.ppm --out frame.png
 第 208-238 行 地面砖块
 ```
 
-**下一步：** Phase 5 — Controller（按键输入）
+**现在可以模拟按键并让游戏真的玩起来：**
+
+```bash
+./build/demo_input
+```
+
+```
+无输入 120 帧:     218 个像素变化  (0.35%)   标题画面静止
+按下 Start 5 帧: 57207 个像素变化  (93.11%)  游戏开始了
+按住 Right 180 帧: 14763 个像素变化          关卡滚动了
+```
+
+**下一步：** Phase 6 — APU（声音）
 
 完整路线图见 [AGENTS.md](AGENTS.md)。
 
@@ -73,6 +86,7 @@ ctest --test-dir build --output-on-failure
 ./build/demo_bus          # 地址译码、镜像、open bus、OAM DMA
 ./build/demo_cartridge    # iNES 文件头、Mapper 0、运行真实 ROM
 ./build/demo_ppu          # 渲染真实游戏的画面 -> PPM
+./build/demo_input        # 模拟按键，标题画面 -> 开始游戏
 ```
 
 用真实 ROM 跑测试（默认会查找 `tests/data/*.nes`）：
@@ -103,7 +117,7 @@ FCEmulator/
 │   │   ├── bus.hpp        总线抽象
 │   │   ├── flat_bus.hpp   测试替身：64KB 平铺内存
 │   │   ├── cpu/           寄存器、opcode 表、反汇编、寻址、表驱动派发
-│   │   └── nes/           地址译码、2KB RAM、卡带、iNES、Mapper 0
+│   │   └── nes/           地址译码、卡带、PPU、手柄、Machine
 │   └── frontend/        macOS 前端（Swift/Metal，待实现）
 ├── tools/               教学 demo 与命令行工具
 └── tests/               单元测试
@@ -139,8 +153,9 @@ Phase 0.4 寻址模式            [done]
 Phase 1   完整 6502 + 周期精确  [done]
 Phase 2   NES Bus 内存映射      [done]
 Phase 3   Cartridge / Mapper   [done]
-Phase 4   PPU                  [done] <-- 你在这里
-Phase 5   Controller           [next]
+Phase 4   PPU                  [done]
+Phase 5   Controller           [done] <-- 你在这里
+Phase 6   APU                  [next]
 Phase 1   6502 CPU
 Phase 2   NES Bus
 Phase 3   Cartridge / Mapper

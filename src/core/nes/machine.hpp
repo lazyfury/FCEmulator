@@ -34,6 +34,7 @@
 #include "core/cpu/cpu.hpp"
 #include "core/nes/bus.hpp"
 #include "core/nes/cartridge.hpp"
+#include "core/nes/controller.hpp"
 #include "core/nes/ppu.hpp"
 #include "core/types.hpp"
 
@@ -75,6 +76,29 @@ public:
     [[nodiscard]] const Framebuffer& framebuffer() const noexcept
     {
         return ppu_.framebuffer();
+    }
+
+    // -- input ---------------------------------------------------------------
+    //
+    // The frontend (or a test, or a script) sets button states here. The
+    // machine does not care where they came from, which is what makes scripted
+    // input and a real keyboard the same thing from the emulator's point of
+    // view.
+
+    [[nodiscard]] Controller& controller(int index = 0) noexcept
+    {
+        return bus_.controller(index);
+    }
+
+    [[nodiscard]] const Controller& controller(int index = 0) const noexcept
+    {
+        return bus_.controller(index);
+    }
+
+    /// Press or release one button on one port.
+    void set_button(Controller::Button button, bool pressed, int index = 0) noexcept
+    {
+        bus_.controller(index).set_button(button, pressed);
     }
 
 private:

@@ -1,6 +1,6 @@
 # NES 硬件规范 nes/
 
-> 状态：**Phase 2 / 3 / 4 已完成**（内存映射 + 卡带 + PPU），其余待 Phase 5-6 逐步填充
+> 状态：**Phase 2 / 3 / 4 / 5 已完成**（内存映射 + 卡带 + PPU + 手柄），其余待 Phase 6 填充
 
 ## 已完成
 
@@ -20,14 +20,18 @@
 | **取指流水线与像素合成** | [ppu.md](ppu.md) 第 5-6 节 |
 | **Sprite 0 hit** | [ppu.md](ppu.md) 第 7 节 |
 | **调色板与 $3F10 镜像** | [ppu.md](ppu.md) 第 9 节 |
+| **手柄串行协议** | [controllers.md](controllers.md) |
+| **锁存与两个端口** | [controllers.md](controllers.md) 第 2-3 节 |
+| **脚本输入与真实按键等价** | [controllers.md](controllers.md) 第 9 节 |
 | 实现 | `src/core/nes/` |
 | 实现 | `src/core/nes/ppu.{hpp,cpp}` `framebuffer.hpp` `machine.{hpp,cpp}` |
-| 可运行讲解 | `tools/demo_bus.cpp` `tools/demo_cartridge.cpp` `tools/demo_ppu.cpp` |
+| 可运行讲解 | `tools/demo_bus.cpp` `tools/demo_cartridge.cpp` `tools/demo_ppu.cpp` `tools/demo_input.cpp` |
 
 ```bash
 ./build/demo_bus
 ./build/demo_cartridge [path/to/game.nes]
 ./build/demo_ppu [path/to/game.nes] [frames]   # 渲染出真实画面
+./build/demo_input [path/to/game.nes]           # 模拟按键，让游戏真的跑起来
 ./build/tests/fc_tests --gtest_filter='NesBus.*:Ines.*:Mapper0.*:Cartridge.*:SuperMarioBros.*'
 ```
 
@@ -77,4 +81,3 @@ $4020 - $FFFF   卡带（Mapper 决定布局）
 
 - `apu.md` — 各声道与混音（Phase 6）
 - `mappers.md` — Mapper 1/2/3/4（Phase 3 后续）
-- `controllers.md` — 手柄协议（Phase 5）

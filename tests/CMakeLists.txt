@@ -32,6 +32,7 @@ add_executable(fc_tests
     test_cartridge.cpp
     test_real_rom.cpp
     test_ppu.cpp
+    test_controller.cpp
 )
 
 target_link_libraries(fc_tests PRIVATE

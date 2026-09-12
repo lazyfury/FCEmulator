@@ -10,6 +10,8 @@ constexpr u16 kPpuEnd        = 0x4000;   // $2000-$3FFF
 constexpr u16 kApuEnd        = 0x4018;   // $4000-$4017
 constexpr u16 kDisabledEnd   = 0x4020;   // $4018-$401F
 constexpr u16 kOamDma        = 0x4014;
+constexpr u16 kController1   = 0x4016;
+constexpr u16 kController2   = 0x4017;
 
 /// One halt cycle, then 256 reads and 256 writes.
 constexpr int kOamDmaCycles = 513;
@@ -66,6 +68,12 @@ u8 NesBus::decode_read(u16 address)
         return open_bus_;
 
     case Region::ApuAndIo:
+        if (address == kController1) {
+            return read_controller(0);
+        }
+        if (address == kController2) {
+            return read_controller(1);
+        }
         if (apu_ != nullptr) {
             return apu_->read(address);
         }
@@ -110,6 +118,15 @@ void NesBus::write(u16 address, u8 value)
             start_oam_dma(value);
             return;
         }
+        // $4016's write is the strobe, and it reaches BOTH ports: they share
+        // one wire. It does not go to the APU.
+        if (address == kController1) {
+            const bool high = (value & 0x01u) != 0;
+            controllers_[0].strobe(high);
+            controllers_[1].strobe(high);
+            return;
+        }
+        // $4017's write IS the APU's frame counter, so it falls through.
         if (apu_ != nullptr) {
             apu_->write(address, value);
         }
@@ -125,6 +142,18 @@ void NesBus::write(u16 address, u8 value)
         }
         return;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Controllers
+// ---------------------------------------------------------------------------
+
+u8 NesBus::read_controller(int index) noexcept
+{
+    // Only bit 0 is wired from the controller port. The other seven bits are
+    // whatever was last on the data bus, which is why a program must mask.
+    const u8 bit = controllers_[static_cast<std::size_t>(index) & 1u].read();
+    return static_cast<u8>((open_bus_ & 0xFEu) | (bit & 0x01u));
 }
 
 // ---------------------------------------------------------------------------

@@ -79,6 +79,9 @@ target_link_libraries(demo_cartridge PRIVATE fc_core)
 add_executable(demo_ppu tools/demo_ppu.cpp)
 target_link_libraries(demo_ppu PRIVATE fc_core)
 
+add_executable(demo_input tools/demo_input.cpp)
+target_link_libraries(demo_input PRIVATE fc_core)
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
