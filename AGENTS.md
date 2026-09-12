@@ -336,26 +336,28 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 
 # 7. Current Implementation Status
 
-当前：**Phase 0.1 完成**
+当前：**Phase 0.2 完成**
 
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架（28 个单元测试全通过）
-- `docs/computer-science/` 基础文档（binary / hexadecimal / twos-complement / bitwise / overflow-flag）
+- GoogleTest 测试框架（58 个单元测试全通过）
+- `docs/computer-science/` 基础文档（binary / hexadecimal / twos-complement / bitwise / overflow-flag / cpu）
 - `src/core/types.hpp` 定宽整数类型
 - `src/core/bit.{hpp,cpp}` 位运算工具库
 - `src/core/alu.hpp` 加法器与 C/V/Z/N 标志
-- `tools/demo_bitwise.cpp` `tools/demo_overflow.cpp` 教学 demo
-- `tests/test_bit.cpp` `tests/test_alu.cpp` 单元测试
+- `src/core/bus.hpp` / `flat_bus.hpp` 总线抽象
+- `src/core/cpu/registers.hpp` A/X/Y/SP/P/PC 与 flag 读写
+- `src/core/cpu/cpu.{hpp,cpp}` 取指/译码/执行循环、栈、复位向量
+- `tools/demo_bitwise.cpp` `tools/demo_overflow.cpp` `tools/demo_cpu.cpp` 教学 demo
+- `tests/test_bit.cpp` `tests/test_alu.cpp` `tests/test_registers.cpp` `tests/test_cpu.cpp`
 
 未完成：
 
 ```
-CPU skeleton / registers / flags
-6502 complete instruction set
+6502 complete instruction set / addressing modes
 Assembler knowledge / Disassembler
-Bus / Cartridge / PPU / APU / Controller
+NES Bus memory map / Cartridge / PPU / APU / Controller
 Frontend
 ```
 
@@ -366,16 +368,19 @@ Frontend
 下一步必须执行：
 
 ```
-Phase 0.2 — CPU 基础
+Phase 0.3 — 6502 汇编
 ```
 
 任务：
 
-1. 讲解 register / ALU / instruction / opcode / operand / PC
-2. 创建 `docs/computer-science/cpu.md`
-3. 设计 `src/core/cpu/registers.hpp`（A/X/Y/PC/SP/P）
-4. 设计 `src/core/cpu/cpu.hpp` 骨架（fetch / decode / execute 循环）
-5. 为寄存器与 flag 写单元测试
+1. 讲解 mnemonic / machine code / assembler / disassembler
+2. 创建 `docs/computer-science/assembly.md`
+3. 解释 `#` `$` `()` `,` 四个符号
+4. 实现 `src/core/cpu/disassembler.{hpp,cpp}`：把字节流变成 `LDA #$42`
+5. 为反汇编器写单元测试（可用已知等价对：`A9 42` <-> `LDA #$42`）
+6. 用反汇编器改进 `demo_cpu` 的轨迹输出
+
+注意：此时仍不实现新的 opcode，只实现“看懂字节”的能力。
 
 ---
 

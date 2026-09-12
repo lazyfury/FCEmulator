@@ -19,12 +19,14 @@ docs/
 | [computer-science/hexadecimal.md](computer-science/hexadecimal.md) | ✅ |
 | [computer-science/twos-complement.md](computer-science/twos-complement.md) | ✅ |
 | [computer-science/bitwise-operations.md](computer-science/bitwise-operations.md) | ✅ |
+| [computer-science/overflow-flag.md](computer-science/overflow-flag.md) | ✅ |
+| [computer-science/cpu.md](computer-science/cpu.md) | ✅ |
 
 ## 待完成
 
 | 文档 | 阶段 |
 |------|------|
-| computer-science/cpu.md | Phase 0.2 |
+| computer-science/assembly.md | Phase 0.3 |
 | assembly/mnemonics.md | Phase 0.3 |
 | assembly/addressing-modes.md | Phase 0.4 |
 | nes/memory-map.md | Phase 2 |

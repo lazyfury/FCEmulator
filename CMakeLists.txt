@@ -35,6 +35,7 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 # ---------------------------------------------------------------------------
 add_library(fc_core
     src/core/bit.cpp
+    src/core/cpu/cpu.cpp
 )
 target_include_directories(fc_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -48,6 +49,9 @@ target_link_libraries(demo_bitwise PRIVATE fc_core)
 
 add_executable(demo_overflow tools/demo_overflow.cpp)
 target_link_libraries(demo_overflow PRIVATE fc_core)
+
+add_executable(demo_cpu tools/demo_cpu.cpp)
+target_link_libraries(demo_cpu PRIVATE fc_core)
 
 # ---------------------------------------------------------------------------
 # Tests
