@@ -17,6 +17,16 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
 
+# Export compile_commands.json.
+#
+# This file is a "compilation database": for every .cpp it records the exact
+# compiler invocation, including -std=c++20 and every -I path.
+#
+# Editors (VS Code / clangd / Emacs) read it instead of guessing. Without it,
+# IntelliSense defaults to an older C++ standard and reports false errors such
+# as:  namespace "std" has no member "unsigned_integral"
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Warnings: they are how the compiler teaches you about your own bugs.
 add_compile_options(-Wall -Wextra -Wpedantic)
 

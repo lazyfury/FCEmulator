@@ -7,7 +7,12 @@ cmake-build-*/
 ._*
 
 # Editors
-.vscode/
+# Ignore the whole folder, but keep the shared project configuration so a
+# fresh clone gets a working IntelliSense setup (C++20, compile_commands.json).
+.vscode/*
+!.vscode/c_cpp_properties.json
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.swp
 
