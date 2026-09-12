@@ -162,6 +162,10 @@ int Cpu::step() noexcept
     execute(info, operand);
     cycles_ += static_cast<u64>(cycle_cost(last_opcode_, operand));
 
+    // The bus may have stolen time on its own - OAM DMA is the canonical
+    // case. The CPU does not need to know what a device is to wait for one.
+    cycles_ += static_cast<u64>(bus_->take_stall_cycles());
+
     return static_cast<int>(cycles_ - cycles_before);
 }
 

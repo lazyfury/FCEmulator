@@ -336,32 +336,31 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 
 # 7. Current Implementation Status
 
-当前：**Phase 1 完成**
+当前：**Phase 2 完成**
 
 已完成：
 
 - CMake + C++20 + Ninja
-- GoogleTest 测试框架（154 个单元测试全通过）
-- `docs/computer-science/` 十章（binary / hexadecimal / twos-complement / bitwise / overflow-flag / cpu / assembly / addressing-modes / instruction-set / timing）
+- GoogleTest 测试框架（172 个单元测试全通过）
+- `docs/` 十二章（computer-science 十章 + nes/memory-map + architecture/bus）
 - `src/core/types.hpp` 定宽整数类型
 - `src/core/bit.{hpp,cpp}` 位运算工具库
 - `src/core/alu.hpp` 加法器与 C/V/Z/N 标志
-- `src/core/bus.hpp` / `flat_bus.hpp` 总线抽象
-- `src/core/cpu/registers.hpp` A/X/Y/SP/P/PC 与 flag 读写
-- `src/core/cpu/opcode.{hpp,cpp}` 256 项 opcode 表 + 256 项周期表
-- `src/core/cpu/disassembler.{hpp,cpp}` 字节流 <-> 汇编
-- `src/core/cpu/addressing.{hpp,cpp}` 有效地址计算（13 种模式）
-- `src/core/cpu/cpu.{hpp,cpp}` **全部 56 个操作 / 151 个 opcode**、NMI/IRQ/BRK/RTI
-- 6 个教学 demo；8 个测试文件
+- `src/core/bus.hpp` 总线抽象，含 `take_stall_cycles()`
+- `src/core/cpu/` 全部 56 个操作 / 151 个 opcode、256 项周期表、反汇编器
+- `src/core/nes/device.hpp` Device / OamTarget 接口
+- `src/core/nes/ram.hpp` 2KB RAM（掩码就是未接的地址线）
+- `src/core/nes/bus.{hpp,cpp}` 完整地址译码、镜像、open bus、OAM DMA
+- `src/core/nes/ram_cartridge.hpp` 卡带槽占位
+- 7 个教学 demo；9 个测试文件
 
 未完成：
 
 ```
-NES bus address decoding / RAM mirroring / PPU & APU register windows
-Cartridge / iNES / Mappers
-PPU / APU / Controller
+iNES parser / PRG & CHR ROM / Mapper 0 (and beyond)
+PPU / APU / Controllers
 Frontend (Swift + Metal)
-RMW dummy write, bus-level cycle accuracy
+Bus-level cycle accuracy (RMW dummy write, mid-instruction interrupt sampling)
 ```
 
 ---
@@ -371,30 +370,28 @@ RMW dummy write, bus-level cycle accuracy
 下一步必须执行：
 
 ```
-Phase 2 — NES Bus（内存映射与地址译码）
+Phase 3 — Cartridge（iNES 格式与 Mapper 0）
 ```
 
-背景：现在 CPU 接的是一个平铺的 64KB `FlatBus`（`src/core/flat_bus.hpp`）。
-真正的 NES 总线要把 16 位地址译码成不同的设备。
+背景：卡带槽现在是 `RamCartridge`（`src/core/nes/ram_cartridge.hpp`），
+一块 48KB 的 RAM 占位。真正的卡带要读 `.nes` 文件。
 
 任务：
 
-1. 讲解 address bus / data bus / address decoding / memory mirroring
-2. 创建 `docs/nes/memory-map.md` 与 `docs/architecture/bus.md`
-3. 实现 `src/core/nes/bus.hpp`：内存映射
-   ```
-   $0000-$07FF  2KB RAM
-   $0800-$1FFF  RAM 镜像（每 2KB 重复 4 次）
-   $2000-$3FFF  PPU 寄存器（每 8 字节重复）
-   $4000-$4017  APU / IO
-   $4018-$401F  禁用
-   $4020-$FFFF  卡带（Phase 3）
-   ```
-4. 写 `Ram` 类与镜像测试（穷举 $0000-$1FFF 的镜像关系）
-5. 用真正的 NES Bus 替换 `FlatBus` 跑现有的 CPU 测试
-6. 接入 OAM DMA（$4014）—— 这是最简单的一个真实硬件交互
+1. 讲解 ROM / PRG ROM / CHR ROM / mapper / bank switching
+2. 创建 `docs/nes/ines-format.md` 与 `docs/nes/mappers.md`
+3. 实现 `src/core/nes/cartridge.hpp`：iNES 文件头解析
+   - 16 字节文件头：`NES\x1A`、PRG 页数、CHR 页数、flags 6/7
+   - 识别 mapper 号（flags 6 高 4 位 + flags 7 高 4 位）
+   - 识别镜像模式（水平 / 垂直 / 四屏）
+4. 实现 Mapper 0（NROM）：
+   - 16KB PRG 镜像到 `$8000-$BFFF` 和 `$C000-$FFFF`
+   - 32KB PRG 直接映射
+   - 8KB CHR ROM 无 bank 切换
+5. 写一个小的测试 ROM（手工拼接字节，不需要真游戏）
+6. 用真实 Cartridge 替换 `RamCartridge` 跑集成测试
 
-**完成标志：写 `$0800` 与写 `$0000` 效果相同，且可以用穷举测试证明。**
+**完成标志：能从字节流解析出一个合法的 iNES 头，并让 Mapper 0 正确应答 `$8000-$FFFF`。**
 
 ---
 

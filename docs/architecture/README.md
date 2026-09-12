@@ -1,6 +1,6 @@
 # 系统架构 architecture/
 
-> 状态：Phase 2 待填充
+> 状态：**Phase 2 已完成**（总线架构），其余待 Phase 3+ 填充
 
 ## 目标结构
 
@@ -22,6 +22,45 @@
                   Screen
 ```
 
+## 已完成
+
+| 文档 | 内容 |
+|------|------|
+| [bus.md](bus.md) | 为什么需要 Bus、Device 接口、依赖方向、测试替身 |
+
+### 当前实际结构
+
+```
+                 +-----------+
+                 |   Bus     |   抽象 (src/core/bus.hpp)
+                 +-----+-----+
+                       ^
+                       | CPU 只知道这个
+                 +-----+-----+
+                 |   Cpu     |   src/core/cpu/
+                 +-----------+
+
+                 +-----------+
+                 |  NesBus   |   实现 (src/core/nes/bus.hpp)
+                 +-----+-----+
+                       |
+       +---------------+---------------+
+       |               |               |
+     Ram          Device*          Device*
+  (2KB, 回绕)   (PPU 槽)        (卡带槽)
+```
+
+**依赖方向已用 grep 验证：**
+
+```bash
+$ grep -rn '#include "core/nes/' src/core/cpu/
+  （无）
+$ grep -rn 'nes::' src/core/cpu/
+  （无）
+```
+
+CPU 层完全不知道 NES 的存在。这条 grep 保持为空，架构就是对的。
+
 ## 硬性规则（来自 AGENTS.md）
 
 ### 规则 1：CPU 不得直接访问 PPU
@@ -35,10 +74,10 @@ memory[]                       Bus
 PPU                           PPU
 ```
 
-CPU 只知道"我要往地址 `0x2006` 写一个字节"。
+CPU 只知道"我要往地址 `$2006` 写一个字节"。
 是 Bus 决定了这个写操作其实是发给 PPU 的。
 
-**收益：** CPU 实现可以完全独立测试；换一台机器（Game Boy）只需换 Bus 和 PPU。
+**收益：** CPU 可以完全独立测试；换一台机器（Game Boy）只需换 Bus 和 PPU。
 
 ### 规则 2：Core 不得依赖 UI
 
@@ -50,13 +89,13 @@ Core 只产出一个 `256×240` 的 RGB framebuffer，谁来显示它由 `src/fr
 ### 规则 3：一切通信经过 Bus
 
 ```
-CPU 读 0x8000  ->  Bus 判断：>= 0x4020 且 < 0x6000? -> Cartridge (PRG ROM)
-CPU 读 0x2002  ->  Bus 判断：在 PPU 寄存器区?        -> PPU
-CPU 读 0x0000  ->  Bus 判断：< 0x2000?               -> RAM
+CPU 读 $8000  ->  Bus 判断：$4020-$FFFF?  -> 卡带
+CPU 读 $2002  ->  Bus 判断：$2000-$3FFF?  -> PPU
+CPU 读 $0000  ->  Bus 判断：<$2000?       -> RAM
 ```
 
 ## 待写文档
 
-- `overview.md` — 模块职责与依赖方向
-- `bus.md` — 内存映射与 IO 映射
-- `render-pipeline.md` — Framebuffer 到 Metal 纹理
+- `overview.md` — 完整模块职责与依赖图
+- `render-pipeline.md` — Framebuffer 到 Metal 纹理（Phase 7）
+- `threading.md` — 主循环与音频同步（Phase 7）

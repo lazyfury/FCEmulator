@@ -1,6 +1,22 @@
 # NES 硬件规范 nes/
 
-> 状态：Phase 2-6 逐步填充
+> 状态：**Phase 2 已完成**（内存映射），其余待 Phase 3-6 逐步填充
+
+## 已完成
+
+| 内容 | 位置 |
+|------|------|
+| CPU 内存映射与地址译码 | [memory-map.md](memory-map.md) |
+| 镜像（unwired address lines） | [memory-map.md](memory-map.md) 第 2-3 节 |
+| Open bus | [memory-map.md](memory-map.md) 第 4 节 |
+| OAM DMA | [memory-map.md](memory-map.md) 第 5 节 |
+| 实现 | `src/core/nes/bus.{hpp,cpp}` `ram.hpp` |
+| 可运行讲解 | `tools/demo_bus.cpp` |
+
+```bash
+./build/demo_bus
+./build/tests/fc_tests --gtest_filter='NesBus.*'
+```
 
 ## NES 硬件速览
 
@@ -18,15 +34,18 @@
 | 卡带 ROM | PRG ROM + CHR ROM |
 | 音频 | 2 Pulse + 1 Triangle + 1 Noise + DMC |
 
-## CPU 内存映射（预告）
+## CPU 内存映射
 
 ```
-0x0000 - 0x07FF  2KB 内部 RAM（0x0800-0x1FFF 是它的镜像）
-0x2000 - 0x2007  PPU 寄存器（8 字节，其余是镜像）
-0x4000 - 0x4017  APU 与 IO
-0x4018 - 0x401F  禁用
-0x4020 - 0xFFFF  卡带（Mapper 决定布局）
+$0000 - $07FF   2KB 内部 RAM
+$0800 - $1FFF   RAM 镜像（每 2KB 重复，共 4 次）
+$2000 - $3FFF   PPU 寄存器（8 字节，每 8 字节重复，共 1024 次）
+$4000 - $4017   APU、手柄、OAM DMA
+$4018 - $401F   禁用
+$4020 - $FFFF   卡带（Mapper 决定布局）
 ```
+
+详见 [memory-map.md](memory-map.md)。
 
 ## 中断向量
 
@@ -43,9 +62,8 @@
 
 ## 待写文档
 
-- `memory-map.md` — 完整内存映射与镜像规则
-- `ppu.md` — 渲染管线、Tile、Sprite、滚动
-- `apu.md` — 各声道与混音
-- `ines-format.md` — 卡带文件格式
-- `mappers.md` — Mapper 0/1/2/3/4
-- `timing.md` — CPU/PPU 时钟比 3:1、扫描线与帧
+- `ppu.md` — 渲染管线、Tile、Sprite、滚动（Phase 4）
+- `apu.md` — 各声道与混音（Phase 6）
+- `ines-format.md` — 卡带文件格式（Phase 3）
+- `mappers.md` — Mapper 0/1/2/3/4（Phase 3）
+- `controllers.md` — 手柄协议（Phase 5）

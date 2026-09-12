@@ -33,6 +33,16 @@ public:
 
     /// Write one byte to the 16 bit address space.
     virtual void write(u16 address, u8 value) = 0;
+
+    /// Cycles the CPU has to wait because the BUS did something on its own.
+    ///
+    /// This is not an instruction cost - it is the bus stealing time. The
+    /// canonical case is OAM DMA ($4014): writing one byte makes the bus
+    /// copy 256 bytes and stall the CPU for 513 cycles.
+    ///
+    /// The CPU drains this after every instruction, so a device can stall
+    /// the CPU without the CPU knowing what a device is.
+    virtual int take_stall_cycles() { return 0; }
 };
 
 } // namespace fc

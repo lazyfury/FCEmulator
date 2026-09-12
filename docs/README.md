@@ -25,13 +25,16 @@ docs/
 | [computer-science/addressing-modes.md](computer-science/addressing-modes.md) | ✅ |
 | [computer-science/instruction-set.md](computer-science/instruction-set.md) | ✅ |
 | [computer-science/timing.md](computer-science/timing.md) | ✅ |
+| [nes/memory-map.md](nes/memory-map.md) | ✅ |
+| [architecture/bus.md](architecture/bus.md) | ✅ |
 
 ## 待完成
 
 | 文档 | 阶段 |
 |------|------|
-| architecture/overview.md | Phase 2 |
-| nes/memory-map.md | Phase 2 |
+| nes/ines-format.md | Phase 3 |
+| nes/mappers.md | Phase 3 |
+| nes/ppu.md | Phase 4 |
 | assembly/mnemonics.md | Phase 0.3 |
 | assembly/addressing-modes.md | Phase 0.4 |
 | nes/memory-map.md | Phase 2 |

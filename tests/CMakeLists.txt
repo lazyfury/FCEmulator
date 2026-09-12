@@ -28,6 +28,7 @@ add_executable(fc_tests
     test_addressing.cpp
     test_instruction_set.cpp
     test_cycles.cpp
+    test_nes_bus.cpp
 )
 
 target_link_libraries(fc_tests PRIVATE
