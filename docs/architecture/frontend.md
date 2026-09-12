@@ -200,13 +200,48 @@ private func updateScale(for size: CGSize) {
 
 ## 6. 键盘
 
+| 按键 | NES |
+|------|-----|
+| 方向键 或 `W` `A` `S` `D` | 十字键 |
+| `Z` 或 `J` | B（手柄左边的键） |
+| `X` 或 `K` | A（手柄右边的键） |
+| `Return` 或 `Space` | Start |
+| `Tab` 或 右 Shift | Select |
+| `R` | 复位 |
+| `F12` | 截图（见下） |
+| `F` | 快进（2 帧/次绘制） |
+
+**两套按键做同一件事，因为"哪个键是 A"没有唯一答案。**
+方向键或 WASD 都行；Z/X 镜像手柄的物理布局（左键在左），
+J/K 则是左手放在 WASD 上时右手最自然的位置。
+
+### F12 截图：用来判断问题在 Core 还是在窗口
+
 ```swift
-static let mapping: [UInt16: Emulator.Button] = [
-    123: .left, 124: .right, 125: .down, 126: .up,   // 方向键
-    6: .a, 38: .b,                                    // Z, J
-    36: .start, 60: .select,
-]
+private func takeScreenshot() {
+    // 保存 Core 产出的东西，不是窗口显示的东西。
+    let path = (directory as NSString).appendingPathComponent(name)
+    writePPM(path: path, framebuffer: framebuffer)
+}
 ```
+
+**这就是它存在的理由：**
+
+```
+保存的 PPM 正确   而窗口不对   ->  问题在 Metal
+保存的 PPM 也乱                 ->  问题在 Core
+```
+
+**没有它就没办法把这两者分开。**
+
+### 窗口标题是一条状态栏
+
+```
+FCEmulator  -  60.1 fps  -  frame 3218  -  audio 42%
+```
+
+fps 用来发现速度不对（NES 是 60.0988 Hz，不是 60.000），
+audio 百分比是环形缓冲的填充度——**声音断续时第一个要看的东西**。
 
 **这里没有的东西和有的东西一样重要：** 没有连发、没有去抖、没有长按、没有组合键。
 

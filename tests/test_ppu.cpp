@@ -1043,6 +1043,37 @@ TEST(Ppu, WritesDuringVblankAreSafe)
     EXPECT_EQ(f.ppu.vram_writes_blanking(), 1u);
 }
 
+TEST(Ppu, ReadsDuringVisibleRenderingAreAlsoDangerous)
+{
+    // A $2007 READ advances the same v register a write does, so it corrupts
+    // the fetch pointer just as badly. Counting it separately is how a game
+    // that polls VRAM mid frame gets found.
+    Fixture f;
+    f.ppu.write(0x2001, 0x1E);
+
+    run_to_scanline(f.ppu, 100);
+    ASSERT_GE(f.ppu.scanline(), 0);
+    ASSERT_LT(f.ppu.scanline(), 240);
+
+    f.set_vram_address(0x2000);
+    (void)f.ppu.read(0x2007);
+
+    EXPECT_EQ(f.ppu.vram_reads_visible(), 1u);
+}
+
+TEST(Ppu, ReadsWhileRenderingIsOffAreSafe)
+{
+    Fixture f;
+    f.ppu.write(0x2001, 0x00);
+
+    run_to_scanline(f.ppu, 100);
+
+    f.set_vram_address(0x2000);
+    (void)f.ppu.read(0x2007);
+
+    EXPECT_EQ(f.ppu.vram_reads_visible(), 0u);
+}
+
 TEST(Ppu, WritesWhileRenderingIsOffAreSafe)
 {
     Fixture f;

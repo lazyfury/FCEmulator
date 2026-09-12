@@ -175,16 +175,38 @@ final class Keyboard {
 
     private(set) var pressed = Set<UInt16>()
 
+    /// macOS virtual key codes. These are positions on the keyboard, not
+    /// characters, which is why they work the same on any layout.
+    ///
+    /// Two sets of keys do the same thing everywhere, because there is no
+    /// single answer to "which key is A". Arrows or WASD for the d-pad, and
+    /// either Z/X or J/K for the face buttons: Z/X mirrors the physical
+    /// controller (left button on the left) and J/K is what the right hand
+    /// wants if the left hand is on WASD.
     static let mapping: [UInt16: Emulator.Button] = [
-        // Arrow keys and WASD both work, because both are reasonable.
+        // d-pad - arrows (123/124/125/126 are left/right/down/up)
         123: .left, 124: .right, 125: .down, 126: .up,
-        0: .a, 13: .b,           // A, S
-        6: .a, 38: .b,           // Z, J
-        40: .b,                  // K
-        1: .b, 37: .a,           // S, L
-        36: .start,              // Return
-        60: .select,             // Right shift
+
+        // d-pad - WASD (0/1/2/13 are A/S/D/W)
+        0: .left, 2: .right, 1: .down, 13: .up,
+
+        // B is the left face button, A is the right one, same as the pad
+        6: .b, 38: .b,     // Z, J
+        7: .a, 40: .a,     // X, K
+
+        // Start and Select
+        36: .start,        // Return
+        49: .start,        // Space
+        48: .select,       // Tab
+        60: .select,       // Right shift
     ]
+
+    /// Keys that do something other than a button.
+    enum Command: UInt16 {
+        case reset = 15        // R
+        case screenshot = 111  // F12
+        case toggleSpeed = 3   // F
+    }
 
     func button(for keyCode: UInt16) -> Emulator.Button? {
         Keyboard.mapping[keyCode]
@@ -220,18 +242,40 @@ final class EmulatorView: MTKView {
     var keyboard: Keyboard?
     var emulator: Emulator?
 
+    /// Keys that are not buttons.
+    var onReset: (() -> Void)?
+    var onScreenshot: (() -> Void)?
+    var onToggleSpeed: (() -> Void)?
+
     override var acceptsFirstResponder: Bool { true }
+
+    /// Clicking the picture should give it the keyboard back, because the
+    /// first thing anyone does when the controls stop working is click on
+    /// the window.
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
+    }
 
     override func keyDown(with event: NSEvent) {
         guard let keyboard, let emulator else { return }
+
         if keyboard.keyDown(keyCode: event.keyCode, emulator: emulator) {
             return
         }
-        if event.keyCode == 15 {   // R
-            emulator.reset()
-            return
+
+        switch Keyboard.Command(rawValue: event.keyCode) {
+        case .reset:
+            onReset?()
+        case .screenshot:
+            onScreenshot?()
+        case .toggleSpeed:
+            onToggleSpeed?()
+        case nil:
+            // Let the system have anything we do not use, so Cmd-Q and the
+            // rest of the menu still work.
+            super.keyDown(with: event)
         }
-        super.keyDown(with: event)
     }
 
     override func keyUp(with event: NSEvent) {
@@ -264,6 +308,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var emulator: Emulator?
     private var frameBuffer = [Float](repeating: 0, count: 8192)
 
+    private var screenshotCounter = 0
+    private var framesPerTick = 1
+    private var titleTick = 0
+    private var lastTitleUpdate = Date()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let emulator else { return }
 
@@ -273,7 +322,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard let renderer = Renderer(device: device) else {
-            FileHandle.standardError.write("could not build the renderer\n".data(using: .utf8)!)
+            FileHandle.standardError.write(
+                "could not build the renderer\n".data(using: .utf8)!)
             NSApp.terminate(nil)
             return
         }
@@ -286,22 +336,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.colorPixelFormat = .bgra8Unorm
         view.isPaused = false
         view.enableSetNeedsDisplay = false
+        // 60, because that is what the console did. A faster display would
+        // otherwise run the game at double speed.
         view.preferredFramesPerSecond = 60
         view.keyboard = keyboard
         view.emulator = emulator
         view.delegate = renderer
 
+        view.onReset = { [weak self] in
+            self?.emulator?.reset()
+        }
+        view.onScreenshot = { [weak self] in
+            self?.takeScreenshot()
+        }
+        view.onToggleSpeed = { [weak self] in
+            guard let self else { return }
+            self.framesPerTick = (self.framesPerTick == 1) ? 2 : 1
+        }
+
         // The emulator's clock: one frame per displayed frame, then the
         // picture goes straight to the GPU.
+        // MTKView calls this from the main thread, so the window's title and
+        // the rest of the UI work are safe here. Swift 6 wants to be told.
         renderer.onFrame = { [weak self] in
+          MainActor.assumeIsolated {
             guard let self, let emulator = self.emulator else { return }
 
-            if !emulator.runFrame() {
-                // The core halted, which means the emulator has a bug. Say so
-                // instead of showing a frozen picture with no explanation.
-                self.window?.title = "FCEmulator - the CPU halted (emulator bug)"
-                return
+            for _ in 0..<self.framesPerTick {
+                if !emulator.runFrame() {
+                    // The core halted, which means the emulator has a bug.
+                    // Say so instead of showing a frozen picture silently.
+                    self.window?.title = "FCEmulator - the CPU halted (emulator bug)"
+                    return
+                }
             }
+            self.titleTick += 1
 
             // Hand the audio over, then drop it. The core produces it a frame
             // at a time; the ring buffer smooths that out for the speaker.
@@ -314,10 +383,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             }
+
             renderer.framebuffer = emulator.framebuffer
+            self.updateTitle()
+          }
         }
-        // MTKView's own draw callback runs after onFrame, so the texture is
-        // uploaded with the frame that was just produced.
         renderer.framebuffer = emulator.framebuffer
 
         self.view = view
@@ -331,14 +401,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false)
-        window.title = "FCEmulator - \(emulator.romSummary)"
+        window.title = "FCEmulator"
         window.contentView = view
         window.makeKeyAndOrderFront(nil)
         window.center()
         window.makeFirstResponder(view)
+        window.acceptsMouseMovedEvents = true
         self.window = window
 
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// The title bar doubles as a status line: frames per second, so a
+    /// machine running at the wrong speed is obvious, and the audio buffer's
+    /// fill, so a starving speaker is obvious too.
+    @MainActor private func updateTitle() {
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastTitleUpdate)
+        guard elapsed >= 0.5 else { return }
+
+        let fps = Double(titleTick) / elapsed
+        titleTick = 0
+        lastTitleUpdate = now
+
+        guard let emulator else { return }
+        let fill = audio.map { Int($0.fill * 100) } ?? 0
+        let speed = framesPerTick == 1 ? "" : "  [fast forward]"
+        window?.title = String(
+            format: "FCEmulator  -  %.1f fps  -  frame %d  -  audio %d%%%@",
+            fps, emulator.frameCount, fill, speed)
+    }
+
+    /// Write what the core produced, not what the window shows.
+    ///
+    /// This is the point of it: if the saved file looks right and the window
+    /// does not, the problem is in Metal. If they look the same, it is in the
+    /// core. Without this there is no way to tell the two apart.
+    private func takeScreenshot() {
+        guard let emulator, let framebuffer = emulator.framebuffer else { return }
+
+        screenshotCounter += 1
+        let name = String(format: "shot_%04d.ppm", screenshotCounter)
+        let directory = FileManager.default.currentDirectoryPath
+        let path = (directory as NSString).appendingPathComponent(name)
+
+        if writePPM(path: path, framebuffer: framebuffer) {
+            print("screenshot: \(path)  (frame \(emulator.frameCount))")
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

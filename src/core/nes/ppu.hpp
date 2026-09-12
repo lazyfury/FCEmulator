@@ -154,6 +154,10 @@ public:
     /// running. Dangerous for the same reason as the visible range.
     [[nodiscard]] u64 vram_writes_prerender() const noexcept { return vram_writes_prerender_; }
 
+    /// $2007 READS during the visible frame. A read also advances `v`, so it
+    /// corrupts the fetch pointer exactly the same way a write does.
+    [[nodiscard]] u64 vram_reads_visible() const noexcept { return vram_reads_visible_; }
+
     /// Resolve a palette index to RGB, applying the greyscale bit.
     [[nodiscard]] static u32 colour(u8 palette_index, bool greyscale = false) noexcept;
 
@@ -211,6 +215,7 @@ private:
 
     u64 vram_writes_visible_ = 0;
     u64 vram_writes_prerender_ = 0;
+    u64 vram_reads_visible_ = 0;
     u64 vram_writes_blanking_ = 0;
 
     Framebuffer framebuffer_{};

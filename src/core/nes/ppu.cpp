@@ -86,6 +86,7 @@ void Ppu::reset() noexcept
 
     vram_writes_visible_ = 0;
     vram_writes_prerender_ = 0;
+    vram_reads_visible_ = 0;
     vram_writes_blanking_ = 0;
 
     sprite_line_ = {};
@@ -210,6 +211,10 @@ u8 Ppu::read(u16 address)
         return oam_[oam_addr_];
 
     case 7: {   // PPUDATA - buffered, and different for palettes
+        if (rendering_enabled() && scanline_ >= 0 && scanline_ < kVisibleScanlines) {
+            ++vram_reads_visible_;
+        }
+
         const u16 addr = static_cast<u16>(v_ & 0x3FFFu);
 
         u8 result;
