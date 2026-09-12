@@ -118,6 +118,10 @@ public:
     }
 
 private:
+    /// Hand the mapper its CPU-cycle clock if it asked for one. The loop is
+    /// empty for every mapper that does not (MMC3 counts PPU A12 instead).
+    void clock_mapper(int cpu_cycles) noexcept;
+
     // Declaration order matters: each one is handed to the next.
     std::unique_ptr<Cartridge> cartridge_;
     Ppu ppu_;

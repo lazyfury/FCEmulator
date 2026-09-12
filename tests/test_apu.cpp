@@ -244,7 +244,11 @@ TEST(ApuPulse, PulseOneAndTwoNegateDifferently)
         apu.write(base + 1, 0x89);   // sweep on, period 0, negate, shift 1
         apu.write(base + 2, 0x00);
         apu.write(base + 3, 0x04);   // timer = 0x0400
-        apu.tick_cpu(200000);
+        // Three half-frame clocks: 1024 -> 511 -> 255 -> 127 for pulse 1 and
+        // 1024 -> 512 -> 256 -> 128 for pulse 2. Long enough to show the
+        // difference, short enough that neither sweeps into the wrap that
+        // disables the unit.
+        apu.tick_cpu(45000);
         return first ? apu.pulse1().timer() : apu.pulse2().timer();
     };
 
@@ -269,8 +273,8 @@ TEST(ApuTriangle, NeedsBothCountersToSound)
 
     // Give the linear counter a reload value and a control flag to hold it.
     apu.write(0x4008, 0xFF);   // control on, linear reload 127
-    // The linear counter reloads on the quarter frame clock, which is 7457
-    // APU cycles away, so give it well over that.
+    // The linear counter reloads on the quarter frame clock, which is one
+    // frame step (7457 CPU cycles) away, so give it well over that.
     apu.tick_cpu(20000);
     EXPECT_GT(apu.triangle().output(), 0u)
         << "with both counters alive the triangle sounds";
@@ -467,8 +471,10 @@ TEST(ApuFrames, FourStepModeWalksOneToFour)
 
     std::vector<int> steps;
     for (int i = 0; i < 4; ++i) {
-        // One frame step is 7457 APU cycles, so about 14914 CPU cycles.
-        apu.tick_cpu(14914);
+        // One frame step is 7457 CPU cycles, and the APU tick is half a CPU
+        // cycle, so 7458 CPU cycles is the smallest whole number of ticks
+        // that reaches the 3728.5 tick boundary.
+        apu.tick_cpu(7458);
         steps.push_back(apu.frame_step());
     }
 
@@ -482,7 +488,7 @@ TEST(ApuFrames, FiveStepModeWalksOneToFive)
 
     std::vector<int> steps;
     for (int i = 0; i < 5; ++i) {
-        apu.tick_cpu(14914);
+        apu.tick_cpu(7458);
         steps.push_back(apu.frame_step());
     }
 
@@ -495,7 +501,7 @@ TEST(ApuFrames, FourStepModeRaisesTheFrameIrq)
     nes::Apu apu;
     apu.write(0x4017, 0x00);   // four step, IRQ allowed
 
-    apu.tick_cpu(14914 * 4);
+    apu.tick_cpu(7458 * 4);
     EXPECT_TRUE(apu.frame_irq_pending());
     EXPECT_EQ(apu.read(0x4015) & 0x40, 0x40);
 }
@@ -505,7 +511,7 @@ TEST(ApuFrames, FiveStepModeNeverRaisesIt)
     nes::Apu apu;
     apu.write(0x4017, 0x80);   // five step, IRQ allowed
 
-    apu.tick_cpu(14914 * 5);
+    apu.tick_cpu(7458 * 5);
     EXPECT_FALSE(apu.frame_irq_pending()) << "the fifth step exists to avoid the IRQ";
 }
 
@@ -513,7 +519,7 @@ TEST(ApuFrames, InhibitingTheIrqClearsAPendingOne)
 {
     nes::Apu apu;
     apu.write(0x4017, 0x00);
-    apu.tick_cpu(14914 * 4);
+    apu.tick_cpu(7458 * 4);
     ASSERT_TRUE(apu.frame_irq_pending());
 
     apu.write(0x4017, 0x40);
@@ -532,6 +538,103 @@ TEST(ApuFrames, WritingWithTheInhibitBitClocksImmediately)
 
     apu.write(0x4017, 0x40);
     EXPECT_EQ(apu.frame_step(), 0) << "the divider was reset";
+}
+
+// ===========================================================================
+// Clock rates
+//
+// The APU tick is half a CPU cycle, but the datasheet tables are written in
+// CPU cycles and the signal formulas divide by (t + 1) for the register based
+// channels. Treating both the same is an easy mistake and its symptom is a
+// pitch that is wrong by exactly an octave - which sounds plausible enough
+// that it can survive a long time. These tests pin the rates down.
+// ===========================================================================
+
+TEST(ApuRates, TheNoiseShiftRegisterRunsAtTheDatasheetRate)
+{
+    // Period index 3 is 32 CPU cycles, so the LFSR clocks 1789773/32 = 55930
+    // times a second. At half that (the old bug) the hi-hat is a dull hiss
+    // instead of a crisp hit.
+    nes::Apu apu;
+    apu.write(0x4015, 0x08);
+    apu.write(0x400C, 0x1F);   // constant volume, so the register keeps moving
+    apu.write(0x400E, 0x03);   // period index 3
+    apu.write(0x400F, 0x08);   // length load
+
+    u16 previous = apu.noise().shift_register();
+    int changes = 0;
+    for (int i = 0; i < 894886; ++i) {   // one second of APU ticks
+        apu.tick();
+        const u16 now = apu.noise().shift_register();
+        if (now != previous) {
+            ++changes;
+            previous = now;
+        }
+    }
+
+    EXPECT_NEAR(changes, 55930, 20) << "the noise is an octave off";
+}
+
+TEST(ApuRates, TheTriangleTimerRunsAtTheCpuRate)
+{
+    // f = CPU / (32 * (t + 1)). With t = 0x1FF that is 1789773 / 16384 =
+    // 109.2 Hz, so the 32 step sequence advances 3494 times a second. This is
+    // the bass line: an octave of error is a wrong note, not a timbre change.
+    nes::Apu apu;
+    apu.write(0x4015, 0x04);
+    apu.write(0x4008, 0xFF);
+    apu.write(0x400A, 0xFF);
+    apu.write(0x400B, 0x01);   // timer = 0x1FF
+
+    u8 previous = apu.triangle().sequence_position();
+    int steps = 0;
+    for (int i = 0; i < 894886; ++i) {
+        apu.tick();
+        const u8 now = apu.triangle().sequence_position();
+        if (now != previous) {
+            ++steps;
+            previous = now;
+        }
+    }
+
+    EXPECT_NEAR(steps, 3494, 20) << "the triangle is an octave off";
+}
+
+TEST(ApuRates, TheDmcBitRateMatchesTheDatasheet)
+{
+    // Rate index 15 is 54 CPU cycles per output bit, which is 27 APU ticks.
+    // One byte is eight bits, so the read head advances once every 8 * 27 =
+    // 216 ticks. The first fetch happens on the very first tick; measure the
+    // gap to the second.
+    nes::Apu apu;
+    apu.write(0x4010, 0x0F);   // rate index 15, no loop, no IRQ
+    apu.write(0x4012, 0x00);   // sample at $C000
+    apu.write(0x4013, 0xFF);   // long enough that we stop first
+    apu.write(0x4015, 0x10);
+
+    int ticks = 0;
+    u16 previous = apu.dmc().current_address();
+    int first_change = -1;
+    int second_change = -1;
+    for (int i = 0; i < 2000; ++i) {
+        apu.tick();
+        ++ticks;
+        const u16 now = apu.dmc().current_address();
+        if (now != previous) {
+            if (first_change < 0) {
+                first_change = ticks;
+            } else {
+                second_change = ticks;
+                break;
+            }
+            previous = now;
+        }
+    }
+
+    ASSERT_GE(first_change, 0);
+    ASSERT_GE(second_change, 0);
+    EXPECT_NEAR(second_change - first_change, 216, 5)
+        << "eight bits at 27 ticks each is 216 ticks a byte";
 }
 
 // ===========================================================================
@@ -624,6 +727,39 @@ TEST(ApuMix, SamplesComeOutAtFortyFourOneHundredHertz)
     const auto samples = apu.take_samples();
 
     EXPECT_NEAR(static_cast<double>(samples.size()), 44100.0, 5.0);
+}
+
+TEST(ApuMix, TheResamplerAveragesInsteadOfPointSampling)
+{
+    nes::Apu apu;
+
+    // A note above the 44100 Hz Nyquist rate. Sampling it point by point
+    // would alias the harmonics straight back down into the audible band as
+    // hiss; averaging the ~20 APU cycles behind each output sample filters
+    // them out. With constant volume the pulse is only ever 0 or 15, so
+    // point sampling can produce just a handful of distinct values while the
+    // average produces the in-between ones.
+    apu.write(0x4015, 0x01);
+    apu.write(0x4000, 0xBF);   // duty 2, constant volume 15
+    apu.write(0x4002, 0x10);   // timer low
+    apu.write(0x4003, 0x08);   // timer high + a length load that keeps it on
+
+    apu.tick_cpu(1789773 / 4);
+    const auto samples = apu.take_samples();
+    ASSERT_GT(samples.size(), 1000u);
+
+    std::vector<f32> distinct;
+    for (f32 sample : samples) {
+        const bool seen = std::any_of(distinct.begin(), distinct.end(), [sample](f32 value) {
+            return std::fabs(value - sample) < 1e-7f;
+        });
+        if (!seen) {
+            distinct.push_back(sample);
+        }
+    }
+
+    EXPECT_GT(distinct.size(), 4u)
+        << "only " << distinct.size() << " distinct levels: the samples are raw, not averaged";
 }
 
 TEST(ApuMix, TakingSamplesDrainsTheBuffer)

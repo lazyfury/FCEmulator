@@ -204,6 +204,14 @@ public:
     [[nodiscard]] bool length_active() const noexcept { return length_ > 0; }
     [[nodiscard]] u16 shift_register() const noexcept { return lfsr_; }
 
+    /// Inspection, for tests and diagnostics.
+    [[nodiscard]] u8 period_index() const noexcept { return period_index_; }
+    [[nodiscard]] bool short_mode() const noexcept { return mode_; }
+    [[nodiscard]] bool constant_volume() const noexcept { return constant_volume_; }
+    [[nodiscard]] u8 volume() const noexcept { return volume_; }
+    [[nodiscard]] u8 envelope_level() const noexcept { return envelope_decay_; }
+    [[nodiscard]] bool length_halted() const noexcept { return length_halt_; }
+
 private:
     bool length_halt_ = false;
     bool constant_volume_ = false;
@@ -236,6 +244,8 @@ public:
     void set_memory_reader(Bus* bus) noexcept { bus_ = bus; }
 
     [[nodiscard]] u8 output() const noexcept { return level_; }   // 0-127
+    [[nodiscard]] u8 rate_index() const noexcept { return rate_index_; }
+    [[nodiscard]] bool looping() const noexcept { return loop_; }
     [[nodiscard]] bool irq_pending() const noexcept { return irq_pending_; }
     void clear_irq() noexcept { irq_pending_ = false; }
     [[nodiscard]] u16 sample_address() const noexcept { return address_; }
@@ -364,6 +374,13 @@ private:
 
     int cpu_remainder_ = 0;
     f64 sample_accumulator_ = 0.0;
+
+    /// The running sum and count behind one output sample. Between two
+    /// 44100 Hz samples about twenty APU cycles pass, and averaging them is
+    /// the anti-aliasing filter (see emit_sample).
+    f64 mix_accumulator_ = 0.0;
+    int mix_counter_ = 0;
+
     std::vector<f32> samples_;
     f32 last_output_ = 0.0f;
 

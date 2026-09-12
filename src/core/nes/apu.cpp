@@ -6,10 +6,19 @@ namespace fc::nes {
 
 namespace {
 
-/// The frame sequencer steps at 7457 APU cycles. That is 3728.5 CPU cycles,
-/// which is why the real sequence is 14913 APU cycles long and not 14914:
-/// the odd half cycle is dropped, not rounded.
-constexpr int kFrameStepCycles = 7457;
+/// The frame sequencer steps every 7457 CPU cycles on an NTSC machine. That
+/// is the number to remember: it is what makes the quarter frame clock run at
+/// 240 Hz, the half frame clock at 120 Hz and the frame IRQ at 60 Hz.
+///
+/// Our APU is clocked at half the CPU rate (see tick_cpu), so one CPU cycle
+/// is two ticks and the step is 3728.5 ticks. Rounding up drifts by half a
+/// tick per step, which is a couple of CPU cycles per frame and inaudible.
+///
+/// This number being wrong by a factor of two is not subtle in the other
+/// direction. The quarter frame clock drives the volume envelopes and the
+/// length counters, so at half speed a snare decays for twice as long and
+/// the drums smear into a constant hiss instead of crisp hits.
+constexpr int kFrameStepCycles = 3729;
 
 u8 decay_envelope_clock(u8& divider, u8& decay, bool& start, u8 period,
                         bool loop) noexcept
@@ -347,7 +356,12 @@ void NoiseChannel::clock_timer() noexcept
         return;
     }
 
-    timer_counter_ = kNoisePeriodTable[period_index_];
+    // kNoisePeriodTable is the LFSR clock period in CPU cycles, exactly (the
+    // formula is CPU / period with no + 1). Our APU tick is half a CPU cycle,
+    // and the reload below costs one extra tick, so the reload is period/2 - 1
+    // ticks. Using the table unchanged makes the shift register run an octave
+    // slow: the difference between a snare's "tss" and a continuous "shhh".
+    timer_counter_ = static_cast<u16>(kNoisePeriodTable[period_index_] / 2u - 1u);
 
     // A linear feedback shift register. Bit 0 is fed back into bit 14,
     // XORed with either bit 1 (15 bit, the hissing noise) or bit 6 (6 bit,
@@ -471,7 +485,9 @@ void DmcChannel::clock_timer() noexcept
         return;
     }
 
-    timer_counter_ = kDmcRateTable[rate_index_];
+    // Like the noise table, kDmcRateTable is the bit period in CPU cycles, so
+    // the reload in half-CPU ticks is rate/2 - 1 (see the noise comment).
+    timer_counter_ = static_cast<u16>(kDmcRateTable[rate_index_] / 2u - 1u);
 
     // Refill the one byte buffer when it runs dry. On real hardware this
     // takes four cycles and the CPU is stalled if it tries to use the bus;
@@ -539,6 +555,8 @@ void Apu::reset() noexcept
 
     cpu_remainder_ = 0;
     sample_accumulator_ = 0.0;
+    mix_accumulator_ = 0.0;
+    mix_counter_ = 0;
     samples_.clear();
     last_output_ = 0.0f;
     cycles_ = 0;
@@ -654,7 +672,14 @@ void Apu::tick() noexcept
     // oscillators that happen to share an output wire.
     pulse1_.clock_timer();
     pulse2_.clock_timer();
+
+    // The triangle timer runs at the CPU rate, not the APU rate, which is why
+    // its frequency formula divides by 32 where the pulse's divides by 16:
+    // same timer value, twice the rate, four times the steps. tick() is half
+    // a CPU cycle, so the triangle gets two timer clocks per tick.
     triangle_.clock_timer();
+    triangle_.clock_timer();
+
     noise_.clock_timer();
     dmc_.clock_timer();
 
@@ -687,6 +712,17 @@ void Apu::tick() noexcept
 
     // Resample from 894886 Hz down to 44100. The accumulator keeps the
     // fractional part, so the rate is right on average rather than drifting.
+    //
+    // The average below is the anti-aliasing filter. Picking every 20th
+    // sample instead would fold everything above 22 kHz back down, and the
+    // noise channel runs far above that: the result is the sizzling "hiss"
+    // that point-sampled NES audio is famous for. Averaging the ~20 APU
+    // cycles that make up one output sample is a box filter whose first null
+    // sits exactly at the output rate, so the worst of the fold-back is gone
+    // for twenty additions per sample.
+    mix_accumulator_ += static_cast<f64>(mix());
+    ++mix_counter_;
+
     sample_accumulator_ += static_cast<f64>(kSampleRate);
     if (sample_accumulator_ >= kApuClock) {
         sample_accumulator_ -= kApuClock;
@@ -734,7 +770,14 @@ f32 Apu::mix() const noexcept
 
 void Apu::emit_sample() noexcept
 {
-    last_output_ = mix();
+    // The average of every APU cycle since the last output sample, which is
+    // both the decimation and the anti-aliasing filter.
+    last_output_ = (mix_counter_ > 0)
+        ? static_cast<f32>(mix_accumulator_ / static_cast<f64>(mix_counter_))
+        : mix();
+    mix_accumulator_ = 0.0;
+    mix_counter_ = 0;
+
     if (samples_.size() < kMaxPendingSamples) {
         samples_.push_back(last_output_);
     }

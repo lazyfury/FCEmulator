@@ -1,6 +1,34 @@
 #include "core/nes/cartridge.hpp"
 
 #include "core/nes/mapper0.hpp"
+#include "core/nes/mapper1.hpp"
+#include "core/nes/mapper2.hpp"
+#include "core/nes/mapper3.hpp"
+#include "core/nes/mapper4.hpp"
+#include "core/nes/mapper7.hpp"
+#include "core/nes/mapper9.hpp"
+#include "core/nes/mapper10.hpp"
+#include "core/nes/mapper11.hpp"
+#include "core/nes/mapper13.hpp"
+#include "core/nes/mapper15.hpp"
+#include "core/nes/mapper18.hpp"
+#include "core/nes/mapper21.hpp"
+#include "core/nes/mapper32.hpp"
+#include "core/nes/mapper33.hpp"
+#include "core/nes/mapper66.hpp"
+#include "core/nes/mapper68.hpp"
+#include "core/nes/mapper71.hpp"
+#include "core/nes/mapper78.hpp"
+#include "core/nes/mapper87.hpp"
+#include "core/nes/mapper162.hpp"
+#include "core/nes/mapper163.hpp"
+#include "core/nes/mapper164.hpp"
+#include "core/nes/mapper178.hpp"
+#include "core/nes/mapper190.hpp"
+#include "core/nes/mapper226.hpp"
+#include "core/nes/mapper227.hpp"
+#include "core/nes/mapper242.hpp"
+#include "core/nes/mapper246.hpp"
 
 namespace fc::nes {
 
@@ -63,9 +91,242 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
         break;
     }
 
+    case 1: {
+        auto mapper = std::make_unique<Mapper1>(cart.prg_rom_, cart.chr_rom_);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 2: {   // UxROM: the CHR is always RAM, no matter what the header says.
+        auto mapper = std::make_unique<Mapper2>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        mapper->make_chr_ram();
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 3: {   // CNROM
+        cart.mapper_ = std::make_unique<Mapper3>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 4: {   // MMC3
+        // The MMC3 can only wire the nametables one way or the other, so a
+        // four-screen header is meaningless here. Start from vertical and let
+        // the game's first $A000 write decide.
+        const Mirroring start = (header.mirroring == Mirroring::FourScreen)
+                                    ? Mirroring::Vertical
+                                    : header.mirroring;
+        auto mapper = std::make_unique<Mapper4>(cart.prg_rom_, cart.chr_rom_, start);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 7: {   // AxROM: CHR RAM, and the header mirroring is overridden anyway.
+        auto mapper = std::make_unique<Mapper7>(cart.prg_rom_, cart.chr_rom_);
+        mapper->make_chr_ram();
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 9: {   // MMC2
+        cart.mapper_ = std::make_unique<Mapper9>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 10: {  // MMC4
+        cart.mapper_ = std::make_unique<Mapper10>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 11: {  // Color Dreams
+        cart.mapper_ = std::make_unique<Mapper11>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 13: {  // CPROM: the mapper owns its own 16KB of CHR RAM.
+        cart.mapper_ = std::make_unique<Mapper13>(cart.prg_rom_, header.mirroring);
+        break;
+    }
+
+    case 15: {  // 100-in-1 multicart: 8KB CHR RAM when the header has no CHR.
+        auto mapper = std::make_unique<Mapper15>(cart.prg_rom_, cart.chr_rom_);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 18: {   // Jaleco SS88006
+        cart.mapper_ = std::make_unique<Mapper18>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 21:
+    case 22:
+    case 23:
+    case 25: {   // Konami VRC2 / VRC4
+        cart.mapper_ = std::make_unique<Mapper21>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring, header.mapper);
+        break;
+    }
+
+    case 32: {   // IREM G-101
+        cart.mapper_ = std::make_unique<Mapper32>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 33: {   // Taito TC0190
+        cart.mapper_ = std::make_unique<Mapper33>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 66: {   // GxROM
+        auto mapper = std::make_unique<Mapper66>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 68: {   // Sunsoft-4
+        cart.mapper_ = std::make_unique<Mapper68>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 71: {   // Codemasters BF909x
+        auto mapper = std::make_unique<Mapper71>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 78: {   // Jaleco JF-16
+        cart.mapper_ = std::make_unique<Mapper78>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 87: {   // Jaleco JF-13
+        cart.mapper_ = std::make_unique<Mapper87>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 162: {  // Waixing
+        auto mapper = std::make_unique<Mapper162>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 163: {   // Nanjing FC-001, the Chinese RPG board. CHR is always RAM.
+        auto mapper = std::make_unique<Mapper163>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 164: {  // Waixing
+        auto mapper = std::make_unique<Mapper164>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 178: {  // Waixing
+        auto mapper = std::make_unique<Mapper178>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 190: {  // Magic Kid Goo Goo
+        auto mapper = std::make_unique<Mapper190>(cart.prg_rom_, cart.chr_rom_);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 226: {   // 76-in-1 multicart.
+        auto mapper = std::make_unique<Mapper226>(cart.prg_rom_, cart.chr_rom_);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 227: {  // multicart
+        auto mapper = std::make_unique<Mapper227>(cart.prg_rom_, cart.chr_rom_);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 242: {  // Waixing
+        auto mapper = std::make_unique<Mapper242>(cart.prg_rom_, cart.chr_rom_);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 246: {  // Chinese multicart
+        auto mapper = std::make_unique<Mapper246>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
     default:
         error = "mapper " + std::to_string(header.mapper) +
-                " is not implemented yet (only mapper 0 / NROM)";
+                " is not implemented yet (0 NROM, 1 MMC1, 2 UxROM, 3 CNROM, "
+                "4 MMC3, 7 AxROM, 9 MMC2, 10 MMC4, 11 Color Dreams, "
+                "13 CPROM, 15 100-in-1, 18 SS88006, 21/22/23/25 VRC2/4, "
+                "32 IREM, 33 Taito, 66 GxROM, 68 Sunsoft-4, 71 Codemasters, "
+                "78/87 Jaleco, 162/164/178/242 Waixing, 163 Nanjing, "
+                "190 Magic Kid Goo Goo, 226 76-in-1, 227/246 multicart are)";
         return std::nullopt;
     }
 
@@ -79,14 +340,19 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
 u8 Cartridge::read(u16 address)
 {
     if (address <= kExpansionEnd) {
-        // The expansion area is where cartridges with extra audio hardware
-        // put their registers. NROM has none. On real hardware an unused
-        // expansion address returns open bus; this returns zero and leaves
-        // that subtlety to the bus.
-        return 0;
+        // The expansion area is where unlicensed boards and carts with extra
+        // audio hardware put their registers (the Nanjing board's banks live
+        // at $5000). A mapper with nothing there answers 0, which is the
+        // same value the old fixed return produced. On real hardware an
+        // unused expansion address returns open bus; that subtlety is still
+        // left to the bus.
+        return mapper_->read_expansion(address);
     }
 
     if (address <= kPrgRamEnd) {
+        if (!mapper_->has_work_ram()) {
+            return mapper_->read_expansion(address);
+        }
         if (!prg_ram_enabled_) {
             return 0;
         }
@@ -99,10 +365,15 @@ u8 Cartridge::read(u16 address)
 void Cartridge::write(u16 address, u8 value)
 {
     if (address <= kExpansionEnd) {
+        mapper_->write_expansion(address, value);
         return;
     }
 
     if (address <= kPrgRamEnd) {
+        if (!mapper_->has_work_ram()) {
+            mapper_->write_expansion(address, value);
+            return;
+        }
         if (!prg_ram_enabled_) {
             return;
         }

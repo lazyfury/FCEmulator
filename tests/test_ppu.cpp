@@ -1088,3 +1088,33 @@ TEST(Ppu, WritesWhileRenderingIsOffAreSafe)
         << "no pipeline is using v, so a visible scanline is harmless";
     EXPECT_EQ(f.ppu.vram_writes_blanking(), 1u);
 }
+
+// A block write is the other half of that promise. Forced blanking is how a
+// game loads a screen: point $2006 at a nametable, then push hundreds of
+// bytes through $2007 in a loop. The CPU's write address and the rendering
+// pipeline's fetch pointer are the SAME register, v, so if the pipeline kept
+// stepping v (increment_y at dot 256, copy_x at dot 257) while blanked, the
+// block would smear across VRAM. Super Mario Bros clears its nametables this
+// way before every level; with unguarded stepping the clear dies after one
+// scanline and the untouched bytes stay at tile $00, so the screen fills with
+// the digit "0".
+TEST(Ppu, ABlockWriteDuringForcedBlankingLandsWhereItWasPointed)
+{
+    Fixture f;
+    f.ppu.write(0x2001, 0x00);   // forced blanking: v belongs to the CPU
+
+    // One full nametable row, with a real $2007 write and its four CPU
+    // cycles (twelve PPU dots) between each byte, so the loop crosses a
+    // scanline boundary - the moment the bug used to strike.
+    f.set_vram_address(0x2000);
+    for (u16 i = 0; i < 32; ++i) {
+        f.ppu.write(0x2007, static_cast<u8>(0x40 + i));
+        f.ppu.tick(12);
+    }
+
+    for (u16 i = 0; i < 32; ++i) {
+        EXPECT_EQ(f.ppu.read_vram(static_cast<u16>(0x2000 + i)),
+                  static_cast<u8>(0x40 + i))
+            << "byte " << i << " of the block landed somewhere else";
+    }
+}

@@ -61,6 +61,12 @@ bool Machine::run_instructions(int count)
         if (ppu_.consume_nmi()) {
             cpu_.request_nmi();
         }
+
+        // A cartridge can hold the CPU's /IRQ line low (MMC3's scanline
+        // counter is the reason). The line is level triggered, so the mapper
+        // is asked after every instruction when the line is already low.
+        clock_mapper(cpu_cycles);
+        cpu_.set_irq_line(cartridge_ != nullptr && cartridge_->mapper().irq_asserted());
     }
     return !cpu_.is_halted();
 }
@@ -88,6 +94,9 @@ bool Machine::run_frame()
             cpu_.request_nmi();
         }
 
+        clock_mapper(cpu_cycles);
+        cpu_.set_irq_line(cartridge_ != nullptr && cartridge_->mapper().irq_asserted());
+
         if (++guard > kMaxInstructions) {
             return false;
         }
@@ -98,6 +107,20 @@ bool Machine::run_frame()
 void Machine::run_ppu_cycles(int cycles)
 {
     ppu_.tick(cycles);
+}
+
+void Machine::clock_mapper(int cpu_cycles) noexcept
+{
+    if (cartridge_ == nullptr) {
+        return;
+    }
+    Mapper& mapper = cartridge_->mapper();
+    if (!mapper.clocks_on_cpu_cycles()) {
+        return;
+    }
+    for (int i = 0; i < cpu_cycles; ++i) {
+        mapper.on_cpu_cycle();
+    }
 }
 
 } // namespace fc::nes

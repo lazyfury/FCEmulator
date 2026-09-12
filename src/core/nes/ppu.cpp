@@ -109,7 +109,10 @@ u16 Ppu::nametable_index(u16 address) const noexcept
     // (or its absence) is on the cartridge board.
     const u16 offset = static_cast<u16>((address - 0x2000u) & 0x0FFFu);
 
-    const Mirroring mode = (cartridge_ != nullptr) ? cartridge_->header().mirroring
+    // The mapper, not the header, decides this. A mapper can change it while
+    // the game runs: MMC1 games flip between horizontal and vertical (and
+    // single screen) to get more than two nametables out of 2KB of VRAM.
+    const Mirroring mode = (cartridge_ != nullptr) ? cartridge_->mapper().mirroring()
                                                    : Mirroring::Horizontal;
 
     switch (mode) {
@@ -129,9 +132,12 @@ u16 Ppu::nametable_index(u16 address) const noexcept
         return offset;
 
     case Mirroring::SingleScreenLower:
-    case Mirroring::SingleScreenUpper:
-        // Mapper controlled single screen. Return the global one for now.
+        // Every nametable address answers the first 1KB.
         return static_cast<u16>(offset & 0x03FFu);
+
+    case Mirroring::SingleScreenUpper:
+        // Every nametable address answers the second 1KB.
+        return static_cast<u16>(0x0400u | (offset & 0x03FFu));
     }
     return static_cast<u16>(offset & 0x03FFu);
 }
@@ -159,7 +165,15 @@ u8 Ppu::read_vram(u16 address) noexcept
     address &= 0x3FFFu;
 
     if (address < 0x2000) {
-        return (cartridge_ != nullptr) ? cartridge_->read_chr(address) : 0;
+        if (cartridge_ == nullptr) {
+            return 0;
+        }
+        // Tell the mapper what the PPU just put on its address bus. The MMC3
+        // watches bit 12 here and clocks its scanline counter on the rising
+        // edge; the MMC2/MMC4 watch for a particular tile. Every other mapper
+        // ignores the message, which is why it is safe to always send.
+        cartridge_->mapper().on_ppu_address(address);
+        return cartridge_->read_chr(address);
     }
     if (address < 0x3F00) {
         return nametables_[nametable_index(address) % nametables_.size()];
@@ -386,6 +400,13 @@ void Ppu::on_new_scanline() noexcept
         sprite_zero_hit_ = false;
         sprite_overflow_ = false;
     }
+
+    // Tell the cartridge where the beam is. Most mappers do not care, but
+    // the Nanjing board's automatic 4KB CHR-RAM switch is wired to PPU
+    // A13/A9, and a scanline boundary is the closest this PPU gets to it.
+    if (cartridge_ != nullptr) {
+        cartridge_->mapper().on_scanline(scanline_);
+    }
 }
 
 void Ppu::render_dot() noexcept
@@ -428,31 +449,46 @@ void Ppu::render_dot() noexcept
         }
     }
 
-    // Vertical movement happens once per scanline, at dot 256.
-    if (dot_ == 256) {
-        increment_y();
+    // The scroll counters only move while the PPU is actually drawing.
+    //
+    // This guard is not a detail: "forced blanking" - both background and
+    // sprites off - is exactly when a game is expected to point v at a
+    // nametable and pour a screen into it through $2007. If the pipeline
+    // kept incrementing v behind the CPU's back, every long write would
+    // scatter itself across VRAM. Super Mario Bros clears its nametables
+    // this way before every level, and without the guard the clear stops
+    // after one scanline and leaves the digit '0' (tile $00) everywhere it
+    // did not reach.
+    if (rendering) {
+        // Vertical movement happens once per scanline, at dot 256.
+        if (dot_ == 256) {
+            increment_y();
+        }
+
+        // Horizontal movement happens once per scanline, at dot 257.
+        if (dot_ == 257) {
+            load_shifters();
+            copy_x();
+        }
+
+        // The vertical half of scrolling is copied back at the end of the
+        // pre-render line, so the next frame starts where t says.
+        if (scanline_ == -1 && dot_ >= 280 && dot_ <= 304) {
+            copy_y();
+        }
+
+        // Sprite evaluation for the NEXT scanline happens here, while the
+        // current one is still being shifted out.
+        if (dot_ == 257 && scanline_ >= 0) {
+            evaluate_sprites(scanline_ + 1);
+        }
     }
 
-    // Horizontal movement happens once per scanline, at dot 257.
-    if (dot_ == 257) {
-        load_shifters();
-        copy_x();
-    }
-
-    // The vertical half of scrolling is copied back at the end of the
-    // pre-render line, so the next frame starts where t says.
-    if (scanline_ == -1 && dot_ >= 280 && dot_ <= 304) {
-        copy_y();
-    }
-
+    // With rendering off the PPU still shows the backdrop colour, so the
+    // pixel loop must keep running: render_pixel picks $3F00 when neither
+    // background nor sprites are enabled.
     if (dot_ >= 1 && dot_ <= 256) {
         render_pixel();
-    }
-
-    // Sprite evaluation for the NEXT scanline happens here, while the current
-    // one is still being shifted out.
-    if (dot_ == 257 && scanline_ >= 0) {
-        evaluate_sprites(scanline_ + 1);
     }
 }
 
@@ -743,6 +779,26 @@ void Ppu::evaluate_sprites(int line) noexcept
             sprite_zero_in_range_ = true;
         }
         ++sprite_count_;
+    }
+
+    // The PPU performs eight sprite pattern fetches on every scanline, even
+    // when fewer than eight sprites are on it, filling the empty slots with
+    // whatever is left in OAM. Those fetches are not decoration: a mapper
+    // watching A12 (the MMC3's scanline counter, most famously) is clocked by
+    // exactly one of them per line. Skipping the empty slots would leave A12
+    // low all the way through a quiet scanline, the counter would never
+    // reach zero, and IRQ-driven splits - Super Mario Bros. 3's status bar -
+    // would never fire. So read and discard them.
+    for (int i = sprite_count_; i < 8; ++i) {
+        u16 table = 0;
+        if (height == 16) {
+            const u8 id = oam_[static_cast<std::size_t>(i & 63) * 4u + 1u];
+            table = ((id & 0x01u) != 0) ? 0x1000u : 0x0000u;
+        } else {
+            table = ((ctrl_ & 0x08u) != 0) ? 0x1000u : 0x0000u;
+        }
+        (void)read_vram(table);
+        (void)read_vram(static_cast<u16>(table + 8u));
     }
 }
 

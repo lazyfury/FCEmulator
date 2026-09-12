@@ -50,6 +50,72 @@ public:
 
     /// The cartridge wires the PPU's nametables, so it owns this.
     [[nodiscard]] virtual Mirroring mirroring() const noexcept = 0;
+
+    // -- the optional extras -------------------------------------------------
+    //
+    // Two very different families of mapper need to watch the PPU's address
+    // bus, and one of them needs to interrupt the CPU:
+    //
+    //   * the MMC3 clocks a scanline counter on the rising edge of PPU A12
+    //     (which happens once per scanline, during the sprite fetch), and
+    //     raises /IRQ when the counter runs out
+    //   * the MMC2/MMC4 flip a CHR latch when a particular tile is fetched
+    //
+    // Both hooks have empty bodies by default, so NROM, MMC1 and the rest are
+    // not touched by any of it. That is the whole reason the interface is
+    // shaped this way: the CPU and PPU do not need to know which mapper is in
+    // the slot, only that these messages are safe to send to any of them.
+
+    /// Called for every access the PPU makes to $0000-$1FFF.
+    virtual void on_ppu_address(u16 /*address*/) {}
+
+    /// The cartridge's /IRQ line, level triggered. False for every mapper
+    /// without an interrupt source.
+    [[nodiscard]] virtual bool irq_asserted() const noexcept { return false; }
+
+    // -- the expansion area, $4020-$5FFF -------------------------------------
+    //
+    // A licensed cartridge leaves these address lines unconnected, and the
+    // bus sees open bus. A handful of unlicensed boards instead put a latch
+    // there: the Nanjing board's bank registers live at $5000, and boards
+    // with extra audio (VRC6, MMC5, ...) answer here too. The Cartridge
+    // forwards the cycle and the mapper decides whether it means anything.
+
+    /// Read a byte from the expansion area. Nothing connected reads 0.
+    [[nodiscard]] virtual u8 read_expansion(u16 /*address*/) { return 0; }
+
+    /// Write a byte to the expansion area. Nothing connected ignores it.
+    virtual void write_expansion(u16 /*address*/, u8 /*value*/) {}
+
+    /// Whether the board has the usual 8KB of work RAM at $6000-$7FFF.
+    ///
+    /// Almost every cartridge does, and the Cartridge answers those reads
+    /// before the mapper sees them. A board that instead puts registers there
+    /// (the Jaleco JF-13 at $6000, some multicarts) answers false, and the
+    /// Cartridge forwards the cycle to the expansion hooks instead.
+    [[nodiscard]] virtual bool has_work_ram() const noexcept { return true; }
+
+    // -- the beam position ---------------------------------------------------
+    //
+    // MMC3 counts A12 edges for itself through on_ppu_address(). A few
+    // boards need to know *where the beam is* rather than *what address is
+    // on the bus*: the Nanjing board's automatic 4 KiB CHR-RAM switch is
+    // wired to PPU A13/A9, and a scanline is the closest thing this PPU
+    // exposes. Default: ignore.
+    virtual void on_scanline(int /*scanline*/) noexcept {}
+
+    // -- mappers whose IRQ counts CPU cycles -------------------------------
+    //
+    // MMC3 gets its clock free from the PPU's A12 line, but the Konami VRC4,
+    // Jaleco SS88006 and Sunsoft FME-7 count CPU cycles instead. Asking for
+    // them is opt-in so the Machine only pays for a per-cycle callback when
+    // the cartridge really needs one.
+
+    /// True if this mapper wants on_cpu_cycle() once per CPU cycle.
+    [[nodiscard]] virtual bool clocks_on_cpu_cycles() const noexcept { return false; }
+
+    /// One CPU cycle passed. Only called when clocks_on_cpu_cycles() is true.
+    virtual void on_cpu_cycle() noexcept {}
 };
 
 } // namespace fc::nes
