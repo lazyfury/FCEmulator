@@ -41,32 +41,56 @@ void Machine::reset()
     cpu_.reset();
 }
 
+int Machine::step_one()
+{
+    const int cpu_cycles = cpu_.step();
+
+    // The PPU runs at exactly three times the CPU clock. There is no
+    // handshake: it simply gets three dots for every CPU cycle that passed,
+    // and it does not care what the CPU was doing.
+    ppu_.tick(cpu_cycles * Ppu::kPpuCyclesPerCpuCycle);
+
+    // The APU runs at half the CPU clock and divides internally.
+    apu_.tick_cpu(cpu_cycles);
+
+    // Hand the CPU the NMI for the vblank we saw on the *previous* step,
+    // after this instruction has run.
+    //
+    // This one-instruction delay is deliberate. The PPU is ticked after the
+    // CPU instruction, so a vblank that starts during an instruction's
+    // cycles only becomes visible to the *next* instruction. On real
+    // hardware the PPU and CPU run side by side, so an instruction can read
+    // $2002 after the flag was set but before the NMI is dispatched. Games
+    // lean on that: a `LDA $2002 / BPL` vblank wait has to win the race
+    // against their own NMI handler, which also reads $2002 and clears the
+    // flag. Servicing the NMI at the very next instruction made the handler
+    // always win, and games that poll this way - 封神榜 among them - span
+    // forever. Letting the next instruction run first reproduces the window
+    // the poll needs.
+    if (nmi_hold_) {
+        cpu_.request_nmi();
+        nmi_hold_ = false;
+    }
+    if (ppu_.consume_nmi()) {
+        nmi_hold_ = true;
+    }
+
+    // A cartridge can hold the CPU's /IRQ line low (MMC3's scanline counter
+    // is the reason). The line is level triggered, so the mapper is asked
+    // after every instruction when the line is already low.
+    clock_mapper(cpu_cycles);
+    cpu_.set_irq_line(cartridge_ != nullptr && cartridge_->mapper().irq_asserted());
+
+    return cpu_cycles;
+}
+
 bool Machine::run_instructions(int count)
 {
     for (int i = 0; i < count; ++i) {
         if (cpu_.is_halted()) {
             return false;
         }
-
-        const int cpu_cycles = cpu_.step();
-
-        // The PPU runs at exactly three times the CPU clock. There is no
-        // handshake: it simply gets three dots for every CPU cycle that
-        // passed, and it does not care what the CPU was doing.
-        ppu_.tick(cpu_cycles * Ppu::kPpuCyclesPerCpuCycle);
-
-        // The APU runs at half the CPU clock and divides internally.
-        apu_.tick_cpu(cpu_cycles);
-
-        if (ppu_.consume_nmi()) {
-            cpu_.request_nmi();
-        }
-
-        // A cartridge can hold the CPU's /IRQ line low (MMC3's scanline
-        // counter is the reason). The line is level triggered, so the mapper
-        // is asked after every instruction when the line is already low.
-        clock_mapper(cpu_cycles);
-        cpu_.set_irq_line(cartridge_ != nullptr && cartridge_->mapper().irq_asserted());
+        step_one();
     }
     return !cpu_.is_halted();
 }
@@ -85,18 +109,7 @@ bool Machine::run_frame()
         if (cpu_.is_halted()) {
             return false;
         }
-
-        const int cpu_cycles = cpu_.step();
-        ppu_.tick(cpu_cycles * Ppu::kPpuCyclesPerCpuCycle);
-        apu_.tick_cpu(cpu_cycles);
-
-        if (ppu_.consume_nmi()) {
-            cpu_.request_nmi();
-        }
-
-        clock_mapper(cpu_cycles);
-        cpu_.set_irq_line(cartridge_ != nullptr && cartridge_->mapper().irq_asserted());
-
+        step_one();
         if (++guard > kMaxInstructions) {
             return false;
         }

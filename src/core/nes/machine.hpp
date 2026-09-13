@@ -118,6 +118,10 @@ public:
     }
 
 private:
+    /// One CPU instruction, with the PPU and APU caught up, and the mapper
+    /// handed its clocks and IRQ line. Shared by run_frame/run_instructions.
+    int step_one();
+
     /// Hand the mapper its CPU-cycle clock if it asked for one. The loop is
     /// empty for every mapper that does not (MMC3 counts PPU A12 instead).
     void clock_mapper(int cpu_cycles) noexcept;
@@ -128,6 +132,10 @@ private:
     Apu apu_;
     NesBus bus_;
     Cpu cpu_;
+
+    /// A vblank NMI seen on the previous step, held for one instruction so a
+    /// $2002 polling loop can read the flag first. See Machine::step_one().
+    bool nmi_hold_ = false;
 };
 
 } // namespace fc::nes
