@@ -51,7 +51,11 @@ bootLog('dev', 'script started', import.meta.url);
 // miserable way to spend an afternoon.
 bootLog('dev', 'tsc: compiling the main process...');
 const compileStarted = Date.now();
-const compile = spawnSync('pnpm', ['exec', 'tsc', '-p', 'tsconfig.electron.json'], {
+// `pnpm` is `pnpm.cmd` on Windows, and `spawn` without a shell does not go
+// through PATHEXT for a `.cmd`. Naming the file is the portable fix; asking
+// for a shell would put a space in a path through cmd's quoting rules.
+const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+const compile = spawnSync(pnpm, ['exec', 'tsc', '-p', 'tsconfig.electron.json'], {
     cwd: electronRoot,
     stdio: 'inherit',
     shell: false,

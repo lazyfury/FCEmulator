@@ -9,10 +9,11 @@
     "wasm": "bash ../wasm/build.sh",
     "build:main": "tsc -p tsconfig.electron.json",
     "build:renderer": "vite build",
-    "build:native": "bash native/build.sh",
+    "build:native": "node scripts/build-native.mjs",
     "build": "pnpm run build:main && pnpm run build:renderer && pnpm run build:native",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "node --test test/*.test.mjs",
+    "test:native": "cmake -S native/gamepad-cpp -B native/gamepad-cpp/build -DCMAKE_BUILD_TYPE=Release && cmake --build native/gamepad-cpp/build --config Release && ctest --test-dir native/gamepad-cpp/build -C Release --output-on-failure",
     "dev": "node scripts/dev.mjs",
     "dev:gamepad": "node scripts/dev.mjs --gamepad",
     "start": "pnpm run build && electron .",
@@ -22,7 +23,9 @@
     "gamepad": "pnpm run build && electron . --gamepad",
     "gamepad:browser": "pnpm run build && electron . --browser-gamepad",
     "pack": "pnpm run build && electron-builder --mac dir",
-    "dist": "pnpm run build && electron-builder --mac dmg"
+    "dist": "pnpm run build && electron-builder --mac dmg",
+    "pack:win": "pnpm run build && electron-builder --win dir",
+    "dist:win": "pnpm run build && electron-builder --win nsis"
   },
   "build": {
     "appId": "com.fcemulator.electron",
@@ -53,6 +56,16 @@
       ],
       "category": "public.app-category.games",
       "identity": null
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "dmg": {
       "title": "FC Emulator"

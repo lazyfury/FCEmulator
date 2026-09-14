@@ -239,15 +239,19 @@ bootLog(
 // ---------------------------------------------------------------------------
 
 /**
- * Where the Swift helper lives.
+ * Where the native helper lives.
  *
  * Two places, because the packaged application is not the repository. In
- * development the helper is the one native/build.sh wrote, inside the project;
- * packaged it is an `extraResources` entry next to `app/` in
- * `Contents/Resources`, put there by electron-builder (see the `build` block
- * in package.json). `process.resourcesPath` is that directory, and it is the
- * only reliable way to reach it: `__dirname` points inside the application
- * directory, which is a different folder.
+ * development the helper is the one scripts/build-native.mjs wrote, inside the
+ * project; packaged it is an `extraResources` entry next to `app/` in
+ * `Contents/Resources` (macOS) or `resources/` (Windows), put there by
+ * electron-builder (see the `build` block in package.json).
+ * `process.resourcesPath` is that directory, and it is the only reliable way
+ * to reach it: `__dirname` points inside the application directory, which is a
+ * different folder.
+ *
+ * The binary itself is Swift on macOS and C++ on Windows; `gamepadBinaryPath`
+ * spells the platform's file name.
  */
 const GAMEPAD_BINARY = gamepadBinaryPath(
     app.isPackaged ? process.resourcesPath : ELECTRON_ROOT,

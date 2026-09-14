@@ -71,10 +71,11 @@ at some confusing later moment.
 | Command | What it does |
 |---|---|
 | `pnpm run build` | compile the main process (`tsc`), the renderer (`vite build`) and the native gamepad helper |
-| `pnpm run build:native` | build just the helper, `native/bin/fc-gamepad` |
+| `pnpm run build:native` | build just the helper, `native/bin/fc-gamepad` (macOS) or `native/bin/fc-gamepad.exe` (Windows) |
 | `pnpm start` | build, then run the production build |
 | `pnpm run typecheck` | type check both, without emitting |
 | `pnpm test` | the node test runner over `test/` |
+| `pnpm run test:native` | the C++ helper's own tests (protocol, slots, change detection) |
 | `pnpm run selftest` | run the app headlessly for 300 frames, print a hash of the picture, screenshot it to `selftest.png` |
 | `pnpm run keytest` | press real keys at the window and check what the emulator heard |
 | `pnpm run audiotest` | play in real time for eight seconds and report the audio ring |
@@ -139,10 +140,15 @@ src/
   shared/api.ts       the contract between main and renderer
 
 native/
-  build.sh            builds the helper into native/bin/fc-gamepad
-  gamepad/            the helper itself: a Swift package using Apple's
+  build.sh            a thin wrapper around scripts/build-native.mjs, which
+                      builds the helper for the current platform into
+                      native/bin/
+  gamepad/            the macOS helper: a Swift package using Apple's
                       GameController framework. Its README has the protocol
                       and the reason it is a separate process at all
+  gamepad-cpp/        the Windows helper: C++ using XInput, plus the portable
+                      protocol and slot bookkeeping both share. Its README
+                      has the mapping and the platform's caveats
 ```
 
 Three rules worth knowing before changing anything:
@@ -392,9 +398,9 @@ and replay. Around it is a macOS-style window in three columns: a function
 rail, a game library modelled in SQLite (pin, import, delete, play counts),
 and the picture.
 
-Gamepad support runs in a **native helper** by default: a separate process
-using Apple's GameController framework, so Chromium never touches HID and the
-application still quits. See below.
+Gamepad support runs in a **native helper** by default: a separate process,
+using Apple's GameController framework on macOS and XInput on Windows, so
+Chromium never touches HID and the application still quits. See below.
 
 The machine — the WebAssembly module, the `Emulator` and the audio ring — is
 built **on demand**, the first time a game is loaded, rather than when the
@@ -462,14 +468,15 @@ rewind check   : lands on the same frame
 
 ### How the gamepad works, and why it is a separate process
 
-The reading happens in `native/bin/fc-gamepad`, a small Swift program in
-`native/gamepad/` that uses Apple's GameController framework and writes JSON
-lines to stdout. The main process spawns it, parses the lines
-(`src/main/gamepad.ts`), and pushes each reading over IPC to
-`NativeGamepadSource` in the renderer, which reports into the same
-`InputManager` the keyboard uses. A button held on a pad is therefore not
-released by letting go of a key, and the pad is released when it is unplugged
-or runs out of battery.
+The reading happens in `native/bin/fc-gamepad`, a helper that writes JSON
+lines to stdout: a small Swift program in `native/gamepad/` on macOS, using
+Apple's GameController framework, and a C++ program in `native/gamepad-cpp/`
+on Windows, using XInput. The two write the same bytes. The main process
+spawns the platform's helper, parses the lines (`src/main/gamepad.ts`), and
+pushes each reading over IPC to `NativeGamepadSource` in the renderer, which
+reports into the same `InputManager` the keyboard uses. A button held on a pad
+is therefore not released by letting go of a key, and the pad is released when
+it is unplugged or runs out of battery.
 
 It is a separate process for one reason, and the reason is in git history.
 
@@ -504,6 +511,26 @@ face buttons swapped, and a worn stick drifting the player into a wall. What
 cannot be tested from Node is the actual reading; that is what a pad on the
 desk is for, and it is why the helper logs every connection, press and
 release.
+
+#### On Windows
+
+`pnpm run build:native` builds `native/gamepad-cpp` with CMake and copies the
+result to `native/bin/fc-gamepad.exe`; the main process appends `.exe` to the
+name on Windows. XInput ships with Windows, so the helper has no dependency to
+package.
+
+XInput covers Xbox-style pads and any pad with an XInput mode. A DualShock or
+DualSense in its native mode speaks HID rather than XInput and may not appear;
+`Windows.Gaming.Input` would cover it, and is the obvious next backend if that
+matters. The keys a pad holds are released when it is unplugged exactly as on
+macOS, because the disconnect is handled above the platform in the shared
+reporter.
+
+The protocol, the slot bookkeeping and the change detection are the same code
+on both platforms, and the C++ half has its own test that needs neither a pad
+nor Windows (`ctest` in `native/gamepad-cpp/build`). Reading a real pad is
+what a pad on the desk is for; see `native/gamepad-cpp/README.md` for the
+Windows checklist.
 
 #### When a pad does nothing
 

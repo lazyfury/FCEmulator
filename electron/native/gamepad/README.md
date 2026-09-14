@@ -5,6 +5,13 @@ A small macOS helper that reads real game controllers through Apple's
 line, to standard output. It exists because of a specific bug in the Electron
 front end; the short version is at the bottom of this file.
 
+> Windows does not use this helper. It builds `../gamepad-cpp`, a C++ program
+> that reads XInput and writes the same protocol; see that README for the
+> mapping and the platform's caveats. The two exist side by side because the
+> GameController framework is the right reader on macOS and XInput is the
+> right one on Windows, and the pipe between helper and application hides the
+> difference.
+
 ```
 pnpm run build:native        # from electron/, builds native/bin/fc-gamepad
 ```

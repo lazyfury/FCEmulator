@@ -3,11 +3,13 @@
 //
 // The renderer cannot read a gamepad on macOS: the browser's Gamepad API
 // starts Chromium's own HID service, and that service keeps the application
-// from quitting. So the reading happens in a separate process --
-// native/gamepad, a small Swift program using Apple's GameController framework
-// -- and this file is the pipe to it.
+// from quitting. On Windows the same helper process is used for a different
+// reason -- one reader, one protocol, and no platform code in the page -- and
+// there it is the C++ helper in native/gamepad-cpp, reading XInput. So the
+// reading happens in a separate process on both platforms and this file is the
+// pipe to it.
 //
-//   spawn  native/bin/fc-gamepad
+//   spawn  native/bin/fc-gamepad[.exe]
 //     |
 //     |  {"type":"pad","connected":true,"id":"...","buttons":{...}}   one
 //     |  JSON object per line, only when something changes
@@ -50,9 +52,19 @@ export const GAMEPAD_BUTTONS: readonly GamepadButtonName[] = [
  */
 export const EMPTY_READING: GamepadReading = { pads: [] };
 
-/** Where the built helper lives, given the Electron application folder. */
-export function gamepadBinaryPath(electronRoot: string): string {
-    return join(electronRoot, 'native', 'bin', 'fc-gamepad');
+/** Where the built helper lives, given the Electron application folder.
+ *
+ * The name is platform-dependent: a Windows executable carries `.exe`, and a
+ * `spawn` of a file without it fails with ENOENT -- which reads as "the helper
+ * was never built" when in fact it was. `platform` is a parameter so that the
+ * Windows name can be tested from a machine that is not Windows.
+ */
+export function gamepadBinaryPath(
+    electronRoot: string,
+    platform: NodeJS.Platform = process.platform,
+): string {
+    const name = platform === 'win32' ? 'fc-gamepad.exe' : 'fc-gamepad';
+    return join(electronRoot, 'native', 'bin', name);
 }
 
 /** Two readings that would tell the renderer the same thing. */
@@ -198,7 +210,14 @@ export class NativeGamepad {
         this.#stopping = false;
         let child: ChildProcess;
         try {
-            child = spawn(this.#binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+            child = spawn(this.#binary, [], {
+                stdio: ['pipe', 'pipe', 'pipe'],
+                // Windows only, and ignored elsewhere: a console helper
+                // spawned from a GUI application opens a console window of
+                // its own unless it is told not to. A black box flashing up
+                // when the game starts is not a crash, but it looks like one.
+                windowsHide: true,
+            });
         } catch (error) {
             this.#onLog(`gamepad: could not start the helper: ${(error as Error).message}`);
             return false;
@@ -245,8 +264,11 @@ export class NativeGamepad {
      * Closing stdin is the polite request: the helper is watching it and exits
      * when it closes, which is the clean path. SIGTERM is the backup for a
      * helper that is wedged before it reaches the read loop, and SIGKILL is
-     * the last resort for one that ignores a signal. A gamepad helper must
-     * never be the reason the application does not quit.
+     * the last resort for one that ignores a signal. On Windows both names are
+     * emulated by Node as TerminateProcess, which is what the watchdog is
+     * for; the stdin close is still the path that matters, because it is the
+     * only one that lets the helper flush first. A gamepad helper must never
+     * be the reason the application does not quit.
      */
     stop(): void {
         const child = this.#child;

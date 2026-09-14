@@ -11,6 +11,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 
 import { mapPad, PAD_INDICES } from '../src/renderer/gamepad.ts';
 import { InputManager } from '../src/renderer/input.ts';
@@ -222,8 +223,17 @@ test('sameReading notices a button, a name, a slot and a count', () => {
 });
 
 test('the helper binary is looked for where the build script puts it', () => {
+    // The name is platform-dependent, and a Windows spawn of a file without
+    // `.exe` fails with ENOENT -- the exact "the helper was not built"
+    // symptom, from a helper that was. Both names are asserted from any host
+    // by passing the platform in.
     assert.equal(
-        gamepadBinaryPath('/app'),
-        '/app/native/bin/fc-gamepad',
+        gamepadBinaryPath('/app', 'darwin'),
+        join('/app', 'native', 'bin', 'fc-gamepad'),
     );
+    assert.equal(
+        gamepadBinaryPath('/app', 'win32'),
+        join('/app', 'native', 'bin', 'fc-gamepad.exe'),
+    );
+    assert.equal(gamepadBinaryPath('/app').endsWith(`fc-gamepad${process.platform === 'win32' ? '.exe' : ''}`), true);
 });
