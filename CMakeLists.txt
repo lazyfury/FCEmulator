@@ -35,6 +35,7 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 # ---------------------------------------------------------------------------
 add_library(fc_core
     src/core/bit.cpp
+    src/core/state.cpp
     src/core/cpu/cpu.cpp
     src/core/cpu/addressing.cpp
     src/core/nes/bus.cpp
@@ -60,6 +61,22 @@ target_link_libraries(fc_ffi PUBLIC fc_core)
 target_include_directories(fc_ffi PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+
+# ---------------------------------------------------------------------------
+# The WebAssembly build.
+#
+# A second target for the *same* sources. Nothing under src/core changed to
+# make this work, and that is the point: the core has no file I/O, no threads
+# and no exceptions, so it cross compiles untouched. Everything platform
+# specific lives on the far side of src/ffi/emulator_api.h.
+#
+# The demos and the tests below are native only (they use <fstream> and
+# <filesystem>), so the wasm build stops here.
+# ---------------------------------------------------------------------------
+if(EMSCRIPTEN)
+    add_subdirectory(wasm)
+    return()
+endif()
 
 # ---------------------------------------------------------------------------
 # Teaching demos / command line tools.
@@ -96,6 +113,20 @@ target_link_libraries(demo_input PRIVATE fc_core)
 
 add_executable(demo_apu tools/demo_apu.cpp)
 target_link_libraries(demo_apu PRIVATE fc_core)
+
+# The native half of the headless parity tests: run a ROM through the C API
+# with scripted input, and write PPMs. wasm/headless.mjs and the Electron self
+# test do the same thing; this one shares no code with either, which is what
+# makes the comparison meaningful.
+add_executable(fc_headless tools/fc_headless.cpp)
+target_link_libraries(fc_headless PRIVATE fc_ffi)
+
+# The outside world's test ROMs. Links the core directly rather than the C
+# interface, because it needs to step one instruction at a time and read the
+# bus -- which is exactly what a debugger does, and exactly what the C
+# interface is not for.
+add_executable(fc_testrom tools/fc_testrom.cpp)
+target_link_libraries(fc_testrom PRIVATE fc_core)
 
 # ---------------------------------------------------------------------------
 # Tests

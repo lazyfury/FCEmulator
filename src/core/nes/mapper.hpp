@@ -30,6 +30,7 @@
 // ---------------------------------------------------------------------------
 
 #include "core/nes/ines.hpp"
+#include "core/state.hpp"
 #include "core/types.hpp"
 
 namespace fc::nes {
@@ -116,6 +117,28 @@ public:
 
     /// One CPU cycle passed. Only called when clocks_on_cpu_cycles() is true.
     virtual void on_cpu_cycle() noexcept {}
+
+    // -- save states ---------------------------------------------------------
+    //
+    // The bank registers are state, and they are the part of a save state that
+    // is easiest to forget. They are not memory; they are the wiring of a
+    // circuit board. A state that restores everything except these comes back
+    // showing the wrong part of the ROM, and does it about three instructions
+    // later, when the CPU fetches from a window that has moved.
+    //
+    // A mapper that does not override these saves nothing, which makes its
+    // save states incomplete rather than wrong -- the machine is exactly where
+    // it was in time, with the board wired the way it was at power on. That is
+    // a real limitation and it is measurable rather than hidden:
+    // `wasm/verify.sh` round trips every ROM in the folder, so the list of
+    // mappers that are not covered shows up as a failing test.
+
+    virtual void serialize(StateWriter& /*out*/) const {}
+    virtual bool deserialize(StateReader& /*in*/) { return true; }
+
+    /// True when the two methods above actually write something, so a front
+    /// end can say a save state is partial instead of implying it is not.
+    [[nodiscard]] virtual bool saves_state() const noexcept { return false; }
 };
 
 } // namespace fc::nes

@@ -235,6 +235,80 @@ private:
 
     u16 irq_ = 0;
     bool irq_pending_ = false;
+
+    // -- save states ---------------------------------------------------------
+    //
+    // This board has the most state of any mapper here, and one piece of it is
+    // not a bank register at all: `audio_ram_` is 128 bytes of wavetable the
+    // game writes for the Namco 163's own sound chip. It is memory, not
+    // wiring, and the game reads it back through $4800 -- so leaving it out
+    // would give back a working machine with the wrong instrument loaded.
+    //
+    // The expansion audio itself is not mixed yet, which does not change what
+    // has to be saved: the RAM is the game's, and the game can tell whether it
+    // came back.
+
+public:
+    void serialize(StateWriter& out) const override
+    {
+        for (const u8 bank : prg_bank_) {
+            out.put_u8(bank);
+        }
+        for (const u8 bank : chr_bank_) {
+            out.put_u8(bank);
+        }
+        for (const u8 bank : nametable_bank_) {
+            out.put_u8(bank);
+        }
+
+        out.raw(audio_ram_, sizeof(audio_ram_));
+        out.put_u8(audio_address_);
+        out.put_flag(audio_auto_increment_);
+        out.put_flag(audio_muted_);
+
+        out.put_u16(irq_);
+        out.put_flag(irq_pending_);
+        out.put_u8(static_cast<u8>(mirroring_));
+        out.put_flag(chr_ram_);
+        if (chr_ram_) {
+            out.sized_bytes(chr_);
+        }
+    }
+
+    bool deserialize(StateReader& in) override
+    {
+        for (auto& bank : prg_bank_) {
+            in.get_u8(bank);
+        }
+        for (auto& bank : chr_bank_) {
+            in.get_u8(bank);
+        }
+        for (auto& bank : nametable_bank_) {
+            in.get_u8(bank);
+        }
+
+        in.raw(audio_ram_, sizeof(audio_ram_));
+        in.get_u8(audio_address_);
+        in.get_flag(audio_auto_increment_);
+        in.get_flag(audio_muted_);
+
+        in.get_u16(irq_);
+        in.get_flag(irq_pending_);
+
+        u8 mirroring = 0;
+        in.get_u8(mirroring);
+        mirroring_ = static_cast<Mirroring>(mirroring);
+
+        in.get_flag(chr_ram_);
+        if (chr_ram_) {
+            in.sized_bytes(chr_);
+        }
+        return in.ok();
+    }
+
+    [[nodiscard]] bool saves_state() const noexcept override { return true; }
+
+private:
 };
 
 } // namespace fc::nes

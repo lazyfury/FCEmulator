@@ -30,6 +30,7 @@
 // last written or read. Some games depend on this, so we model it.
 // ---------------------------------------------------------------------------
 
+#include "core/state_fwd.hpp"
 #include "core/bus.hpp"
 #include "core/nes/controller.hpp"
 #include "core/nes/device.hpp"
@@ -126,6 +127,8 @@ private:
     u8 open_bus_ = 0;
     int pending_stalls_ = 0;
     int oam_dma_count_ = 0;
+
+    friend struct fc::StateAccess;
 };
 
 } // namespace fc::nes

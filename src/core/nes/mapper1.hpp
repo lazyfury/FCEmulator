@@ -231,6 +231,46 @@ private:
     u8 chr_bank0_ = 0;
     u8 chr_bank1_ = 0;
     u8 prg_bank_ = 0;
+
+    // -- save states ---------------------------------------------------------
+    //
+    // MMC1 is the mapper where the shift register itself is state. A write
+    // lands in `shift_` and is only committed to a real register on the fifth
+    // write, so a save taken mid serial transfer has to remember how far the
+    // transfer had got. Losing that is a bank switch that silently does not
+    // happen, several frames later.
+
+public:
+    void serialize(StateWriter& out) const override
+    {
+        out.put_u8(shift_);
+        out.put_u8(control_);
+        out.put_u8(chr_bank0_);
+        out.put_u8(chr_bank1_);
+        out.put_u8(prg_bank_);
+        out.put_flag(chr_ram_);
+        if (chr_ram_) {
+            out.sized_bytes(chr_);
+        }
+    }
+
+    bool deserialize(StateReader& in) override
+    {
+        in.get_u8(shift_);
+        in.get_u8(control_);
+        in.get_u8(chr_bank0_);
+        in.get_u8(chr_bank1_);
+        in.get_u8(prg_bank_);
+        in.get_flag(chr_ram_);
+        if (chr_ram_) {
+            in.sized_bytes(chr_);
+        }
+        return in.ok();
+    }
+
+    [[nodiscard]] bool saves_state() const noexcept override { return true; }
+
+private:
 };
 
 } // namespace fc::nes

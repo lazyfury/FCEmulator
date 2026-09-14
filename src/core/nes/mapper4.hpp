@@ -327,8 +327,106 @@ private:
     bool irq_reload_ = false;
     bool irq_enabled_ = false;
     bool irq_pending_ = false;
+
+    // The two counters below are diagnostics, not behaviour, but they are kept
+    // in the state so that "how many times has this fired" stays monotonic
+    // across a save and load. Written as explicitly 32 bit: `long` is 64 bit
+    // on arm64 and 32 on wasm32, and a state file that changed size depending
+    // on which build wrote it could not be compared between them.
     long irq_clocks_ = 0;
     long irq_fires_ = 0;
+
+    // -- save states ---------------------------------------------------------
+    //
+    // MMC3 is the mapper that makes save states hard. There are eight bank
+    // registers, two of them four bit halves in one byte; a derived table of
+    // eight CHR slot numbers; the two PRG window registers; the mirroring that
+    // is packed into the same byte as the bank select; and a scanline counter
+    // with its own latch, reload flag and pending flag, which is armed or not
+    // depending on the exact A12 edge that last went past.
+    //
+    // All of it is written. The derived table is written too, rather than
+    // recomputed, so that a reader never has to reproduce the mapper's
+    // internal arithmetic and get it subtly wrong.
+
+public:
+    void serialize(StateWriter& out) const override
+    {
+        out.put_u8(bank_select_);
+        out.put_u8(static_cast<u8>(mirroring_));
+        out.put_flag(chr_mode_);
+        out.put_flag(prg_mode_);
+
+        for (const u8 bank : chr_reg_) {
+            out.put_u8(bank);
+        }
+        for (const u8 slot : chr_slot_) {
+            out.put_u8(slot);
+        }
+        for (const u8 bank : prg_bank_) {
+            out.put_u8(bank);
+        }
+
+        out.put_flag(last_a12_);
+        out.put_u8(irq_latch_);
+        out.put_u8(irq_counter_);
+        out.put_flag(irq_reload_);
+        out.put_flag(irq_enabled_);
+        out.put_flag(irq_pending_);
+        out.put_s32(static_cast<s32>(irq_clocks_));
+        out.put_s32(static_cast<s32>(irq_fires_));
+
+        out.put_flag(chr_ram_);
+        if (chr_ram_) {
+            out.sized_bytes(chr_);
+        }
+    }
+
+    bool deserialize(StateReader& in) override
+    {
+        in.get_u8(bank_select_);
+
+        u8 mirroring = 0;
+        in.get_u8(mirroring);
+        mirroring_ = static_cast<Mirroring>(mirroring);
+
+        in.get_flag(chr_mode_);
+        in.get_flag(prg_mode_);
+
+        for (auto& bank : chr_reg_) {
+            in.get_u8(bank);
+        }
+        for (auto& slot : chr_slot_) {
+            in.get_u8(slot);
+        }
+        for (auto& bank : prg_bank_) {
+            in.get_u8(bank);
+        }
+
+        in.get_flag(last_a12_);
+        in.get_u8(irq_latch_);
+        in.get_u8(irq_counter_);
+        in.get_flag(irq_reload_);
+        in.get_flag(irq_enabled_);
+        in.get_flag(irq_pending_);
+
+        s32 clocks = 0;
+        s32 fires = 0;
+        in.get_s32(clocks);
+        in.get_s32(fires);
+        irq_clocks_ = clocks;
+        irq_fires_ = fires;
+
+        in.get_flag(chr_ram_);
+        if (chr_ram_) {
+            in.sized_bytes(chr_);
+        }
+        return in.ok();
+    }
+
+    [[nodiscard]] bool saves_state() const noexcept override { return true; }
+
+private:
 };
 
 } // namespace fc::nes

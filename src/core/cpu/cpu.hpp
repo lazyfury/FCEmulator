@@ -23,6 +23,7 @@
 // (operation, mode) pair needed its own case.
 // ---------------------------------------------------------------------------
 
+#include "core/state_fwd.hpp"
 #include "core/bus.hpp"
 #include "core/cpu/addressing.hpp"
 #include "core/cpu/opcode.hpp"
@@ -174,6 +175,11 @@ private:
 
     bool halted_ = false;
     u8   unimplemented_opcode_ = 0;
+
+    // Everything above is the machine's state. See src/core/state.cpp, which
+    // reads and writes all of it and is the one place that has to be kept in
+    // step with this list.
+    friend struct fc::StateAccess;
 };
 
 } // namespace fc

@@ -90,6 +90,42 @@ private:
     Mirroring mirroring_ = Mirroring::SingleScreenLower;
     bool chr_ram_ = false;
     u8 bank_ = 0;
+
+    // -- save states ---------------------------------------------------------
+    //
+    // AxROM is one register, and it selects both the 32KB bank and the single
+    // screen mirroring. Forgetting it comes back on the wrong screen of the
+    // wrong level.
+
+public:
+    void serialize(StateWriter& out) const override
+    {
+        out.put_u8(bank_);
+        out.put_u8(static_cast<u8>(mirroring_));
+        out.put_flag(chr_ram_);
+        if (chr_ram_) {
+            out.sized_bytes(chr_);
+        }
+    }
+
+    bool deserialize(StateReader& in) override
+    {
+        in.get_u8(bank_);
+
+        u8 mirroring = 0;
+        in.get_u8(mirroring);
+        mirroring_ = static_cast<Mirroring>(mirroring);
+
+        in.get_flag(chr_ram_);
+        if (chr_ram_) {
+            in.sized_bytes(chr_);
+        }
+        return in.ok();
+    }
+
+    [[nodiscard]] bool saves_state() const noexcept override { return true; }
+
+private:
 };
 
 } // namespace fc::nes

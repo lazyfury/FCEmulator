@@ -22,8 +22,9 @@
  *
  * Ownership
  * ---------
- *   fc_create  allocates.  fc_destroy  frees.  Nothing else allocates anything
- *   the caller has to release.
+ *   fc_create  allocates.  fc_destroy  frees.  fc_save_state allocates a
+ *   buffer that fc_free_state releases.  Nothing else allocates anything the
+ *   caller has to think about.
  *
  *   fc_framebuffer returns a pointer INTO the machine. It stays valid until
  *   the machine is destroyed, and its contents change every frame.
@@ -165,6 +166,54 @@ void fc_release_all_buttons(fc_machine* machine);
 
 /* -- diagnostics ---------------------------------------------------------- */
 
+
+/* -- save states ---------------------------------------------------------- */
+
+/* Write the whole machine into a newly allocated buffer and put its length in
+ * `size`. Release the buffer with fc_free_state.
+ *
+ * Returns NULL when there is nothing to save -- no cartridge is loaded -- or
+ * when the allocation fails. A state is a few tens of kilobytes: console RAM,
+ * the PPU's memory, every APU channel's phase, and the mapper's bank registers.
+ *
+ * Not in it, on purpose: the framebuffer and the queued audio samples. They are
+ * output, they are recomputed, and carrying them would make every state twenty
+ * times larger for no benefit. */
+uint8_t* fc_save_state(const fc_machine* machine, size_t* size);
+
+/* Put the machine back into the state `data` describes.
+ *
+ * Returns false, and changes nothing at all, if the bytes are not a state, are
+ * from a version this build does not know, or were written for a different
+ * cartridge. A save from another game cannot be applied: the ROM behind every
+ * bank number is different. */
+bool fc_load_state(fc_machine* machine, const uint8_t* data, size_t size);
+
+/* Release a buffer from fc_save_state. Passing NULL is allowed. */
+void fc_free_state(uint8_t* data);
+
+/* How many bytes one state takes for this machine, exactly.
+ *
+ * Constant for a given cartridge, so a front end can allocate a rewind buffer
+ * once rather than guessing. Call it after loading a ROM. */
+size_t fc_state_size(const fc_machine* machine);
+
+/* Write a state into a buffer the caller owns, and return how many bytes were
+ * written. Zero means `capacity` was too small and nothing was written.
+ *
+ * This exists next to fc_save_state for one reason: rewind saves thirty times
+ * a second, and thirty allocations a second is thirty garbage collections a
+ * minute. With a buffer the front end already owns there is nothing to
+ * allocate and nothing to release. */
+size_t fc_save_state_into(const fc_machine* machine, uint8_t* out, size_t capacity);
+
+/* Whether the loaded cartridge's mapper saves its bank registers.
+ *
+ * False means save states are incomplete for this game: the machine comes back
+ * at the right moment in time, with the cartridge re-pointed by whatever the
+ * game has since written to it. Worth telling the player rather than letting
+ * them discover it. */
+bool fc_mapper_saves_state(const fc_machine* machine);
 
 /* Total CPU cycles since power on. */
 uint64_t fc_total_cycles(const fc_machine* machine);

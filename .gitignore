@@ -27,3 +27,15 @@ tests/data/
 
 # Frontend build output
 frontend/build/
+
+# Emscripten SDK. Installed by wasm/build.sh's instructions; about 1.4GB, and
+# it is a toolchain, not a source file.
+third_party/emsdk/
+
+# WebAssembly build output
+build-wasm/
+wasm/dist/
+
+# Test ROMs. Copyrighted, large, and not ours to commit. See the README for
+# where to get them; the tests skip themselves when the folder is empty.
+tests/data/testroms/

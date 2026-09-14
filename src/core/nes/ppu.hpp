@@ -61,6 +61,7 @@
 // of the PPU, and it is why this file is long.
 // ---------------------------------------------------------------------------
 
+#include "core/state_fwd.hpp"
 #include "core/nes/cartridge.hpp"
 #include "core/nes/device.hpp"
 #include "core/nes/framebuffer.hpp"
@@ -242,6 +243,8 @@ private:
 
     void render_pixel() noexcept;
     void evaluate_sprites(int line) noexcept;
+
+    friend struct fc::StateAccess;
 };
 
 } // namespace fc::nes

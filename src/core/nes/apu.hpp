@@ -45,6 +45,7 @@
 // different rate, which is a pitch effect some soundtracks use.
 // ---------------------------------------------------------------------------
 
+#include "core/state_fwd.hpp"
 #include "core/bus.hpp"
 #include "core/nes/device.hpp"
 #include "core/types.hpp"
@@ -153,6 +154,8 @@ private:
     u8 duty_pos_ = 0;
     u8 length_ = 0;
     bool enabled_ = false;
+
+    friend struct fc::StateAccess;
 };
 
 // ---------------------------------------------------------------------------
@@ -184,6 +187,8 @@ private:
     u8 sequence_pos_ = 0;
     u8 length_ = 0;
     bool enabled_ = false;
+
+    friend struct fc::StateAccess;
 };
 
 // ---------------------------------------------------------------------------
@@ -227,6 +232,8 @@ private:
     u16 lfsr_ = 1;
     u8 length_ = 0;
     bool enabled_ = false;
+
+    friend struct fc::StateAccess;
 };
 
 // ---------------------------------------------------------------------------
@@ -272,7 +279,11 @@ private:
     bool enabled_ = false;
     bool irq_pending_ = false;
 
+    /// The bus is how DMC fetches samples. Not state: it is the same object
+    /// every time the machine is built.
     Bus* bus_ = nullptr;
+
+    friend struct fc::StateAccess;
 };
 
 // ---------------------------------------------------------------------------
@@ -385,6 +396,8 @@ private:
     f32 last_output_ = 0.0f;
 
     u64 cycles_ = 0;
+
+    friend struct fc::StateAccess;
 };
 
 } // namespace fc::nes

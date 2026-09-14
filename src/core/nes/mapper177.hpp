@@ -84,6 +84,41 @@ private:
     Mirroring mirroring_;
     bool chr_ram_ = false;
     u8 prg_bank_ = 0;
+
+    // -- save states ---------------------------------------------------------
+    //
+    // One bank register, and the mirroring, which on this board is packed into
+    // the same write as the bank number.
+
+public:
+    void serialize(StateWriter& out) const override
+    {
+        out.put_u8(prg_bank_);
+        out.put_u8(static_cast<u8>(mirroring_));
+        out.put_flag(chr_ram_);
+        if (chr_ram_) {
+            out.sized_bytes(chr_);
+        }
+    }
+
+    bool deserialize(StateReader& in) override
+    {
+        in.get_u8(prg_bank_);
+
+        u8 mirroring = 0;
+        in.get_u8(mirroring);
+        mirroring_ = static_cast<Mirroring>(mirroring);
+
+        in.get_flag(chr_ram_);
+        if (chr_ram_) {
+            in.sized_bytes(chr_);
+        }
+        return in.ok();
+    }
+
+    [[nodiscard]] bool saves_state() const noexcept override { return true; }
+
+private:
 };
 
 } // namespace fc::nes

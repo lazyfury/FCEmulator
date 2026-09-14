@@ -34,6 +34,7 @@ add_executable(fc_tests
     test_ppu.cpp
     test_controller.cpp
     test_apu.cpp
+    test_state.cpp
     test_ffi.cpp
 )
 

@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <new>
 #include <span>
 #include <string>
@@ -316,6 +318,95 @@ void fc_release_all_buttons(fc_machine* machine)
     }
     machine->machine.controller(0).release_all();
     machine->machine.controller(1).release_all();
+}
+
+// ---------------------------------------------------------------------------
+// Save states
+//
+// The only place in this file that allocates something the caller has to
+// release. It is a plain malloc rather than new[] because the matching
+// fc_free_state is the thinnest possible thing, and because a caller in
+// another language has no idea what operator new is.
+// ---------------------------------------------------------------------------
+
+uint8_t* fc_save_state(const fc_machine* machine, size_t* size)
+{
+    if (size != nullptr) {
+        *size = 0;
+    }
+    if (machine == nullptr || machine->machine.cartridge() == nullptr) {
+        return nullptr;
+    }
+
+    std::vector<fc::u8> bytes;
+    machine->machine.save_state(bytes);
+    if (bytes.empty()) {
+        return nullptr;
+    }
+
+    auto* buffer = static_cast<uint8_t*>(std::malloc(bytes.size()));
+    if (buffer == nullptr) {
+        return nullptr;
+    }
+    std::memcpy(buffer, bytes.data(), bytes.size());
+
+    if (size != nullptr) {
+        *size = bytes.size();
+    }
+    return buffer;
+}
+
+void fc_free_state(uint8_t* data)
+{
+    std::free(data);
+}
+
+size_t fc_state_size(const fc_machine* machine)
+{
+    if (machine == nullptr) {
+        return 0;
+    }
+    return machine->machine.state_size();
+}
+
+size_t fc_save_state_into(const fc_machine* machine, uint8_t* out, size_t capacity)
+{
+    if (machine == nullptr || out == nullptr || capacity == 0) {
+        return 0;
+    }
+    if (machine->machine.cartridge() == nullptr) {
+        return 0;
+    }
+
+    const std::span<fc::u8> buffer(reinterpret_cast<fc::u8*>(out), capacity);
+    return machine->machine.save_state_into(buffer);
+}
+
+bool fc_load_state(fc_machine* machine, const uint8_t* data, size_t size)
+{
+    if (machine == nullptr || data == nullptr || size == 0) {
+        return false;
+    }
+
+    machine->error.clear();
+
+    const std::span<const fc::u8> bytes(data, size);
+    if (!machine->machine.load_state(bytes)) {
+        machine->error = "not a save state, or not one for this cartridge";
+        return false;
+    }
+
+    // The CPU is running again, whatever it was doing before.
+    machine->halted = false;
+    return true;
+}
+
+bool fc_mapper_saves_state(const fc_machine* machine)
+{
+    if (machine == nullptr) {
+        return false;
+    }
+    return machine->machine.mapper_saves_state();
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,7 @@
 #include "core/nes/machine.hpp"
 
+#include "core/state.hpp"
+
 namespace fc::nes {
 
 Machine::Machine()
@@ -32,6 +34,49 @@ bool Machine::load_rom(std::span<const u8> rom, std::string& error)
 
     reset();
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Save states
+//
+// Thin wrappers. The list of what a state contains is in src/core/state.cpp
+// and nowhere else; these exist so that a caller does not have to know the
+// StateAccess struct exists.
+// ---------------------------------------------------------------------------
+
+void Machine::save_state(std::vector<u8>& out) const
+{
+    StateWriter writer;
+    StateAccess::save(*this, writer);
+    out = writer.data();
+}
+
+std::size_t Machine::state_size() const
+{
+    std::vector<u8> bytes;
+    save_state(bytes);
+    return bytes.size();
+}
+
+std::size_t Machine::save_state_into(std::span<u8> out) const
+{
+    StateWriter writer(out);
+    StateAccess::save(*this, writer);
+    if (writer.overflowed()) {
+        return 0;
+    }
+    return writer.size();
+}
+
+bool Machine::load_state(std::span<const u8> data)
+{
+    StateReader reader(data);
+    return StateAccess::load(*this, reader);
+}
+
+bool Machine::mapper_saves_state() const noexcept
+{
+    return cartridge_ != nullptr && cartridge_->mapper().saves_state();
 }
 
 void Machine::reset()

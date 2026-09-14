@@ -79,6 +79,27 @@ private:
     std::vector<u8> chr_;
     Mirroring mirroring_;
     u8 chr_bank_ = 0;
+
+    // -- save states ---------------------------------------------------------
+    //
+    // CNROM has one register and no RAM of any kind: the board is a ROM and a
+    // latch. The whole of its state is four bits.
+
+public:
+    void serialize(StateWriter& out) const override
+    {
+        out.put_u8(chr_bank_);
+    }
+
+    bool deserialize(StateReader& in) override
+    {
+        in.get_u8(chr_bank_);
+        return in.ok();
+    }
+
+    [[nodiscard]] bool saves_state() const noexcept override { return true; }
+
+private:
 };
 
 } // namespace fc::nes

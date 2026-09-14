@@ -90,6 +90,32 @@ public:
         chr_ram_ = true;
     }
 
+    // -- save states ---------------------------------------------------------
+    //
+    // NROM has no bank registers, so there is almost nothing to save. The one
+    // thing that can change is CHR RAM, and only on a board whose header said
+    // zero CHR pages: the writes then go into the vector that would otherwise
+    // have held ROM. That vector is the only writable thing on the board.
+
+    void serialize(StateWriter& out) const override
+    {
+        out.put_flag(chr_ram_);
+        if (chr_ram_) {
+            out.sized_bytes(chr_);
+        }
+    }
+
+    bool deserialize(StateReader& in) override
+    {
+        in.get_flag(chr_ram_);
+        if (chr_ram_) {
+            in.sized_bytes(chr_);
+        }
+        return in.ok();
+    }
+
+    [[nodiscard]] bool saves_state() const noexcept override { return true; }
+
 private:
     std::vector<u8> prg_;
     std::vector<u8> chr_;

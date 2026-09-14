@@ -260,6 +260,58 @@ private:
 
     u8 feedback_ = 0;
     bool e_ = false;
+
+    // -- save states ---------------------------------------------------------
+    //
+    // The Nanjing board is unusual in that its state includes things a save
+    // would not normally have to think about: the anti-piracy feedback latch
+    // at $5100/$5101, which the game polls and which therefore changes what
+    // happens next; and `auto_page_`, the 4KB window the automatic CHR
+    // switch is currently on, which the mapper keeps rather than recomputing.
+
+public:
+    void serialize(StateWriter& out) const override
+    {
+        out.put_u8(prg_low_);
+        out.put_u8(prg_high_);
+        out.put_u8(mode_);
+        out.put_u8(prg_bank_);
+        out.put_flag(auto_switch_);
+        out.put_u8(auto_page_);
+        out.put_u8(feedback_);
+        out.put_flag(e_);
+        out.put_u8(static_cast<u8>(mirroring_));
+        out.put_flag(chr_ram_);
+        if (chr_ram_) {
+            out.sized_bytes(chr_);
+        }
+    }
+
+    bool deserialize(StateReader& in) override
+    {
+        in.get_u8(prg_low_);
+        in.get_u8(prg_high_);
+        in.get_u8(mode_);
+        in.get_u8(prg_bank_);
+        in.get_flag(auto_switch_);
+        in.get_u8(auto_page_);
+        in.get_u8(feedback_);
+        in.get_flag(e_);
+
+        u8 mirroring = 0;
+        in.get_u8(mirroring);
+        mirroring_ = static_cast<Mirroring>(mirroring);
+
+        in.get_flag(chr_ram_);
+        if (chr_ram_) {
+            in.sized_bytes(chr_);
+        }
+        return in.ok();
+    }
+
+    [[nodiscard]] bool saves_state() const noexcept override { return true; }
+
+private:
 };
 
 } // namespace fc::nes

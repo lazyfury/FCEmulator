@@ -23,6 +23,7 @@
 //   5. pick a mapper from the header's mapper number
 // ---------------------------------------------------------------------------
 
+#include "core/state_fwd.hpp"
 #include "core/nes/device.hpp"
 #include "core/nes/ines.hpp"
 #include "core/nes/mapper.hpp"
@@ -88,6 +89,8 @@ private:
     std::vector<u8> prg_ram_ = std::vector<u8>(kPrgRamSize, 0);
     std::unique_ptr<Mapper> mapper_;
     bool prg_ram_enabled_ = true;
+
+    friend struct fc::StateAccess;
 };
 
 } // namespace fc::nes

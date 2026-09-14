@@ -100,6 +100,37 @@ private:
     Mirroring mirroring_;
     bool chr_ram_ = false;
     u8 bank_ = 0;
+
+    // -- save states ---------------------------------------------------------
+    //
+    // UxROM has exactly one bank register, and it is the whole of the state.
+    // CHR is ROM on every UxROM board, but the vector is written anyway when
+    // the header asked for CHR RAM, because nothing stops a homebrew doing
+    // that.
+
+public:
+    void serialize(StateWriter& out) const override
+    {
+        out.put_u8(bank_);
+        out.put_flag(chr_ram_);
+        if (chr_ram_) {
+            out.sized_bytes(chr_);
+        }
+    }
+
+    bool deserialize(StateReader& in) override
+    {
+        in.get_u8(bank_);
+        in.get_flag(chr_ram_);
+        if (chr_ram_) {
+            in.sized_bytes(chr_);
+        }
+        return in.ok();
+    }
+
+    [[nodiscard]] bool saves_state() const noexcept override { return true; }
+
+private:
 };
 
 } // namespace fc::nes

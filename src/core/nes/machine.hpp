@@ -38,6 +38,7 @@
 // Everything else in a NES emerges from that.
 // ---------------------------------------------------------------------------
 
+#include "core/state_fwd.hpp"
 #include "core/cpu/cpu.hpp"
 #include "core/nes/bus.hpp"
 #include "core/nes/apu.hpp"
@@ -49,6 +50,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <vector>
 #include <string>
 
 namespace fc::nes {
@@ -62,6 +64,45 @@ public:
 
     /// Power on: reset the CPU, the PPU and the bus.
     void reset();
+
+    /// Write everything the machine needs to be put back where it is now.
+    ///
+    /// See src/core/state.cpp for the list, and for why the framebuffer and
+    /// the APU's sample queue are not on it.
+    void save_state(std::vector<u8>& out) const;
+
+    /// The number of bytes one state takes for this machine, exactly.
+    ///
+    /// Constant for a given cartridge: every section is fixed size, including
+    /// the RAM, whose length is written into the state rather than inferred
+    /// from how many bytes happen to be left. A front end that wants a rewind
+    /// buffer asks this once and allocates once.
+    ///
+    /// Measured by writing a state and throwing it away, so call it when the
+    /// cartridge is loaded, not every frame.
+    [[nodiscard]] std::size_t state_size() const;
+
+    /// Write a state into a buffer the caller already owns.
+    ///
+    /// Returns the number of bytes written, or 0 if `out` was too small. See
+    /// StateWriter for why this exists next to save_state(): rewind saves
+    /// thirty times a second, and thirty allocations a second is a stutter.
+    [[nodiscard]] std::size_t save_state_into(std::span<u8> out) const;
+
+    /// Put the machine back. `data` must be a state written by a machine with
+    /// the same cartridge in it.
+    ///
+    /// Returns false, and leaves the running machine untouched, on a bad magic
+    /// number, an unknown version, a different cartridge or a truncated file.
+    [[nodiscard]] bool load_state(std::span<const u8> data);
+
+    /// True when the loaded cartridge's mapper saves its bank registers.
+    ///
+    /// False means save states work but are incomplete for this game: the
+    /// machine comes back at the right moment in time with the cartridge wired
+    /// the way it was at power on. Worth telling the player rather than
+    /// letting them find out.
+    [[nodiscard]] bool mapper_saves_state() const noexcept;
 
     /// Run until the PPU finishes a frame.
     ///
@@ -136,6 +177,8 @@ private:
     /// A vblank NMI seen on the previous step, held for one instruction so a
     /// $2002 polling loop can read the flag first. See Machine::step_one().
     bool nmi_hold_ = false;
+
+    friend struct fc::StateAccess;
 };
 
 } // namespace fc::nes

@@ -37,6 +37,7 @@
 // games.
 // ---------------------------------------------------------------------------
 
+#include "core/state_fwd.hpp"
 #include "core/types.hpp"
 
 namespace fc::nes {
@@ -126,6 +127,8 @@ private:
     u8 shift_ = 0;
     bool strobing_ = false;
     u64 reads_ = 0;
+
+    friend struct fc::StateAccess;
 };
 
 [[nodiscard]] constexpr const char* button_name(Controller::Button button) noexcept
