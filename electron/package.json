@@ -11,6 +11,7 @@
     "build:renderer": "vite build",
     "build:native": "node scripts/build-native.mjs",
     "build": "pnpm run build:main && pnpm run build:renderer && pnpm run build:native",
+    "icon": "node scripts/make-icon.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "node --test test/*.test.mjs",
     "test:native": "cmake -S native/gamepad-cpp -B native/gamepad-cpp/build -DCMAKE_BUILD_TYPE=Release && cmake --build native/gamepad-cpp/build --config Release && ctest --test-dir native/gamepad-cpp/build -C Release --output-on-failure",
@@ -46,6 +47,7 @@
       }
     ],
     "mac": {
+      "icon": "build/icon.icns",
       "target": [
         {
           "target": "dmg",
@@ -58,6 +60,7 @@
       "identity": null
     },
     "win": {
+      "icon": "build/icon.png",
       "target": [
         {
           "target": "nsis",
