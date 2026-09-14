@@ -1,8 +1,60 @@
-# FC Emulator for macOS
+# FC Emulator
 
-从零实现 NES / FC 模拟器，同时作为计算机科学学习工程。
+macOS 上的 NES / FC 模拟器。**打开就能玩**：把 `.nes` 拖进窗口，接上手柄或者用键盘，开始。
 
-**不只做产品，还要能解释：ROM 如何变成屏幕上的像素。**
+![FC Emulator 主界面](docs/images/app.png)
+
+**[⬇️ 下载最新版本](https://github.com/lazyfury/FCEmulator/releases/latest)** · [源码](https://github.com/lazyfury/FCEmulator) · 它同时也是一份「从二进制到屏幕上的像素」的计算机科学学习工程。
+
+---
+
+## 下载与安装
+
+1. 打开 [Releases](https://github.com/lazyfury/FCEmulator/releases/latest)，下载 `FC Emulator-<版本>-arm64.dmg`（Apple Silicon）。
+2. 双击打开 dmg，把 **FC Emulator** 拖进「应用程序」。
+3. 第一次打开若提示**「已损坏，无法打开」**，那是 macOS 对未签名应用的隔离标记，执行一次即可：
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/FC Emulator.app"
+   ```
+
+> 仓库里**不包含任何 ROM**（版权且体积大）。请使用你合法拥有的游戏文件。
+
+## 能做什么
+
+| 功能 | 说明 |
+|---|---|
+| 🎮 **游戏库** | 把 `.nes` 或一整个文件夹拖进窗口即导入。置顶、搜索、排序、游玩次数、封面与截图都记住（SQLite 存库，文件夹仍然是唯一事实） |
+| 🕹 **双人 + 手柄** | 两个手柄端口、单人/双人键盘模式；每个按键都能重绑定；原生 GameController 助手支持多只手柄，每只手柄可指定 1P / 2P / 关闭 |
+| 💾 **存档与倒带** | 4 个存档槽 + 快速存/读，按住 Backspace 倒带 10 秒。存读往返在原生与 WebAssembly 两边逐像素校验 |
+| ✨ **金手指** | 按地址写入/锁定一个字节，实时显示当前值 —— 例如马里奥的命数就在 `$075A`，按游戏分别保存 |
+| 🖼 **画面** | 整数倍像素缩放（游戏像素永远是整数个物理像素）、扫描线滤镜、F11 全屏 |
+| 🔊 **声音** | 完整的五声道 APU，经 Web Audio 低延迟输出，掉帧与欠载都会被计数 |
+| 📼 **兼容性** | 35 个 mapper（NROM、MMC1、UxROM、CNROM、MMC3、MMC2/4、VRC2/4、Namco 163、Sunsoft-4、多合一……），429 个单元测试 |
+
+### 默认按键
+
+| 按键 | | 按键 | |
+|---|---|---|---|
+| 方向键 / WASD | 方向 | `ESC` / `P` | 暂停 |
+| `Z` / `J` | B | `R` | 重置 |
+| `X` / `K` | A | `F1`–`F3` / `⇧F1`–`⇧F3` | 存/读第 1–3 槽 |
+| `Enter` / `Space` | Start | `F5` / `F6` | 快速存 / 快速读 |
+| `Tab` / 右 `Shift` | Select | `Backspace`（按住） | 倒带 |
+
+全部可在「设置 → 按键绑定」里改。详见 [electron/README.md](electron/README.md)。
+
+---
+
+## 从源码运行
+
+```bash
+brew install cmake ninja googletest
+
+./wasm/build.sh                 # 把 C++ Core 编译成 WebAssembly
+cd electron && pnpm install
+pnpm run dev                    # 开发窗口；pnpm start 跑生产构建
+```
 
 ---
 
@@ -100,7 +152,7 @@ CPU  / Bus / Cartridge / PPU / APU / Controller   <- Core (C++)
 
 ---
 
-## 构建
+## 完整构建与测试（开发者）
 
 依赖：
 
@@ -145,6 +197,29 @@ FC_TEST_ROM=/path/to/game.nes ctest --test-dir build
 
 ---
 
+## 发布（本地打包并上传）
+
+不用 GitHub Actions：在本地把 Core 编成 WebAssembly、打包成 dmg/zip，再交给 `gh` 传到 GitHub Releases。需要 [GitHub CLI](https://cli.github.com/) 且已 `gh auth login`。
+
+```bash
+./scripts/release.sh --dry-run     # 预演：构建、打包、生成 SHA256，不发 Git 也不传 GitHub
+./scripts/release.sh 0.2.0         # 改版本号 -> 构建 -> 打标签 -> 推送 -> 上传
+./scripts/release.sh               # 沿用 electron/package.json 里的版本号
+./scripts/release.sh --draft       # 先建 draft release，确认后再手动 publish
+```
+
+脚本会依次做这些事，任一步失败就停下：
+
+1. 检查工作区干净、当前在 `main`、`gh` 已登录，且 `v<版本>` 标签不存在；
+2. `wasm/build.sh` 重编 Core，`pnpm run build` 编主进程 / 渲染进程 / 手柄助手；
+3. `electron-builder` 在 `electron/release/` 里产出 `.dmg`、`.zip` 和 `SHA256SUMS.txt`；
+4. 改 `electron/package.json` 的版本号并提交，打并推送 `v<版本>` 标签；
+5. `gh release create` 建 release，release notes 自动汇总自上一个标签以来的提交，并把产物全部上传。
+
+发布出来的 dmg 未签名，用户首次打开需要跑一次 `xattr`（见开头「下载与安装」）。
+
+---
+
 ## 目录结构
 
 ```
@@ -152,6 +227,7 @@ FCEmulator/
 ├── AGENTS.md            AI Agent 执行规范（本项目宪法）
 ├── CMakeLists.txt
 ├── docs/                学习文档
+│   ├── images/            README 用的截图
 │   ├── computer-science/  二进制 / 十六进制 / 补码 / 位运算 / V flag / CPU / 汇编
 │   ├── architecture/      系统架构
 │   ├── assembly/          6502 汇编索引
@@ -172,6 +248,7 @@ FCEmulator/
 │   ├── native/         原生手柄助手（Swift + GameController）
 │   └── test/           前端的 Node 测试
 ├── tools/               教学 demo 与命令行工具
+├── scripts/             本地发布脚本（release.sh）
 └── tests/               单元测试
 ```
 
