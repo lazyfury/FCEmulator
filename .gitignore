@@ -1,5 +1,7 @@
-# Build output
-build/
+# Build output. The leading slash matters: a bare `build/` would also hide
+# electron/build/, which is electron-builder's resource folder (the app
+# icon) and is source, not output.
+/build/
 cmake-build-*/
 
 # macOS

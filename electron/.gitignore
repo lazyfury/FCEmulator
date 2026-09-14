@@ -11,6 +11,11 @@ selftest.png
 # electron/verify.sh scratch space
 .verify/
 
+# electron-builder's resource folder (build/) is source: the app icon lives
+# there and a clean clone must be able to package without macOS tools. Only
+# the iconset that `pnpm run icon` eats is a build product.
+build/icon.iconset/
+
 # The Swift helper: its build directory and the copied binary. Both are
 # produced by `pnpm run build:native` and neither is source.
 native/gamepad/.build/
