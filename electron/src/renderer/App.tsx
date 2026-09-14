@@ -52,6 +52,7 @@ import type { CommandName } from './input';
 import { SECTION_BY_ID, type SectionId } from './sections';
 import { useEmulator } from './useEmulator';
 import { useFileDrop } from './useFileDrop';
+import { useFullscreen } from './useFullscreen';
 import { usePanelWidth } from './usePanelWidth';
 import { usePixelScale } from './usePixelScale';
 import { bootLog } from '../shared/boot';
@@ -72,6 +73,13 @@ const NOTHING_YET: LibraryState = {
 export default function App() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
+    const appRef = useRef<HTMLDivElement>(null);
+
+    // The whole shell is what goes fullscreen; CSS hides the parts that are
+    // about choosing a game. The play column, its two strips and the readout
+    // stay. See useFullscreen.
+    const { fullscreen, toggle: toggleFullscreen, available: fullscreenAvailable } =
+        useFullscreen(appRef);
 
     const [section, setSection] = useState<SectionId>('library');
     const [state, setState] = useState<LibraryState>(NOTHING_YET);
@@ -436,7 +444,7 @@ export default function App() {
         // delay is shared: moving along the toolbar should not restart it.
         // It renders no DOM -- see TitleBar for where the tooltips are.
         <Tooltip.Provider delayDuration={400} skipDelayDuration={300}>
-            <div className="app">
+            <div className="app" ref={appRef}>
                 <TitleBar
                     section={SECTION_BY_ID[section].title}
                     subtitle={subtitle}
@@ -473,6 +481,9 @@ export default function App() {
                         onCommand={command}
                         onEject={eject}
                         onGoToLibrary={() => setSection('library')}
+                        fullscreen={fullscreen}
+                        fullscreenAvailable={fullscreenAvailable}
+                        onToggleFullscreen={toggleFullscreen}
                     />
                 </div>
 

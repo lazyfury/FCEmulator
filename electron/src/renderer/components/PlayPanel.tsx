@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import {
-    Camera, Download, Eject, ImagePlus, Library, Pause, Play, RotateCcw, Upload,
+    Camera, Download, Eject, ImagePlus, Library, Maximize, Minimize, Pause, Play, RotateCcw, Upload,
 } from 'lucide-react';
 import type { RefObject } from 'react';
 
@@ -31,6 +31,11 @@ interface PlayPanelProps {
     onCommand: (command: CommandName) => void;
     onEject: () => void;
     onGoToLibrary: () => void;
+    /** Whether the shell is fullscreen right now. */
+    fullscreen: boolean;
+    /** False when the platform refuses fullscreen, so the button is hidden. */
+    fullscreenAvailable: boolean;
+    onToggleFullscreen: () => void;
 }
 
 export default function PlayPanel({
@@ -42,6 +47,9 @@ export default function PlayPanel({
     onCommand,
     onEject,
     onGoToLibrary,
+    fullscreen,
+    fullscreenAvailable,
+    onToggleFullscreen,
 }: PlayPanelProps) {
     const loaded = status.romPath !== null;
     const title = loaded ? gameTitle(status.romPath as string) : '未插入卡带';
@@ -62,6 +70,21 @@ export default function PlayPanel({
                     {loaded && <span className="badge">{picture.scale.toFixed(2)}×</span>}
                     {loaded && <span className="badge">{status.fps.toFixed(1)} fps</span>}
                 </div>
+
+                {/* The only control in this strip, because it is the only
+                    control that is about the strip itself. The rest are below,
+                    where a control belongs. */}
+                {fullscreenAvailable && (
+                    <button
+                        type="button"
+                        className="icon-button"
+                        onClick={onToggleFullscreen}
+                        title={fullscreen ? '退出全屏（F11）' : '全屏（F11）'}
+                        aria-label={fullscreen ? '退出全屏' : '全屏'}
+                    >
+                        {fullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+                    </button>
+                )}
             </header>
 
             {/* The well carries the padding; `.stage` is the measured box and

@@ -191,6 +191,20 @@ WebAssembly module is built, so swapping it out to glance at the library
 would rebuild the machine. Only the middle column changes. See the comment at
 the top of `App.tsx`.
 
+**Fullscreen is the console, not the whole window.** F11, or the button in the
+strip above the picture, makes the shell fullscreen and hides what is about
+*choosing* a game: the title bar, the rail, the list and the divider. What
+stays is everything that is about playing one -- the picture, the strip above
+it with the game's name and the machine's lights, the transport buttons below,
+and the readout at the bottom. A picture you cannot pause from the sofa is a
+worse picture. It is the DOM's `requestFullscreen`, not
+`BrowserWindow.setFullScreen`, so it is `:fullscreen` in the stylesheet that
+decides the layout, and Escape that leaves -- the browser owns that key, and an
+application you cannot leave is a worse bug than one you cannot enter. The
+scale stays a whole number of device pixels per game pixel, because
+`usePixelScale` measures the box and does not care how large it is. See
+`useFullscreen.ts`.
+
 ---
 
 ## The library is a database

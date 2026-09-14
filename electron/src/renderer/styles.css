@@ -1169,6 +1169,51 @@ kbd {
     background: var(--bg);
 }
 
+/* ---------------------------------------------------------------------------
+   Fullscreen
+
+   The whole shell is the element the browser makes fill the screen, so what
+   "fullscreen" hides is decided here -- and it hides everything that is about
+   choosing a game: the title bar, the rail, the list, the search box and the
+   divider. Nothing about playing one goes away. The strip above the picture
+   (the game's name and the machine's lights), the controls below it and the
+   readout at the very bottom all stay, because a picture you cannot pause from
+   the sofa is a worse picture.
+
+   The picture is then given every pixel that is left. The well loses its
+   padding, and the two strips lose their borders, so the only margin around
+   the game is the black the picture itself cannot fill. The scale is still a
+   whole number of device pixels per game pixel -- that is usePixelScale's job
+   and it does not care how big the box is -- so fullscreen is sharp rather
+   than stretched. */
+.app:fullscreen {
+    /* The title bar's row goes with the title bar: one row for the console,
+       one for the readout. */
+    grid-template-rows: minmax(0, 1fr) 26px;
+    width: 100vw;
+    height: 100vh;
+}
+
+.app:fullscreen .titlebar,
+.app:fullscreen .sidebar,
+.app:fullscreen .panel,
+.app:fullscreen .splitter {
+    display: none;
+}
+
+.app:fullscreen .stage-well {
+    padding: 0;
+}
+
+.app:fullscreen .play-head,
+.app:fullscreen .transport {
+    border-color: transparent;
+}
+
+.app:fullscreen::backdrop {
+    background: #000;
+}
+
 .play-head {
     display: flex;
     align-items: center;

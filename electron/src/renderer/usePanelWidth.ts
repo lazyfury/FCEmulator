@@ -45,7 +45,7 @@
 // ---------------------------------------------------------------------------
 
 import {
-    useCallback, useEffect, useState,
+    useCallback, useEffect, useRef, useState,
     type KeyboardEvent as ReactKeyboardEvent,
     type PointerEvent as ReactPointerEvent,
 } from 'react';
@@ -104,6 +104,11 @@ export function usePanelWidth(): PanelWidth {
     // effect below must stay quiet or it would store the default on the way
     // past.
     const [restored, setRestored] = useState(false);
+    // The width as the config file last had it. A width that differs from
+    // this is what is worth saving, so opening the application does not
+    // rewrite the file, and a read that failed does not overwrite whatever
+    // was in it with the default.
+    const savedWidth = useRef<number>(DEFAULT_WIDTH);
 
     // The saved width, from the main process.
     //
@@ -121,14 +126,19 @@ export function usePanelWidth(): PanelWidth {
                 if (cancelled) {
                     return;
                 }
-                if (preferences.panelWidth !== null) {
-                    setWidth(clamp(preferences.panelWidth));
-                }
+                const next = preferences.panelWidth === null
+                    ? DEFAULT_WIDTH
+                    : clamp(preferences.panelWidth);
+                savedWidth.current = next;
+                setWidth(next);
                 setRestored(true);
             })
             .catch(() => {
                 // A preference that cannot be read is not worth failing start
-                // up over. The default is a perfectly good width.
+                // up over, and it is not a reason to write over the file
+                // either: the default is shown, and `savedWidth` still says
+                // the default, so nothing is saved until the player moves the
+                // divider.
                 if (!cancelled) {
                     setRestored(true);
                 }
@@ -139,9 +149,10 @@ export function usePanelWidth(): PanelWidth {
     }, []);
 
     useEffect(() => {
-        if (!restored) {
+        if (!restored || width === savedWidth.current) {
             return;
         }
+        savedWidth.current = width;
         void window.fc.setPreference('panelWidth', width);
     }, [width, restored]);
 
