@@ -27,6 +27,10 @@ interface SettingsPanelProps {
     scanlines: boolean;
     onScanlines: (on: boolean) => void;
     gamepadEnabled: boolean;
+    /** Whether that source is the native GameController helper rather than
+     *  the browser's Gamepad API. The two fail differently, so the panel says
+     *  which one is running. */
+    gamepadNative: boolean;
     /** The library, for the folder and the row counts. */
     library: Library;
     /** How many pictures are in it, which lives outside the library's own
@@ -80,6 +84,7 @@ export default function SettingsPanel({
     scanlines,
     onScanlines,
     gamepadEnabled,
+    gamepadNative,
     library,
     screenshots,
     onChooseDirectory,
@@ -181,21 +186,25 @@ export default function SettingsPanel({
                 <Group title="手柄">
                     <Rows
                         rows={[
-                            ['开关', gamepadEnabled ? '已启用（--gamepad）' : '未启用（需要 --gamepad）'],
+                            ['开关', !gamepadEnabled
+                                ? '未启用'
+                                : (gamepadNative ? '原生 GameController 助手' : '浏览器 Gamepad API')],
                             ['状态', !gamepadEnabled
                                 ? '—'
                                 : (status.gamepad.connected ? '已连接' : '未检测到')],
                             ['名称', status.gamepad.id === '' ? '—' : status.gamepad.id],
                             ['布局', status.gamepad.mapping === ''
                                 ? (status.gamepad.connected ? '未知（按键位置是猜测）' : '—')
-                                : status.gamepad.mapping],
+                                : (status.gamepad.mapping === 'native'
+                                    ? 'GameController 标准布局'
+                                    : status.gamepad.mapping)],
                         ]}
                     />
                     {gamepadEnabled && !status.gamepad.connected && (
                         <p className="prose">
-                            手柄要用过一次才会出现在浏览器里：先按一下它上面的键。
-                            如果按了还是没有，可能是 macOS 没把设备交给本应用：
-                            系统设置 → 隐私与安全性 → 输入监控，勾上本应用后重新启动。
+                            {gamepadNative
+                                ? '原生助手已启动，但没有看到手柄。先按一下手柄上的键，确认它已配对；如果还是没有，去系统设置 → 隐私与安全性 → 输入监控，勾上本应用后重新启动。'
+                                : '手柄要用过一次才会出现在浏览器里：先按一下它上面的键。如果按了还是没有，可能是 macOS 没把设备交给本应用：系统设置 → 隐私与安全性 → 输入监控，勾上本应用后重新启动。'}
                         </p>
                     )}
                 </Group>

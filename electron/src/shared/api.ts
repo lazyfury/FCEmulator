@@ -59,6 +59,12 @@ export const IpcChannel = {
 
     /** Delete a screenshot: its file, and its row. */
     RemoveScreenshot: 'fc:remove-screenshot',
+
+    /** The native gamepad helper's current reading, asked for on start up. */
+    GetGamepadState: 'fc:get-gamepad-state',
+
+    /** Pushed by the main process whenever the pad changes. */
+    GamepadState: 'fc:gamepad-state',
 } as const;
 
 /** One game in the library. */
@@ -124,6 +130,44 @@ export interface Library {
     database: string;
     games: GameEntry[];
 }
+
+/**
+ * The console's eight switches, named the way the C enum names them.
+ *
+ * Spelled out here rather than in the renderer because the main process has
+ * to understand them too: the native helper reports these names on stdout, and
+ * a name that only one side knows is a mapping that silently drops a button.
+ */
+export type GamepadButtonName =
+    | 'A' | 'B' | 'SELECT' | 'START'
+    | 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+
+/**
+ * What a real gamepad is doing right now, in the console's terms.
+ *
+ * One of these crosses the IPC boundary every time something changes, and not
+ * once per frame: a reading that is the same as the last one is filtered out
+ * by the main process before it is sent. Sixty no-op messages a second to say
+ * "still nothing" would be sixty chances for the renderer to be a frame behind
+ * for no reason.
+ */
+export interface GamepadReading {
+    connected: boolean;
+    /** The framework's name for the pad, empty when nothing is connected. */
+    id: string;
+    /** Which of the eight are down. All false when nothing is connected. */
+    buttons: Record<GamepadButtonName, boolean>;
+}
+
+/** Nothing plugged in, which is where every session starts. */
+export const NO_GAMEPAD_READING: GamepadReading = {
+    connected: false,
+    id: '',
+    buttons: {
+        A: false, B: false, SELECT: false, START: false,
+        UP: false, DOWN: false, LEFT: false, RIGHT: false,
+    },
+};
 
 /** The host the `app://` protocol serves library files under. */
 export const LIBRARY_HOST = 'library';
@@ -330,17 +374,49 @@ export interface FcBridge {
     readonly selftestOnly: boolean;
 
     /**
-     * True when the app was started with --gamepad.
+     * True when the machine must be built at start up rather than on demand.
      *
-     * Off by default, and the reason is not caution. On macOS, a page that so
-     * much as listens for `gamepadconnected` starts Chromium's gamepad service
-     * in the browser process, and that service holds a HID connection that
-     * makes the process impossible to shut down: app.quit(), app.exit() and
-     * process.exit() all hang in an uninterruptible wait.
+     * Normally the WebAssembly module and the emulator are built lazily, the
+     * first time a game is loaded, so that the library screen appears without
+     * waiting for them. That is wrong for a check that wants the machine at a
+     * known moment -- `--selftest`, `--keytest` and `--audiotest` -- and for
+     * `--layout`, which waits on the test hook that building the machine is
+     * what publishes. Those runs pass `--fc-eager`.
+     */
+    readonly eager: boolean;
+
+    /**
+     * Ask whether a gamepad source should be started, and which kind.
      *
-     * So the feature is complete, tested, and switched off until either
-     * Electron fixes it or somebody finds the teardown that releases it. An
-     * application that cannot be quit is worse than one without a gamepad.
+     * `gamepadEnabled` says a source is running. `gamepadNative` says it is
+     * the native helper in `native/gamepad` rather than the browser's Gamepad
+     * API. The renderer has to know which, because the two are fed in opposite
+     * directions: the browser source is polled once per animation frame, and
+     * the native one pushes readings over IPC as they change.
      */
     readonly gamepadEnabled: boolean;
+
+    /**
+     * True when the gamepad source is the native helper.
+     *
+     * The native helper exists because of what is documented above on
+     * `gamepadEnabled`: it is a separate process using Apple's GameController
+     * framework, so Chromium never touches HID and the application can still
+     * quit. It is macOS-only, and on macOS it is now the default.
+     */
+    readonly gamepadNative: boolean;
+
+    /** The native helper's latest reading. */
+    getGamepadState(): Promise<GamepadReading>;
+
+    /**
+     * Listen for readings from the native helper.
+     *
+     * Push, not pull. The helper already polls at 60Hz and already filters out
+     * readings that have not changed, so the renderer only ever hears about a
+     * button going down or coming up. `offGamepadState` stops the listening;
+     * a renderer that forgets to call it would keep a listener per mount.
+     */
+    onGamepadState(callback: (reading: GamepadReading) => void): void;
+    offGamepadState(): void;
 }

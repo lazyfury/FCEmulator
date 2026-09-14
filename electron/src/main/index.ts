@@ -19,14 +19,15 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, shell 
 import type {
     MessageBoxOptions, MessageBoxReturnValue, OpenDialogOptions, OpenDialogReturnValue,
 } from 'electron';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, extname, join, normalize, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { NativeGamepad, EMPTY_READING, gamepadBinaryPath } from './gamepad';
 import { GameLibrary, SCREENSHOT_DIRECTORY, collectGames, isInside } from './library';
 import {
-    IpcChannel, LIBRARY_HOST, type BootRom, type LibraryState,
+    IpcChannel, LIBRARY_HOST, type BootRom, type GamepadReading, type LibraryState,
 } from '../shared/api';
 
 // dist-electron/main/index.js  ->  ../..          = electron/
@@ -67,6 +68,12 @@ interface Options {
     /** Turn on gamepad support. See FcBridge.gamepadEnabled for why this is
      *  not the default. */
     gamepad: boolean;
+    /** Force the browser's Gamepad API instead of the native helper. The old
+     *  path, kept for comparing the two; it is the one that cannot quit on
+     *  macOS. */
+    browserGamepad: boolean;
+    /** Start with no gamepad source at all. */
+    noGamepad: boolean;
     /** Resize the window through several sizes and report how the picture
      *  fitted. Checks a visual property without a pair of eyes. */
     layoutTest: boolean;
@@ -85,6 +92,8 @@ function parseArguments(argv: string[]): Options {
         listGames: false,
         quitAfterSeconds: 0,
         gamepad: false,
+        browserGamepad: false,
+        noGamepad: false,
         layoutTest: false,
     };
 
@@ -98,6 +107,13 @@ function parseArguments(argv: string[]): Options {
             break;
         case '--gamepad':
             options.gamepad = true;
+            break;
+        case '--browser-gamepad':
+            options.browserGamepad = true;
+            options.gamepad = true;
+            break;
+        case '--no-gamepad':
+            options.noGamepad = true;
             break;
         case '--layout':
             options.layoutTest = true;
@@ -180,6 +196,80 @@ function parseArguments(argv: string[]): Options {
 }
 
 const options = parseArguments(process.argv);
+
+// ---------------------------------------------------------------------------
+// Which gamepad path this run uses
+//
+// The native helper is the default on macOS: it is a separate process, so
+// Chromium never starts its own gamepad service, and the application can still
+// quit. The browser path is kept behind --browser-gamepad because it is the
+// one that reproduces the original problem, and being able to switch it on is
+// how the fix is proved.
+//
+// A checkout that has not run `pnpm run build:native` has no helper, so the
+// native path quietly stands down and --gamepad still means the browser one.
+// That is why the "helper not built" line exists: a gamepad that does nothing
+// and says nothing is the failure this whole file is meant to avoid.
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the Swift helper lives.
+ *
+ * Two places, because the packaged application is not the repository. In
+ * development the helper is the one native/build.sh wrote, inside the project;
+ * packaged it is an `extraResources` entry next to `app/` in
+ * `Contents/Resources`, put there by electron-builder (see the `build` block
+ * in package.json). `process.resourcesPath` is that directory, and it is the
+ * only reliable way to reach it: `__dirname` points inside the application
+ * directory, which is a different folder.
+ */
+const GAMEPAD_BINARY = gamepadBinaryPath(
+    app.isPackaged ? process.resourcesPath : ELECTRON_ROOT,
+);
+
+/**
+ * A run whose input must be exactly what the test scripts.
+ *
+ * `--selftest` hashes the picture after N frames and compares it against the
+ * native build's own hash; `--keytest` asserts which switches are down after
+ * a key press. A real pad feeding the same input manager would make both
+ * nondeterministic -- a controller on the desk nudged during a test run would
+ * change the hash or add an extra held button -- so no gamepad source starts
+ * in those modes. That was not obvious when the source was off by default and
+ * became obvious the moment it was not.
+ */
+const SCRIPTED_RUN = options.selftestFrames > 0 || options.keytest;
+
+/**
+ * Runs that want the emulator built at start up rather than on demand.
+ *
+ * The application normally builds the machine lazily, the first time a game is
+ * loaded, so the library screen does not wait on the WebAssembly module. These
+ * modes need it immediately: the self test and key test and audio test drive
+ * it themselves, and the layout check waits on the test hook that building the
+ * machine publishes. See the `eager` flag on the bridge.
+ */
+const EAGER_MACHINE = options.selftestFrames > 0
+    || options.keytest
+    || options.audioTestSeconds > 0
+    || options.layoutTest
+    // A game named on the command line is a wish to play it, not to look at
+    // the library, so it is built and loaded at start up like it always was.
+    || options.romPath !== null;
+
+/** Whether the helper is there to be started. */
+const NATIVE_GAMEPAD_AVAILABLE = !options.noGamepad && existsSync(GAMEPAD_BINARY);
+
+/** Whether this run reads pads natively rather than through the browser. */
+const USE_NATIVE_GAMEPAD = NATIVE_GAMEPAD_AVAILABLE
+    && !options.browserGamepad
+    && !SCRIPTED_RUN;
+
+/** Whether any gamepad source should be running at all. */
+const GAMEPAD_ENABLED = USE_NATIVE_GAMEPAD || (options.gamepad && !SCRIPTED_RUN);
+
+/** The running helper, or null when this run has no native gamepad source. */
+let gamepad: NativeGamepad | null = null;
 
 // SharedArrayBuffer, for the audio ring buffer.
 //
@@ -397,7 +487,9 @@ function createWindow(): BrowserWindow {
             // Tell the preload what mode it is in. See FcBridge.
             additionalArguments: [
                 ...(options.selftestFrames > 0 ? ['--fc-selftest'] : []),
-                ...(options.gamepad ? ['--fc-gamepad'] : []),
+                ...(EAGER_MACHINE ? ['--fc-eager'] : []),
+                ...(GAMEPAD_ENABLED ? ['--fc-gamepad'] : []),
+                ...(USE_NATIVE_GAMEPAD ? ['--fc-gamepad-native'] : []),
             ],
         },
     });
@@ -806,6 +898,20 @@ function registerIpc(): void {
 
     ipcMain.handle(IpcChannel.SetCartridge, async (_event, path: string | null): Promise<void> => {
         currentCartridge = typeof path === 'string' ? path : null;
+    });
+
+    /**
+     * The native gamepad helper's current reading.
+     *
+     * The renderer asks for this once, on start up, and then listens for
+     * changes. The push covers everything except the gap between the helper's
+     * first reading and the page being ready to hear it, and this closes that
+     * gap: a pad that was already connected when the window opened reports its
+     * held buttons immediately instead of waiting for the player to let go and
+     * press again.
+     */
+    ipcMain.handle(IpcChannel.GetGamepadState, async (): Promise<GamepadReading> => {
+        return gamepad?.reading ?? EMPTY_READING;
     });
 
     /**
@@ -1507,6 +1613,14 @@ async function runListGames(window: BrowserWindow): Promise<void> {
  * there is nothing to flush and nothing to lose.
  */
 function exitNow(code: number): void {
+    // The native gamepad helper is our own child process, so it has to go
+    // first: it is holding a HID connection, and a process that is not
+    // reaped is a process that can hold the whole application open. (This is
+    // the mirror image of the problem the helper was written to solve -- see
+    // the note on exitNow's history below.)
+    gamepad?.stop();
+    gamepad = null;
+
     // Close the pages first.
     //
     // Chromium's gamepad service is started by the page -- by calling
@@ -1534,9 +1648,33 @@ void app.whenReady().then(() => {
     // The first line of the gamepad diagnosis, and the one that says whether
     // there is anything to diagnose: without this the renderer's own
     // `gamepad:` lines are the only sign, and no sign at all is ambiguous
-    // between "the flag never arrived" and "the page never started".
-    if (options.gamepad) {
-        console.log('gamepad: support enabled by --gamepad; the renderer will report what it sees');
+    // between "the source never started" and "the page never started".
+    if (USE_NATIVE_GAMEPAD) {
+        // The whole reason the native helper exists: this line and the ones it
+        // logs are the difference between a pad that is switched on and one
+        // that is not, and neither Chromium nor the browser is involved.
+        gamepad = new NativeGamepad({
+            binary: GAMEPAD_BINARY,
+            onReading: (reading) => {
+                // Every window, because there is normally one and "the pad is
+                // on the desk" is true of all of them. A reading that arrives
+                // before a window exists is not lost: the renderer asks for
+                // the current one when it starts.
+                for (const window of BrowserWindow.getAllWindows()) {
+                    window.webContents.send(IpcChannel.GamepadState, reading);
+                }
+            },
+            onLog: (message) => console.log(message),
+        });
+        gamepad.start();
+    } else if (SCRIPTED_RUN) {
+        console.log('gamepad: disabled for a scripted run -- --selftest and --keytest need exactly the input they scripted');
+    } else if (options.gamepad) {
+        console.log('gamepad: browser path enabled by --gamepad; on macOS this may stop the app quitting');
+    } else if (options.noGamepad) {
+        console.log('gamepad: switched off by --no-gamepad');
+    } else if (!NATIVE_GAMEPAD_AVAILABLE) {
+        console.log('gamepad: no native helper; run pnpm run build:native to enable it');
     }
 
     const window = createWindow();

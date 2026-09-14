@@ -11,35 +11,22 @@
 // way to change what the middle column shows. The selection is carried by
 // `aria-current` as well as by colour, so the accent fill is decoration and
 // not the message.
+//
+// The peripheral indicators used to live at the bottom of this rail. They are
+// in the status bar now, with words: an icon alone cannot say whether the pad
+// is connected or merely expected, and the status bar is where readings go.
 // ---------------------------------------------------------------------------
-
-import { Gamepad2, Volume2, VolumeX } from 'lucide-react';
 
 import { SECTIONS, type SectionId } from '../sections';
 
 interface SidebarProps {
     active: SectionId;
     onSelect: (id: SectionId) => void;
-    /** False when audio could not be started; the game still runs silently. */
-    audioOk: boolean;
-    /** Only shown when the application was started with --gamepad. */
-    gamepadEnabled: boolean;
-    /**
-     * Whether the browser is actually reporting a pad.
-     *
-     * Separate from `gamepadEnabled`, which only says the source was allowed
-     * to run. The difference between "switched on" and "a pad is here" is the
-     * whole of the question when a pad does not work.
-     */
-    gamepadConnected: boolean;
 }
 
 export default function Sidebar({
     active,
     onSelect,
-    audioOk,
-    gamepadEnabled,
-    gamepadConnected,
 }: SidebarProps) {
     return (
         <nav className="sidebar" aria-label="功能区">
@@ -61,22 +48,6 @@ export default function Sidebar({
                         </button>
                     );
                 })}
-            </div>
-
-            {/* What the machine is wired up to, at the bottom, where a status
-                light belongs. Decoration, so it is hidden from the tree. */}
-            <div className="rail-foot" aria-hidden="true">
-                <span className={audioOk ? 'rail-dot rail-dot-on' : 'rail-dot'} title={audioOk ? '音频已连接' : '音频不可用'}>
-                    {audioOk ? <Volume2 size={13} /> : <VolumeX size={13} />}
-                </span>
-                {gamepadEnabled && (
-                    <span
-                        className={gamepadConnected ? 'rail-dot rail-dot-on' : 'rail-dot'}
-                        title={gamepadConnected ? '手柄已连接' : '手柄已启用，未检测到'}
-                    >
-                        <Gamepad2 size={13} />
-                    </span>
-                )}
             </div>
         </nav>
     );

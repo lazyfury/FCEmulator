@@ -1,0 +1,274 @@
+// ---------------------------------------------------------------------------
+// The native gamepad helper, from the main process's side.
+//
+// The renderer cannot read a gamepad on macOS: the browser's Gamepad API
+// starts Chromium's own HID service, and that service keeps the application
+// from quitting. So the reading happens in a separate process --
+// native/gamepad, a small Swift program using Apple's GameController framework
+// -- and this file is the pipe to it.
+//
+//   spawn  native/bin/fc-gamepad
+//     |
+//     |  {"type":"pad","connected":true,"id":"...","buttons":{...}}   one
+//     |  JSON object per line, only when something changes
+//     v
+//   parse and filter  -->  webContents.send(IpcChannel.GamepadState, reading)
+//
+// Why the filtering is here and not in the renderer
+// ------------------------------------------------
+// The helper already polls at 60Hz and only writes a line when a button
+// changes, so the pipe is quiet. What this adds is one more comparison against
+// the *last reading*: a pad that is disconnected and reconnected, or a line
+// that arrives twice, must not turn into two identical messages to the page.
+// The property that matters is that the renderer hears a change exactly once.
+//
+// Nothing here imports Electron. The state machine is testable from plain Node
+// (test/gamepad.test.mjs), which is the only reason it is a separate file from
+// index.ts: a parser that can only be tested by launching a window is a parser
+// that does not get tested.
+// ---------------------------------------------------------------------------
+
+import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { createInterface } from 'node:readline';
+
+import type { GamepadButtonName, GamepadReading } from '../shared/api';
+
+/** The eight switches, in the order the C enum uses. */
+export const GAMEPAD_BUTTONS: readonly GamepadButtonName[] = [
+    'A', 'B', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT',
+];
+
+/**
+ * Nothing plugged in.
+ *
+ * Written out rather than imported from shared/api because this module is
+ * loaded by a plain Node test, and Node cannot resolve the extensionless
+ * import of another `.ts` file at run time. The two are checked equal by a
+ * test, so they cannot drift.
+ */
+export const EMPTY_READING: GamepadReading = {
+    connected: false,
+    id: '',
+    buttons: {
+        A: false, B: false, SELECT: false, START: false,
+        UP: false, DOWN: false, LEFT: false, RIGHT: false,
+    },
+};
+
+/** Where the built helper lives, given the Electron application folder. */
+export function gamepadBinaryPath(electronRoot: string): string {
+    return join(electronRoot, 'native', 'bin', 'fc-gamepad');
+}
+
+/** Two readings that would tell the renderer the same thing. */
+export function sameReading(a: GamepadReading, b: GamepadReading): boolean {
+    if (a.connected !== b.connected || a.id !== b.id) {
+        return false;
+    }
+    return GAMEPAD_BUTTONS.every((button) => a.buttons[button] === b.buttons[button]);
+}
+
+/**
+ * One line of the helper's output, as a reading.
+ *
+ * Returns null for a line that is not a pad message -- the `hello` line, a
+ * warning the framework printed, a line somebody's `console.log` got into --
+ * because the right answer to "I do not understand this" is to drop it, not to
+ * guess a state from it. A `{"connected":false}` line is a reading, and an
+ * important one: it is how a pad that ran out of battery gets let go of.
+ */
+export function parseGamepadLine(line: string): GamepadReading | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(line);
+    } catch {
+        return null;
+    }
+
+    if (parsed === null || typeof parsed !== 'object') {
+        return null;
+    }
+    const message = parsed as {
+        type?: unknown;
+        connected?: unknown;
+        id?: unknown;
+        buttons?: unknown;
+    };
+    if (message.type !== 'pad') {
+        return null;
+    }
+
+    if (message.connected !== true) {
+        return { ...EMPTY_READING, buttons: { ...EMPTY_READING.buttons } };
+    }
+
+    const source = (message.buttons ?? {}) as Record<string, unknown>;
+    const buttons = {} as Record<GamepadButtonName, boolean>;
+    for (const button of GAMEPAD_BUTTONS) {
+        // Exactly true, so a missing key, a null, or a string is "not pressed"
+        // rather than something the renderer has to defend against.
+        buttons[button] = source[button] === true;
+    }
+
+    return {
+        connected: true,
+        id: typeof message.id === 'string' ? message.id : 'Gamepad',
+        buttons,
+    };
+}
+
+export interface NativeGamepadOptions {
+    /** The executable to run; see gamepadBinaryPath. */
+    binary: string;
+    /** Called for every reading that differs from the last one, and once with
+     *  an empty reading when the helper exits. */
+    onReading: (reading: GamepadReading) => void;
+    /** Everything worth saying, already prefixed. Goes to the terminal. */
+    onLog?: (message: string) => void;
+}
+
+/**
+ * The child process, and the last thing it said.
+ *
+ * One instance per application. `start()` is idempotent so that a restart
+ * after an unexpected exit is a single call, and `stop()` is deliberately
+ * quiet: exiting is normal, and a "the helper exited" line during shutdown is
+ * noise that makes a real crash harder to see.
+ */
+export class NativeGamepad {
+    readonly #binary: string;
+    readonly #onReading: (reading: GamepadReading) => void;
+    readonly #onLog: (message: string) => void;
+
+    #child: ChildProcess | null = null;
+    #reading: GamepadReading = EMPTY_READING;
+    #stopping = false;
+
+    constructor(options: NativeGamepadOptions) {
+        this.#binary = options.binary;
+        this.#onReading = options.onReading;
+        this.#onLog = options.onLog ?? (() => undefined);
+    }
+
+    /** What the pad was doing the last time it said anything. */
+    get reading(): GamepadReading {
+        return this.#reading;
+    }
+
+    get running(): boolean {
+        return this.#child !== null;
+    }
+
+    /**
+     * Start the helper. Returns false when it could not be started at all --
+     * which on a fresh checkout means it has not been built yet, and is worth
+     * a line that says so rather than a gamepad that quietly does nothing.
+     */
+    start(): boolean {
+        if (this.#child !== null) {
+            return true;
+        }
+        if (!existsSync(this.#binary)) {
+            this.#onLog(`gamepad: helper not built (${this.#binary}) -- run pnpm run build:native`);
+            return false;
+        }
+
+        this.#stopping = false;
+        let child: ChildProcess;
+        try {
+            child = spawn(this.#binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+        } catch (error) {
+            this.#onLog(`gamepad: could not start the helper: ${(error as Error).message}`);
+            return false;
+        }
+        this.#child = child;
+        this.#onLog(`gamepad: helper started (${this.#binary})`);
+
+        // Line by line, because that is the protocol: one JSON object per
+        // line, flushed by the helper. readline handles the case where a line
+        // arrives split across two chunks, which is not hypothetical on a pipe.
+        const lines = createInterface({ input: child.stdout! });
+        lines.on('line', (line) => this.#handle(line));
+
+        // The framework and the Swift runtime write here. Forwarding it means
+        // a crash mid-run is visible in the terminal instead of arriving as a
+        // gamepad that silently stopped working.
+        child.stderr?.on('data', (chunk: Buffer) => {
+            const text = chunk.toString().trim();
+            if (text !== '') {
+                this.#onLog(`gamepad: ${text}`);
+            }
+        });
+
+        child.on('error', (error) => {
+            this.#onLog(`gamepad: helper error: ${error.message}`);
+        });
+
+        child.on('exit', (code, signal) => {
+            this.#child = null;
+            if (!this.#stopping) {
+                this.#onLog(`gamepad: helper exited (${signal ?? code ?? 'unknown'})`);
+            }
+            // Whatever the pad was holding, let go of it. There is nobody left
+            // to release the buttons.
+            this.#publish(EMPTY_READING);
+        });
+
+        return true;
+    }
+
+    /**
+     * Stop it, and mean it.
+     *
+     * Closing stdin is the polite request: the helper is watching it and exits
+     * when it closes, which is the clean path. SIGTERM is the backup for a
+     * helper that is wedged before it reaches the read loop, and SIGKILL is
+     * the last resort for one that ignores a signal. A gamepad helper must
+     * never be the reason the application does not quit.
+     */
+    stop(): void {
+        const child = this.#child;
+        if (child === null) {
+            return;
+        }
+        this.#stopping = true;
+        try {
+            child.stdin?.end();
+        } catch {
+            // The pipe is already gone; the kill below is what matters.
+        }
+        child.kill('SIGTERM');
+
+        // If it has not exited by the time the watchdog runs, the polite
+        // signal was not enough. `child.killed` cannot answer that question
+        // -- it goes true the moment kill() is called, whether or not the
+        // process obeyed -- so ask whether an exit code or signal has
+        // actually been recorded.
+        const watchdog = setTimeout(() => {
+            if (child.exitCode === null && child.signalCode === null) {
+                child.kill('SIGKILL');
+            }
+        }, 500);
+        // Do not hold the event loop open for the watchdog.
+        watchdog.unref?.();
+        this.#child = null;
+    }
+
+    #handle(line: string): void {
+        const reading = parseGamepadLine(line);
+        if (reading === null) {
+            return;
+        }
+        this.#publish(reading);
+    }
+
+    #publish(reading: GamepadReading): void {
+        if (sameReading(reading, this.#reading)) {
+            return;
+        }
+        this.#reading = reading;
+        this.#onReading(reading);
+    }
+}

@@ -10,3 +10,11 @@ selftest.png
 
 # electron/verify.sh scratch space
 .verify/
+
+# The Swift helper: its build directory and the copied binary. Both are
+# produced by `pnpm run build:native` and neither is source.
+native/gamepad/.build/
+native/bin/
+
+# electron-builder output: the .app, the .dmg and the block map.
+release/

@@ -34,8 +34,8 @@ import { Button, Emulator } from '@wasm';
 
 import { AudioOutput } from './audio/output';
 import { INITIAL_STATUS, unloaded, type EngineStatus } from './engineStatus';
-import { GamepadSource, NO_PAD, type PadReport } from './gamepad';
-import { attachKeyboard, InputManager, type CommandName } from './input';
+import { GamepadSource, NativeGamepadSource, NO_PAD, type GamepadInput, type PadReport } from './gamepad';
+import { attachKeyboard, InputManager, type ButtonName, type CommandName } from './input';
 import { Rewind } from './rewind';
 
 /** 60.0988 frames per second, the console's real rate. */
@@ -132,7 +132,7 @@ export function useEmulator(
         let emulator: Emulator | null = null;
         let detachKeyboard: (() => void) | null = null;
         let commandHandler: ((command: CommandName) => void) | null = null;
-        let gamepad: GamepadSource | null = null;
+        let gamepad: GamepadInput | null = null;
         // The pad report the screen is currently showing, so that a poll that
         // says the same thing as the last one costs no render.
         let seenPad: PadReport = NO_PAD;
@@ -142,6 +142,63 @@ export function useEmulator(
         let flashTimer = 0;
         let audio: AudioOutput | null = null;
         let audioError: string | null = null;
+
+        // Input does not depend on the machine, so it is set up here rather
+        // than inside start(). The keyboard and the pad exist while the player
+        // is still browsing the library, which is what lets the footer say
+        // whether a pad is connected; presses made before a cartridge exists
+        // are dropped by the null check in the apply callback below.
+        //
+        // `nextFrameTime` and `rewinding` are the two pieces of loop state the
+        // keyboard touches, so they are declared out here too. The rest of the
+        // loop state still lives in start().
+        let nextFrameTime = performance.now() / 1000;
+        let rewinding = false;
+        let engineApply: ((button: ButtonName, pressed: boolean) => void) | null = null;
+
+        // One manager for every input source. The keyboard reports into it,
+        // and so does the pad, and the console will only ever see the combined
+        // state. See input.ts for why that indirection is not optional.
+        const manager = new InputManager((button, pressed) => {
+            engineApply?.(button, pressed);
+        });
+
+        detachKeyboard = attachKeyboard(manager, {
+            onCommand: (command) => commandHandler?.(command),
+            onCommandState: (command, held) => {
+                if (command === 'rewind') {
+                    rewinding = held;
+                    if (!held) {
+                        // Coming out of a rewind, do not run a burst of frames
+                        // to make up for the time it took.
+                        nextFrameTime = performance.now() / 1000;
+                    }
+                }
+            },
+        });
+
+        // The second input source. It reports into the same manager, so a
+        // button held on a pad is not dropped by letting go of a key.
+        //
+        // Which source depends on the bridge, and the bridge decides: the
+        // native helper is a separate process using GameController, so
+        // Chromium never starts its own HID service and the application can
+        // still quit. The browser source is the fallback -- and on macOS the
+        // reason it is only a fallback. See FcBridge.
+        //
+        // Every branch says so in the log, because the ways this can be silent
+        // look identical from the outside: a source that was never started,
+        // and a source that started and found nothing, both produce no
+        // `gamepad:` lines at all.
+        if (window.fc.gamepadNative) {
+            gamepad = new NativeGamepadSource(manager);
+            console.log('gamepad: native source started, watching for a pad');
+        } else if (window.fc.gamepadEnabled) {
+            gamepad = new GamepadSource(manager);
+            console.log('gamepad: browser source started, watching for a pad');
+        } else {
+            console.log('gamepad: not enabled -- see the main process log for why');
+        }
 
         const fail = (error: string): void => {
             setStatus({ ...INITIAL_STATUS, state: 'error', error });
@@ -177,45 +234,10 @@ export function useEmulator(
             // one -- or straight away, if the command line named one.
             let loaded = false;
 
-            // One manager for every input source. The keyboard reports into
-            // it today; a gamepad will report into the same one, and the
-            // console will only ever see the combined state. See input.ts for
-            // why that indirection is not optional.
-            const manager = new InputManager((button, pressed) => {
-                engine.setButton(Button[button], pressed);
-            });
-
-            detachKeyboard = attachKeyboard(manager, {
-                onCommand: (command) => commandHandler?.(command),
-                onCommandState: (command, held) => {
-                    if (command === 'rewind') {
-                        rewinding = held;
-                        if (!held) {
-                            // Coming out of a rewind, do not run a burst of
-                            // frames to make up for the time it took.
-                            nextFrameTime = performance.now() / 1000;
-                        }
-                    }
-                },
-            });
-
-            // The second input source. It reports into the same manager, so a
-            // button held on a pad is not dropped by letting go of a key.
-            //
-            // Switched off unless asked for, and the reason is not caution --
-            // see FcBridge.gamepadEnabled. Merely listening for a gamepad
-            // makes this application impossible to quit on macOS.
-            //
-            // Both branches say so in the log, because the two ways this can
-            // be silent look identical from the outside: a source that was
-            // never started and a source that started and found nothing both
-            // produce no `gamepad:` lines at all.
-            if (window.fc.gamepadEnabled) {
-                gamepad = new GamepadSource(manager);
-                console.log('gamepad: source started, watching for a pad');
-            } else {
-                console.log('gamepad: not enabled -- start with --gamepad to switch it on');
-            }
+            // Now that there is a machine, point the input manager at it. The
+            // keyboard and the pad were set up when the effect ran; they start
+            // reaching the console the moment this is assigned.
+            engineApply = (button, pressed) => engine.setButton(Button[button], pressed);
 
             // Audio. This can fail -- SharedArrayBuffer needs the page to be
             // cross origin isolated -- and when it does the game still runs,
@@ -321,9 +343,7 @@ export function useEmulator(
                     .join('');
             };
 
-            let nextFrameTime = performance.now() / 1000;
             let paused = false;
-            let rewinding = false;
             let windowFrames = 0;
             let windowStartedAt = performance.now();
             let windowPeak = 0;
@@ -336,10 +356,13 @@ export function useEmulator(
                 animationFrame = requestAnimationFrame(tick);
                 const now = nowMs / 1000;
 
-                // Polled here because the Gamepad API has no change events:
-                // there is only a snapshot of where every control is now, and
-                // looking at it once per animation frame is the whole
-                // protocol.
+                // Polled here because the browser's Gamepad API has no change
+                // events: there is only a snapshot of where every control is
+                // now, and looking at it once per animation frame is the
+                // whole protocol. The native source's poll() is empty -- the
+                // helper does its own polling and pushes the changes -- but it
+                // is called anyway so that the frame loop does not have to know
+                // which kind of source it has.
                 gamepad?.poll();
 
                 // If the browser's answer changed, say so on the screen as
@@ -483,6 +506,9 @@ export function useEmulator(
 
                 loaded = true;
                 paused = false;
+                // A rewind key held while the library was on screen must not
+                // carry into the game that just started.
+                rewinding = false;
                 nextFrameTime = performance.now() / 1000;
 
                 // A cartridge that halted the machine took the frame loop with
@@ -860,11 +886,50 @@ export function useEmulator(
             }
         };
 
-        void start().catch((error: unknown) => {
-            if (!disposed) {
-                fail(error instanceof Error ? error.message : String(error));
-            }
-        });
+        /**
+         * Build the machine, once.
+         *
+         * The first caller wins and everybody else waits on the same promise:
+         * `start()` is called from the mount below and from loadRom(), and a
+         * player who clicks two games in a row must not build two emulators.
+         */
+        let startPromise: Promise<void> | null = null;
+        const startOnce = (): Promise<void> => (startPromise ??= start());
+
+        // When to build the machine.
+        //
+        // Not when the window opens. Loading the WebAssembly module, building
+        // the Emulator and opening the audio ring is work that has nothing to
+        // do with showing the game library, and doing it at start up means the
+        // application is unavailable until it finishes -- for a screen the
+        // player may sit on for a while. The machine is built on demand
+        // instead: the first game that is loaded starts it.
+        //
+        // Test modes are the exception, and the reason for the `eager` flag on
+        // the bridge. A self test, a key test, an audio test or a layout check
+        // needs the emulator at a known moment, and some never go through
+        // loadRom() at all. See --fc-eager in the main process.
+        if (window.fc.eager) {
+            void startOnce().catch((error: unknown) => {
+                if (!disposed) {
+                    fail(error instanceof Error ? error.message : String(error));
+                }
+            });
+        } else {
+            // The library screen, with no machine behind it yet. The status
+            // says running because the application is running; there is simply
+            // no cartridge. command() and unload() do nothing until there is
+            // something to command.
+            setStatus({ ...INITIAL_STATUS, state: 'running' });
+            actions.current = {
+                loadRom: async (path: string) => {
+                    await startOnce();
+                    return actions.current.loadRom(path);
+                },
+                unload: () => undefined,
+                command: () => undefined,
+            };
+        }
 
         return () => {
             disposed = true;

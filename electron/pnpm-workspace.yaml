@@ -24,4 +24,7 @@
 # Everything else in the tree stays blocked, which is the point.
 # ---------------------------------------------------------------------------
 allowBuilds:
+  # electron-winstaller is the Windows NSIS installer. This build ships a
+  # macOS .dmg only, so its install script stays blocked like everything else.
+  electron-winstaller: false
   esbuild: true

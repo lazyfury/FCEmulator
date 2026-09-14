@@ -26,12 +26,19 @@
 // codes rather than characters.
 // ---------------------------------------------------------------------------
 
+import type { GamepadButtonName } from '../shared/api';
+
 /**
  * The eight switches. The names are the contract with the C enum in
  * src/ffi/emulator_api.h; the numbers behind them live there and in
  * wasm/emulator.mjs's `Button`.
+ *
+ * Defined in shared/api.ts rather than here, because the main process has to
+ * understand the same eight names: the native gamepad helper reports them on
+ * stdout. One list, so a button cannot be called something different on the
+ * way through the pipe than it is in the emulator.
  */
-export type ButtonName = 'A' | 'B' | 'SELECT' | 'START' | 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+export type ButtonName = GamepadButtonName;
 
 /** Where a switch's state came from. */
 export type InputSource = 'keyboard' | 'gamepad';

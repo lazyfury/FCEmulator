@@ -14,6 +14,14 @@ import assert from 'node:assert/strict';
 
 import { mapPad, PAD_INDICES } from '../src/renderer/gamepad.ts';
 import { InputManager } from '../src/renderer/input.ts';
+import {
+    EMPTY_READING,
+    GAMEPAD_BUTTONS,
+    gamepadBinaryPath,
+    parseGamepadLine,
+    sameReading,
+} from '../src/main/gamepad.ts';
+import { NO_GAMEPAD_READING } from '../src/shared/api.ts';
 
 /** A pad with nothing pressed. */
 function pad({ buttons = {}, axes = [0, 0] } = {}) {
@@ -95,4 +103,102 @@ test('a pad reports into the input manager once per change', () => {
 
     assert.deepEqual(calls, [['A', true]]);
     assert.deepEqual(manager.held, ['A']);
+});
+
+// ---------------------------------------------------------------------------
+// The native helper's protocol.
+//
+// This is the half of the native path that can be tested from Node: the
+// helper's stdout is a pipe of JSON lines, and what to do with those lines is
+// a plain function. Reading a real pad cannot be tested here -- that needs a
+// pad and an operating system -- but the parser multiplying that reading can,
+// and the cases that matter are the malformed ones.
+//
+//   pnpm test
+// ---------------------------------------------------------------------------
+
+test('the hello line is not a reading', () => {
+    assert.equal(parseGamepadLine('{"pid":42,"type":"hello","version":1}'), null);
+});
+
+test('anything that is not JSON is dropped, not guessed at', () => {
+    assert.equal(parseGamepadLine(''), null);
+    assert.equal(parseGamepadLine('Swift runtime warning'), null);
+    assert.equal(parseGamepadLine('{"type":"pad"oops}'), null);
+    assert.equal(parseGamepadLine('null'), null);
+    assert.equal(parseGamepadLine('[]'), null);
+});
+
+test('a pad line carries exactly the eight switches', () => {
+    const reading = parseGamepadLine(JSON.stringify({
+        type: 'pad',
+        connected: true,
+        id: 'Xbox Wireless Controller',
+        buttons: { A: true, START: true },
+    }));
+
+    assert.equal(reading.connected, true);
+    assert.equal(reading.id, 'Xbox Wireless Controller');
+    assert.deepEqual(
+        Object.keys(reading.buttons).sort(),
+        [...GAMEPAD_BUTTONS].sort(),
+    );
+    assert.deepEqual(
+        down(reading.buttons),
+        ['A', 'START'],
+    );
+});
+
+test('a button that is missing or not true is not pressed', () => {
+    // The helper always writes all eight, but a reader that treats a missing
+    // key as "pressed" is one that sticks a button down for the rest of the
+    // session. Exact true, or nothing.
+    const reading = parseGamepadLine(JSON.stringify({
+        type: 'pad',
+        connected: true,
+        buttons: { A: 1, B: 'true', LEFT: null, RIGHT: false },
+    }));
+    assert.deepEqual(down(reading.buttons), []);
+});
+
+test('a disconnected pad is a reading, and an important one', () => {
+    // It is how a pad that ran out of battery gets let go of. Dropping the
+    // line would leave the jump button held forever.
+    const reading = parseGamepadLine('{"type":"pad","connected":false}');
+    assert.notEqual(reading, null);
+    assert.equal(reading.connected, false);
+    assert.deepEqual(down(reading.buttons), []);
+});
+
+test('a nameless pad is still a pad', () => {
+    const reading = parseGamepadLine('{"type":"pad","connected":true}');
+    assert.equal(reading.connected, true);
+    assert.equal(reading.id, 'Gamepad');
+});
+
+test('the empty reading is one value, written twice', () => {
+    // Written out in src/main/gamepad.ts because Node cannot resolve an
+    // extensionless import of shared/api at run time. If the two ever drift,
+    // the main process and the renderer would disagree about "nothing is
+    // connected", so they are compared here rather than trusted.
+    assert.deepEqual(EMPTY_READING, NO_GAMEPAD_READING);
+});
+
+test('sameReading notices a button, a name, and a connection', () => {
+    const idle = parseGamepadLine('{"type":"pad","connected":true,"id":"pad A"}');
+    assert.equal(sameReading(idle, idle), true);
+    assert.equal(sameReading(idle, parseGamepadLine(
+        '{"type":"pad","connected":true,"id":"pad A","buttons":{"A":true}}',
+    )), false);
+    assert.equal(sameReading(idle, parseGamepadLine(
+        '{"type":"pad","connected":true,"id":"pad B"}',
+    )), false);
+    assert.equal(sameReading(idle, EMPTY_READING), false);
+});
+
+test('the helper binary is looked for where the build script puts it', () => {
+    assert.equal(
+        gamepadBinaryPath('/app'),
+        '/app/native/bin/fc-gamepad',
+    );
 });

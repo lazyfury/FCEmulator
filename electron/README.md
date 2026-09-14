@@ -74,7 +74,8 @@ at some confusing later moment.
 
 | Command | What it does |
 |---|---|
-| `pnpm run build` | compile the main process (`tsc`) and the renderer (`vite build`) |
+| `pnpm run build` | compile the main process (`tsc`), the renderer (`vite build`) and the native gamepad helper |
+| `pnpm run build:native` | build just the helper, `native/bin/fc-gamepad` |
 | `pnpm start` | build, then run the production build |
 | `pnpm run typecheck` | type check both, without emitting |
 | `pnpm test` | the node test runner over `test/` |
@@ -82,7 +83,9 @@ at some confusing later moment.
 | `pnpm run keytest` | press real keys at the window and check what the emulator heard |
 | `pnpm run audiotest` | play in real time for eight seconds and report the audio ring |
 | `electron . --list` | print the library and exit. A screen cannot be hashed, so this is how it gets checked |
-| `electron . --gamepad` | turn on gamepad support. See the note in Status first |
+| `electron . --gamepad` | force the gamepad source on. On this machine the native helper is on by default, so this is only needed when the helper was not built |
+| `electron . --browser-gamepad` | use the browser's Gamepad API instead of the native helper. The old path; on macOS it stops the app quitting |
+| `electron . --no-gamepad` | start with no gamepad source at all |
 | `electron . --layout` | resize the window through eight sizes and check how the picture fitted |
 | `./verify.sh [rom-dir]` | run every ROM through the native build and through this app, and fail if any pixel or any sample differs |
 | `pnpm run wasm` | rebuild the WebAssembly module |
@@ -101,7 +104,12 @@ src/
                       screenshots and covers, and what a dropped path amounts
                       to. Knows nothing about Electron, so it is tested from
                       plain Node (test/library.test.mjs)
-  preload/index.ts    the eight functions the page is allowed to call
+  main/gamepad.ts     the native helper as a child process: spawn it, parse
+                      the JSON lines it writes, filter out readings that have
+                      not changed, and forward the rest. No Electron in it, so
+                      plain Node tests the state machine
+                      (test/gamepad.test.mjs)
+  preload/index.ts    the functions the page is allowed to call
   renderer/
     useEmulator.ts    loading the wasm, the frame loop, the clock
     engineStatus.ts   the shape of the engine's report, and what it becomes
@@ -129,9 +137,16 @@ src/
                       one switch
       AboutPanel.tsx  what the project is, and the chain from ROM to pixel
       PlayPanel.tsx   the canvas, the pause overlay and the transport buttons
-      StatusBar.tsx   fps, cycles, PC, audio and the keys held
+      StatusBar.tsx   the footer: the speaker and pad indicators with words,
+                      then fps, cycles, PC, audio and the keys held
     App.tsx           the three-column shell, and what the middle column is
   shared/api.ts       the contract between main and renderer
+
+native/
+  build.sh            builds the helper into native/bin/fc-gamepad
+  gamepad/            the helper itself: a Swift package using Apple's
+                      GameController framework. Its README has the protocol
+                      and the reason it is a separate process at all
 ```
 
 Three rules worth knowing before changing anything:
@@ -158,7 +173,7 @@ disagree, audio works in development and silently fails in the packaged app.
 
 **The preload is the whole hole in the wall.** Everything the page can reach
 in Node is in `src/preload/index.ts`; if it is not there, the page cannot do
-it. It is eight verbs long, and the one that writes — `openFolder` — is handed
+it. It is a short list of named verbs, and the one that writes — `openFolder` — is handed
 a directory the main process chose, not a path the page made up.
 
 **One object per thing the screen draws.** The library and its screenshots are
@@ -367,11 +382,19 @@ and replay. Around it is a macOS-style window in three columns: a function
 rail, a game library modelled in SQLite (pin, import, delete, play counts),
 and the picture.
 
-Gamepad support is written and tested but **switched off by default**. See
-below; it is not caution.
+Gamepad support runs in a **native helper** by default: a separate process
+using Apple's GameController framework, so Chromium never touches HID and the
+application still quits. See below.
 
-What is not here: controller support that can be switched on safely, and
-packaging (`electron-builder` and a `.dmg`).
+The machine — the WebAssembly module, the `Emulator` and the audio ring — is
+built **on demand**, the first time a game is loaded, rather than when the
+window opens. The library screen is up immediately and does not wait for it.
+The test modes pass `--fc-eager` to build it at start up instead; see the
+`eager` flag in `src/shared/api.ts`.
+
+Packaging is `electron-builder`: `pnpm run dist` writes a `.dmg` into
+`release/`, with the native gamepad helper copied into the application bundle
+by the `extraResources` rule in `package.json`.
 
 ### Fitting the picture to the window
 
@@ -427,78 +450,105 @@ rewind a1cacd38b1d7493b1cfce739fb5ffb3652745e9ee0a11aa6b54d9d6071af2d1e
 rewind check   : lands on the same frame
 ```
 
-### Why the gamepad is off
+### How the gamepad works, and why it is a separate process
 
-`--gamepad` turns it on. The code is complete: it polls once per animation
-frame, merges into the same `InputManager` the keyboard uses (so a button held
-on a pad is not released by letting go of a key), has a deadzone, and lets go
-of everything when a pad is unplugged or runs out of battery.
+The reading happens in `native/bin/fc-gamepad`, a small Swift program in
+`native/gamepad/` that uses Apple's GameController framework and writes JSON
+lines to stdout. The main process spawns it, parses the lines
+(`src/main/gamepad.ts`), and pushes each reading over IPC to
+`NativeGamepadSource` in the renderer, which reports into the same
+`InputManager` the keyboard uses. A button held on a pad is therefore not
+released by letting go of a key, and the pad is released when it is unplugged
+or runs out of battery.
 
-Two scripts put the flag where it has to be, because `pnpm run dev --gamepad`
-never gets there — npm and pnpm take anything before `--` for themselves, so
-the argument has to go after the script: `pnpm run dev -- --gamepad`. Both of
-these do that without anybody having to remember it:
+It is a separate process for one reason, and the reason is in git history.
+
+**The browser path does not quit.** On macOS a page that so much as adds a
+`gamepadconnected` listener — without ever calling `navigator.getGamepads()` —
+starts Chromium's gamepad service in the browser process. That service holds a
+HID connection, and once it is up the process cannot be shut down:
+`app.quit()`, `app.exit()` and `process.exit()` all leave it sitting in an
+uninterruptible wait (`ps` state `U`) until it is killed with SIGKILL. This was
+found because the test modes stopped exiting; it would have hit a player the
+first time they closed the window.
+
+A child process can be killed, so the reading moved there. `--browser-gamepad`
+is kept because it is the path that reproduces the bug, and being able to
+switch it on is how the fix is checked.
 
 ```bash
-pnpm run dev:gamepad    # the dev server, with the flag
-pnpm run gamepad        # the built application, with the flag
+pnpm run dev:gamepad      # the dev server, native helper
+pnpm run gamepad          # the built application, native helper
+pnpm run gamepad:browser  # the built application, browser Gamepad API
 ```
 
-It is off because on macOS it makes the application impossible to quit.
+`pnpm run build` builds the helper, so `pnpm start` and every test script have
+it. A checkout that has not built it logs `gamepad: helper not built` and the
+source simply does not start — a gamepad that does nothing and says so, rather
+than one that does nothing and says nothing.
 
-A page that so much as adds a `gamepadconnected` listener — without ever
-calling `navigator.getGamepads()` — starts Chromium's gamepad service in the
-browser process. That service holds a HID connection, and once it is up the
-process cannot be shut down: `app.quit()`, `app.exit()` and `process.exit()`
-all leave it sitting in an uninterruptible wait (`ps` state `U`) until it is
-killed with SIGKILL.
-
-This was found because the test modes stopped exiting. It would have hit a
-player the first time they closed the window, which is why it is a default
-rather than a footnote.
-
-The mapping itself is a plain function, `mapPad()`, and is tested — including
-the two things that go wrong in every gamepad implementation: the face buttons
-swapped, and a worn stick drifting the player into a wall. What cannot be
-tested here is the reading, and that is the part that misbehaves.
+The mapping is tested in both directions now: `mapPad()` in the renderer (the
+browser path), and `parseGamepadLine()` in the main process (the native one).
+Both cover the two things that go wrong in every gamepad implementation — the
+face buttons swapped, and a worn stick drifting the player into a wall. What
+cannot be tested from Node is the actual reading; that is what a pad on the
+desk is for, and it is why the helper logs every connection, press and
+release.
 
 #### When a pad does nothing
 
 Everything the gamepad path knows is logged, prefixed `gamepad:`, and the main
 process prints the renderer's console to the terminal — so the answer is in the
-output of the run, in this order:
+output of the run, in this order.
+
+The native path is the default and says this:
 
 | what appears | what it means |
 |---|---|
-| `gamepad: support enabled by --gamepad` | the flag was parsed by the main process. No line means the argument never reached it — see the two scripts above |
-| `gamepad: source started, watching for a pad` | the flag reached the renderer and the source is polling |
-| `gamepad: not enabled -- start with --gamepad` | the flag did **not** reach the renderer. This is the one failure that is ours rather than macOS's |
+| `gamepad: helper started (/…/native/bin/fc-gamepad)` | the main process spawned the helper. No line means the helper was not built — run `pnpm run build:native` |
+| `gamepad: helper not built (…)` | the binary is missing; the gamepad source does not start |
+| `gamepad: native source started, watching for a pad` | the renderer is listening for pushed readings |
+| `gamepad: connected "…" (native, GameController)` | the helper found a pad and named it |
+| `gamepad: down          A` | a press arrived and went into the input manager. A press with no line is a press the helper never reported |
+| `gamepad: disconnected  "…"` | the pad went away, and every button it held was released |
+| `gamepad: helper exited (…)` | the helper died mid-run. The framework's own message is on stderr, one line above |
+
+The browser path (`--browser-gamepad`) says this instead:
+
+| what appears | what it means |
+|---|---|
+| `gamepad: browser path enabled by --gamepad` | the flag was parsed by the main process. No line means the argument never reached it |
+| `gamepad: browser source started, watching for a pad` | the source is polling |
+| `gamepad: not enabled -- see the main process log for why` | nothing is reading pads, and the line above says which reason applies |
+| `gamepad: disabled for a scripted run -- …` | `--selftest` or `--keytest`: a real pad would make the test nondeterministic |
 | `gamepad: connected "…" mapping=standard` | the browser sees the pad, and its buttons are where this expects them |
-| `gamepad: connected "…" mapping=(none)` | the browser sees the pad but has no standard layout for it; the indices in `gamepad.ts` are a guess, and the `(index N)` in the log lines below says which button actually fired |
-| `gamepad: down          A (index 0)` | a press arrived and went into the input manager. A press with no line is a press the browser never reported |
-| `gamepad: no pad after two seconds…` | the browser is reporting nothing at all, and the three likely reasons are listed in the log itself |
+| `gamepad: connected "…" mapping=(none)` | the browser sees the pad but has no standard layout for it; the indices in `gamepad.ts` are a guess, and the `(index N)` in the log says which button actually fired |
+| `gamepad: down          A (index 0)` | a press arrived and went into the input manager |
+| `gamepad: no pad after two seconds…` | the browser is reporting nothing at all |
 
-That last one is worth repeating, because none of them are bugs in this
-repository and all three are common:
+When no pad turns up, the reasons worth checking are:
 
-1. **The window has to be focused.** The Gamepad API only exposes pads to the
-   focused document, so a pad nobody is looking at is invisible. Click the game
-   window, then press a button.
-2. **Chromium only lists a gamepad once it has been used.** A pad that is
-   plugged in and untouched sends nothing, which is indistinguishable from a
-   broken one. Press a button or move a stick on the pad itself.
-3. **macOS may be withholding the device.** System Settings → Privacy &
+1. **The pad is not paired, or is asleep.** Press a button on it to wake it.
+2. **The window has to be focused** — for the *browser* path only. The Gamepad
+   API exposes pads to the focused document and nobody else; the native helper
+   has no such rule, and also sees a pad that was connected before the app
+   started.
+3. **Chromium only lists a gamepad once it has been used** — browser path only.
+   A pad that is plugged in and untouched sends nothing, which is
+   indistinguishable from a broken one.
+4. **macOS may be withholding the device.** System Settings → Privacy &
    Security → **Input Monitoring**, tick Electron (or this application), then
-   quit and start again — macOS reads that list at launch.
+   quit and start again — macOS reads that list at launch. Chromium asks for
+   this itself the first time the *browser* path polls for gamepads
+   (`IOHIDRequestAccess`); if that prompt was answered "Don't Allow", macOS
+   remembers and only System Settings can undo it. The native helper goes
+   through GameController instead, which is why the same pad can work on one
+   path and not the other.
 
-The sandbox is not a factor, and it is worth saying so because it looks like
-one: `webPreferences.sandbox` is already `false`, and the Gamepad API is a
-renderer web API rather than a Node one, so the sandbox setting does not gate
-it either way. Neither is there anything to grant from inside the process —
-Chromium asks macOS for Input Monitoring itself (`IOHIDRequestAccess`) the
-first time the page polls for gamepads, which happens every frame. If that
-prompt was answered "Don't Allow", macOS remembers and never asks again, and
-only System Settings can undo it.
+The sandbox is not a factor on the browser path, and it is worth saying so
+because it looks like one: `webPreferences.sandbox` is already `false`, and the
+Gamepad API is a renderer web API rather than a Node one, so the sandbox
+setting does not gate it either way.
 
 The same information is on screen, without the terminal: the 设置 panel has a
 手柄 group (switch, state, name, layout), and the gamepad dot at the bottom of

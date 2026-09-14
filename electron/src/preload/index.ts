@@ -14,11 +14,20 @@
 // confirmation that the page cannot draw or dismiss itself.
 // ---------------------------------------------------------------------------
 
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 
 import {
-    IpcChannel, type BootRom, type FcBridge, type LibraryState,
+    IpcChannel, type BootRom, type FcBridge, type GamepadReading, type LibraryState,
 } from '../shared/api';
+
+/**
+ * The renderer's one gamepad listener, held here rather than in the page.
+ *
+ * `onGamepadState` replaces whatever was listening before, so a component that
+ * mounts twice cannot end up with two listeners and two button presses per
+ * press. The page never sees an ipcRenderer, only the callback it handed over.
+ */
+let gamepadListener: ((event: IpcRendererEvent, reading: GamepadReading) => void) | null = null;
 
 const bridge: FcBridge = {
     getBootRom: () => ipcRenderer.invoke(IpcChannel.GetBootRom) as Promise<BootRom | null>,
@@ -75,7 +84,27 @@ const bridge: FcBridge = {
     // IPC keeps the renderer from having to wait for an answer before it can
     // decide whether to start running frames.
     selftestOnly: process.argv.includes('--fc-selftest'),
+    eager: process.argv.includes('--fc-eager'),
     gamepadEnabled: process.argv.includes('--fc-gamepad'),
+    gamepadNative: process.argv.includes('--fc-gamepad-native'),
+
+    getGamepadState: () =>
+        ipcRenderer.invoke(IpcChannel.GetGamepadState) as Promise<GamepadReading>,
+
+    onGamepadState: (callback) => {
+        if (gamepadListener !== null) {
+            ipcRenderer.removeListener(IpcChannel.GamepadState, gamepadListener);
+        }
+        gamepadListener = (_event, reading) => callback(reading);
+        ipcRenderer.on(IpcChannel.GamepadState, gamepadListener);
+    },
+
+    offGamepadState: () => {
+        if (gamepadListener !== null) {
+            ipcRenderer.removeListener(IpcChannel.GamepadState, gamepadListener);
+            gamepadListener = null;
+        }
+    },
 };
 
 contextBridge.exposeInMainWorld('fc', bridge);

@@ -360,6 +360,7 @@ export default function App() {
                     scanlines={scanlines}
                     onScanlines={setScanlines}
                     gamepadEnabled={window.fc.gamepadEnabled}
+                    gamepadNative={window.fc.gamepadNative}
                     library={library}
                     screenshots={state.screenshots.length}
                     onChooseDirectory={() => void chooseDirectory()}
@@ -396,9 +397,6 @@ export default function App() {
                     <Sidebar
                         active={section}
                         onSelect={setSection}
-                        audioOk={status.audioError === null}
-                        gamepadEnabled={window.fc.gamepadEnabled}
-                        gamepadConnected={status.gamepad.connected}
                     />
 
                     {middle}
@@ -422,7 +420,11 @@ export default function App() {
                     />
                 </div>
 
-                <StatusBar status={status} />
+                <StatusBar
+                    status={status}
+                    gamepadEnabled={window.fc.gamepadEnabled}
+                    gamepadNative={window.fc.gamepadNative}
+                />
 
                 {notice !== null && (
                     <div className="toast" role="status">{notice}</div>

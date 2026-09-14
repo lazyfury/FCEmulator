@@ -9,11 +9,89 @@
 // The right hand group is monospaced and tabular so the numbers do not jitter
 // left and right as they change, which at four updates a second is the
 // difference between a readout and a flicker.
+//
+// The two things the machine is wired up to -- the speaker and the pad -- are
+// here too, as icon *and* words. They used to be a pair of dots at the bottom
+// of the left rail, and a dot cannot answer the question a person actually
+// has: is the pad connected, or merely expected? A dot that is off looks the
+// same whether the source never started, found nothing, or was never asked
+// for. The word is the whole point of moving them down here.
 // ---------------------------------------------------------------------------
+
+import { Gamepad2, Volume2, VolumeX } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 import type { EngineStatus } from '../engineStatus';
 import { formatCycles, formatHex16 } from '../format';
 
+// ---------------------------------------------------------------------------
+// What the speaker is doing, in one phrase
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether the speaker is wired up at all.
+ *
+ * Keyed on the error rather than on `status.audio`, because that field is only
+ * written by the once-per-quarter-second status update inside the frame loop —
+ * and that loop deliberately does not report while no cartridge is loaded. On
+ * the library screen `status.audio` is null however healthy the pipeline is,
+ * which would make a working speaker look broken. A failed pipeline, by
+ * contrast, always sets `audioError`.
+ */
+function audioIsReady(status: EngineStatus): boolean {
+    return status.audioError === null;
+}
+
+/** The one phrase beside the speaker icon. */
+function audioLabel(status: EngineStatus): string {
+    if (status.audioError !== null) {
+        return '音频不可用';
+    }
+    if (status.audio === null) {
+        return '音频就绪';
+    }
+    return status.audio.state === 'running' ? '音频已连接' : `音频 ${status.audio.state}`;
+}
+
+/** Everything the speaker is doing, for the hover text. */
+function audioDetail(status: EngineStatus): string {
+    if (status.audioError !== null) {
+        return status.audioError;
+    }
+    if (status.audio === null) {
+        return '音频管线已建立，尚未开始播放';
+    }
+    const { state, fill, targetFill, underruns, dropped } = status.audio;
+    return `${state} · 缓冲 ${fill}/${targetFill} · 欠载 ${underruns} · 丢弃 ${dropped}`;
+}
+
+// ---------------------------------------------------------------------------
+// What the pad is doing, in one phrase
+// ---------------------------------------------------------------------------
+
+/** The one phrase beside the pad icon. Short: the name goes in the tooltip. */
+function gamepadLabel(status: EngineStatus, enabled: boolean): string {
+    if (!enabled) {
+        return '手柄未启用';
+    }
+    return status.gamepad.connected ? '手柄已连接' : '手柄未检测到';
+}
+
+/** The device name, or the reason there is none. */
+function gamepadDetail(status: EngineStatus, enabled: boolean, native: boolean): string {
+    if (!enabled) {
+        return '没有手柄来源在运行';
+    }
+    if (!status.gamepad.connected) {
+        return native
+            ? '原生 GameController 助手已启动，但未检测到手柄'
+            : '浏览器 Gamepad API 已启动，但未检测到手柄';
+    }
+    const path = native ? 'native' : status.gamepad.mapping || 'browser';
+    return `${status.gamepad.id} · ${path}`;
+}
+
+/** The detailed audio readout the right hand group has always shown. */
 function describeAudio(status: EngineStatus): string {
     if (status.audioError !== null) {
         return '音频关闭';
@@ -32,11 +110,37 @@ function audioTrouble(status: EngineStatus): boolean {
     return status.audio !== null && (status.audio.underruns > 0 || status.audio.dropped > 0);
 }
 
-interface StatusBarProps {
-    status: EngineStatus;
+/**
+ * One peripheral: an icon and a word.
+ *
+ * `on` is the difference between "wired up" and "there" -- the speaker running
+ * or the pad connected. Everything else is dim, because a device that is
+ * merely absent is not an error.
+ */
+function Device({ on, label, detail, children }: {
+    on: boolean;
+    label: string;
+    detail: string;
+    children: ReactNode;
+}) {
+    return (
+        <span className={on ? 'status-device status-device-on' : 'status-device'} title={detail}>
+            <span className="status-device-icon" aria-hidden="true">{children}</span>
+            {label}
+        </span>
+    );
 }
 
-export default function StatusBar({ status }: StatusBarProps) {
+interface StatusBarProps {
+    status: EngineStatus;
+    /** Whether a gamepad source is running at all. */
+    gamepadEnabled: boolean;
+    /** Whether that source is the native helper rather than the browser API.
+     *  The two fail differently, so the tooltip says which one it is. */
+    gamepadNative: boolean;
+}
+
+export default function StatusBar({ status, gamepadEnabled, gamepadNative }: StatusBarProps) {
     return (
         <footer className="statusbar">
             {status.message !== null && <span className="status-message">{status.message}</span>}
@@ -49,6 +153,23 @@ export default function StatusBar({ status }: StatusBarProps) {
             {status.state === 'running' && status.romPath === null && (
                 <span className="status-dim">未插入卡带 · 从游戏库选择一个</span>
             )}
+
+            <span className="status-devices">
+                <Device
+                    on={audioIsReady(status)}
+                    label={audioLabel(status)}
+                    detail={audioDetail(status)}
+                >
+                    {audioIsReady(status) ? <Volume2 size={13} /> : <VolumeX size={13} />}
+                </Device>
+                <Device
+                    on={gamepadEnabled && status.gamepad.connected}
+                    label={gamepadLabel(status, gamepadEnabled)}
+                    detail={gamepadDetail(status, gamepadEnabled, gamepadNative)}
+                >
+                    <Gamepad2 size={13} />
+                </Device>
+            </span>
 
             <span className="status-spacer" />
 

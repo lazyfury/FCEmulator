@@ -35,6 +35,7 @@
 // browser.
 // ---------------------------------------------------------------------------
 
+import type { GamepadReading } from '../shared/api';
 import type { ButtonName, InputManager } from './input';
 
 /** How far the stick has to move before it counts as a direction. The same
@@ -261,6 +262,115 @@ export class GamepadSource {
                 say(`${on ? 'down' : 'up  '}          ${button} (index ${index})`);
             }
             this.#manager.set(button as ButtonName, on, 'gamepad');
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The native helper, from the renderer's side
+//
+// Same job as `GamepadSource` and the same destination -- one InputManager
+// shared with the keyboard -- but fed the other way round. The browser source
+// is polled: the Gamepad API has no change events, so every animation frame
+// asks "where is everything now". The native helper already does that polling
+// in its own process and only speaks when something changes, so here the
+// renderer sits and waits to be told.
+//
+// That difference is the entire reason `gamepadNative` exists on the bridge.
+// A source that is polled and a source that is pushed need different code, and
+// pretending otherwise would mean polling an IPC channel sixty times a second
+// to hear what we were already told.
+// ---------------------------------------------------------------------------
+
+/** The eight names, so a reading can be walked without trusting its key order. */
+const NATIVE_BUTTONS: readonly ButtonName[] = [
+    'A', 'B', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT',
+];
+
+/**
+ * A gamepad source, whichever kind. Both classes satisfy this by shape.
+ *
+ * `poll()` exists on the native source too, and does nothing: the frame loop
+ * calls it unconditionally, and a push-driven source has nothing to ask for.
+ */
+export interface GamepadInput {
+    readonly report: PadReport;
+    poll(): void;
+    destroy(): void;
+}
+
+export class NativeGamepadSource implements GamepadInput {
+    readonly #manager: InputManager;
+    #report: PadReport = NO_PAD;
+    /** What we last told the manager, so a change can be logged once. */
+    readonly #held = new Set<ButtonName>();
+
+    constructor(manager: InputManager) {
+        this.#manager = manager;
+
+        // Ask first, then listen. The helper may already have a reading from
+        // before this page existed -- a pad that was connected while the
+        // window was loading -- and a change-only push would never repeat it.
+        // The two can race, which is harmless: #apply is idempotent, and the
+        // same reading twice costs nothing (see InputManager.set, which only
+        // reports a change when the *combined* state changes).
+        window.fc.onGamepadState((reading: GamepadReading) => this.#apply(reading));
+        void window.fc.getGamepadState()
+            .then((reading: GamepadReading) => this.#apply(reading))
+            .catch(() => undefined);
+    }
+
+    get report(): PadReport {
+        return this.#report;
+    }
+
+    /** Nothing to ask for. The helper speaks first. */
+    poll(): void {
+        // Deliberately empty.
+    }
+
+    destroy(): void {
+        window.fc.offGamepadState();
+        this.#release();
+        this.#report = NO_PAD;
+    }
+
+    /** Let go of every switch this source is holding, and only this source. */
+    #release(): void {
+        this.#manager.releaseAll('gamepad');
+        this.#held.clear();
+    }
+
+    #apply(reading: GamepadReading): void {
+        if (!reading.connected) {
+            // A pad that ran out of battery mid jump must not leave the jump
+            // button held. There is nobody left to release it, so it is
+            // released here, once, when the disconnection is heard.
+            if (this.#report.connected) {
+                say(`disconnected  ${this.#report.id}`);
+                this.#release();
+                this.#report = NO_PAD;
+            }
+            return;
+        }
+
+        if (!this.#report.connected || this.#report.id !== reading.id) {
+            this.#report = { connected: true, id: reading.id, mapping: 'native' };
+            say(`connected     "${reading.id}" (native, GameController)`);
+        }
+
+        for (const button of NATIVE_BUTTONS) {
+            const on = reading.buttons[button] === true;
+            const was = this.#held.has(button);
+            if (on !== was) {
+                if (on) {
+                    this.#held.add(button);
+                } else {
+                    this.#held.delete(button);
+                }
+                say(`${on ? 'down' : 'up  '}          ${button}`);
+            }
+            this.#manager.set(button, on, 'gamepad');
         }
     }
 }

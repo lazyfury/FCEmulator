@@ -301,27 +301,6 @@ kbd,
     white-space: nowrap;
 }
 
-.rail-foot {
-    margin-top: auto;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 0 4px;
-    color: var(--text-faint);
-}
-
-.rail-dot {
-    display: grid;
-    place-items: center;
-    opacity: 0.5;
-}
-
-.rail-dot-on {
-    opacity: 1;
-    color: var(--green);
-}
-
 /* ---------------------------------------------------------------------------
    The middle column
    --------------------------------------------------------------------------- */
@@ -1453,6 +1432,31 @@ kbd {
 
 .status-dim {
     color: var(--text-faint);
+}
+
+/* The two things the machine is wired up to: icon and word. Dim when the
+   device is merely absent -- an unplugged pad is not an error -- green when
+   it is actually there. */
+.status-devices {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.status-device {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-faint);
+    cursor: default;
+}
+
+.status-device-on {
+    color: var(--green);
+}
+
+.status-device-icon {
+    display: inline-flex;
 }
 
 /* ---------------------------------------------------------------------------
