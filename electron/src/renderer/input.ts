@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
 // Input
 //
-// The NES controller is eight switches, not eight events.
+// The console has two controller ports and eight switches in each. Everything
+// above this file is about turning whatever the players are holding into those
+// sixteen booleans, and this file is where the sources are merged.
 //
-// Everything above this file is about turning whatever the player is holding
-// into those eight booleans, and this file is where the sources are merged.
-// There is one source today, the keyboard; a gamepad will be the second, and
-// the merging is written now because retrofitting it later is the bug:
+// There are two sources, the keyboard and the gamepads, and more than one of
+// each can be holding the same switch:
 //
 //   Two sources can hold the same switch at once. If each source called
 //   setButton directly, letting go of a key would also let go of the button a
@@ -14,8 +14,12 @@
 //   both at once -- which is nobody, until it is somebody.
 //
 // So each source reports its own state into the manager, the manager keeps the
-// OR, and the console hears only the combined result, and only when it
-// changes.
+// OR per (port, switch), and the console hears only the combined result, and
+// only when it changes.
+//
+// Which port a source's switches go to is the source's business, not the
+// manager's. The keyboard asks its binding map (bindings.ts); a pad asks its
+// assignment. The manager only ever hears "port 1, A, down".
 //
 // Why `event.code` and not `event.key`
 // ------------------------------------
@@ -28,55 +32,32 @@
 // ---------------------------------------------------------------------------
 
 import type { GamepadButtonName } from '../shared/api';
+import type { ResolvedBinding } from './bindings';
 
 /**
  * The eight switches. The names are the contract with the C enum in
  * src/ffi/emulator_api.h; the numbers behind them live there and in
  * wasm/emulator.mjs's `Button`.
- *
- * Defined in shared/api.ts rather than here, because the main process has to
- * understand the same eight names: the native gamepad helper reports them on
- * stdout. One list, so a button cannot be called something different on the
- * way through the pipe than it is in the emulator.
  */
 export type ButtonName = GamepadButtonName;
 
-/** Where a switch's state came from. */
-export type InputSource = 'keyboard' | 'gamepad';
-
 /**
- * Keyboard to button.
+ * Where a switch's state came from.
  *
- * Two full sets, because there is no single answer to "which key is A". The
- * arrows and WASD are both there so a left hand can sit on WASD while the
- * right is on J/K; Z/X mirrors the pad (left button on the left) and J/K is
- * where the right hand already is.
+ * A pad is named individually -- `pad:0`, `pad:1` -- rather than all pads
+ * sharing one source. The manager releases a source on its own, and two pads
+ * are two things that can be unplugged independently: player 2's button must
+ * not be dropped because player 1's controller ran out of battery.
  */
-export const KEY_BINDINGS: Readonly<Record<string, ButtonName>> = Object.freeze({
-    // d-pad, arrows
-    ArrowLeft: 'LEFT',
-    ArrowRight: 'RIGHT',
-    ArrowDown: 'DOWN',
-    ArrowUp: 'UP',
+export type InputSource = 'keyboard' | `pad:${number}`;
 
-    // d-pad, WASD
-    KeyA: 'LEFT',
-    KeyD: 'RIGHT',
-    KeyS: 'DOWN',
-    KeyW: 'UP',
+/** The source name for one pad. */
+export function padSource(index: number): InputSource {
+    return `pad:${index}`;
+}
 
-    // B is the left face button and A the right one, as on a real pad
-    KeyZ: 'B',
-    KeyJ: 'B',
-    KeyX: 'A',
-    KeyK: 'A',
-
-    // Start and Select
-    Enter: 'START',
-    Space: 'START',
-    Tab: 'SELECT',
-    ShiftRight: 'SELECT',
-});
+/** One key on the keyboard, and where it goes. See bindings.ts. */
+export type KeyMap = ReadonlyMap<string, ResolvedBinding>;
 
 /** Keys that do something other than press a switch. */
 export type CommandName =
@@ -97,8 +78,7 @@ export const KEY_COMMANDS: Readonly<Record<string, CommandName>> = Object.freeze
     KeyR: 'reset',
 
     // F12 is what every emulator has used for a screenshot since DOSBox, and
-    // the screenshots section is where they end up. Nothing else on the
-    // keyboard was free: every letter is a button, a save slot, or both.
+    // the screenshots section is where they end up.
     F12: 'screenshot',
 
     F1: 'save1',
@@ -128,10 +108,7 @@ export const HELD_KEY_COMMANDS: Readonly<Record<string, HeldCommandName>> = Obje
  * The same keys with Shift held mean the other direction.
  *
  * F1 saves and Shift+F1 loads, which is what every emulator has done since the
- * DOS ones and what hands already expect. Note that Shift is also bound to
- * Select: pressing Shift affects both, and that is fine, because a game reading
- * Select at the moment somebody saves is a game that was going to do something
- * odd anyway.
+ * DOS ones and what hands already expect.
  */
 export const KEY_COMMANDS_SHIFTED: Readonly<Record<string, CommandName>> = Object.freeze({
     F1: 'load1',
@@ -140,33 +117,30 @@ export const KEY_COMMANDS_SHIFTED: Readonly<Record<string, CommandName>> = Objec
 
     // Shift+F12 takes a screenshot *and* puts it on the game's card, which is
     // the difference between keeping a picture and replacing the one people
-    // see. It is Shift rather than a third key because the pattern is already
-    // here: F1 saves and Shift+F1 loads.
-    //
-    // Shift is also Select, but only the *right* Shift is bound to it (see
-    // KEY_BINDINGS), so a left-handed Shift+F12 does not press anything on
-    // the console.
+    // see.
     F12: 'screenshot-cover',
 });
 
 /**
- * The single place that decides what the eight buttons are doing.
+ * The single place that decides what the sixteen switches are doing.
  *
- * `apply` is called with the combined state, and only when it changes, so the
- * emulator is never told the same thing twice and never told something that
- * one source contradicts.
+ * `apply` is called with the combined state of one (port, switch), and only
+ * when it changes, so the emulator is never told the same thing twice and never
+ * told something that one source contradicts.
  */
 export class InputManager {
-    readonly #held = new Map<ButtonName, Set<InputSource>>();
-    readonly #apply: (button: ButtonName, pressed: boolean) => void;
+    /** Keyed by `${port}:${button}`, so the port is part of the identity. */
+    readonly #held = new Map<string, Set<InputSource>>();
+    readonly #apply: (port: number, button: ButtonName, pressed: boolean) => void;
 
-    constructor(apply: (button: ButtonName, pressed: boolean) => void) {
+    constructor(apply: (port: number, button: ButtonName, pressed: boolean) => void) {
         this.#apply = apply;
     }
 
-    /** Press or release one button for one source. */
-    set(button: ButtonName, pressed: boolean, from: InputSource): void {
-        const sources = this.#held.get(button) ?? new Set<InputSource>();
+    /** Press or release one switch on one port, for one source. */
+    set(port: number, button: ButtonName, pressed: boolean, from: InputSource): void {
+        const key = `${port}:${button}`;
+        const sources = this.#held.get(key) ?? new Set<InputSource>();
         const wasDown = sources.size > 0;
 
         if (pressed) {
@@ -177,9 +151,9 @@ export class InputManager {
 
         const isDown = sources.size > 0;
         if (isDown) {
-            this.#held.set(button, sources);
+            this.#held.set(key, sources);
         } else {
-            this.#held.delete(button);
+            this.#held.delete(key);
         }
 
         // Only when the *combined* state changed. A source letting go of a
@@ -190,7 +164,7 @@ export class InputManager {
         // both of those fall out for free, instead of being special cases
         // somebody has to remember.
         if (isDown !== wasDown) {
-            this.#apply(button, isDown);
+            this.#apply(port, button, isDown);
         }
     }
 
@@ -202,23 +176,61 @@ export class InputManager {
     releaseAll(from: InputSource): void {
         // Copy the keys first. `set` mutates the map, and a Map cannot be
         // iterated while it is being changed.
-        for (const button of [...this.#held.keys()]) {
-            this.set(button, false, from);
+        for (const key of [...this.#held.keys()]) {
+            const [port, button] = split(key);
+            this.set(port, button, false, from);
         }
     }
 
-    /** Let go of everything on every source. */
+    /** Let go of everything on every source and both ports. */
     releaseEverything(): void {
         this.#held.clear();
     }
 
-    /** What is down right now, for the status line. */
+    /**
+     * What is down right now, across both ports.
+     *
+     * The union, without saying who is holding it: the status line is a
+     * diagnostic and "A LEFT" is more readable than "1P A, 2P LEFT". The
+     * settings screen is where the per-port detail belongs, and it reads the
+     * assignments rather than the live state.
+     */
     get held(): ButtonName[] {
-        return [...this.#held.keys()];
+        const seen = new Set<ButtonName>();
+        for (const key of this.#held.keys()) {
+            seen.add(split(key)[1]);
+        }
+        return [...seen];
+    }
+
+    /** What is down on one port, for a per-player display. */
+    heldOn(port: number): ButtonName[] {
+        const seen = new Set<ButtonName>();
+        for (const key of this.#held.keys()) {
+            const [keyPort, button] = split(key);
+            if (keyPort === port) {
+                seen.add(button);
+            }
+        }
+        return [...seen];
     }
 }
 
+/** Split a `${port}:${button}` map key back into its two halves. */
+function split(key: string): [number, ButtonName] {
+    const colon = key.indexOf(':');
+    return [Number(key.slice(0, colon)), key.slice(colon + 1) as ButtonName];
+}
+
 export interface KeyboardHandlers {
+    /**
+     * The key map in force, read afresh for every event.
+     *
+     * A function rather than a map so that rebinding takes effect immediately:
+     * the listeners are installed once, at mount, and the player may change
+     * the bindings an hour later.
+     */
+    bindings: () => KeyMap;
     /** A key that does something once, when it goes down. */
     onCommand?: (command: CommandName) => void;
     /** A key that does something for as long as it is held. */
@@ -232,11 +244,18 @@ export interface KeyboardHandlers {
  * has none of those, and a front end that invents them is a front end that
  * makes one game feel wrong to fix another.
  */
-export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers = {}): () => void {
+export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers): () => void {
     // Which held commands are down, so that the browser repeating a held key --
     // which it does thirty times a second -- is reported once rather than
     // thirty times.
     const heldCommands = new Set<HeldCommandName>();
+
+    // Which binding each held key went down with. Kept so that a keyup
+    // releases exactly the switch its keydown pressed: the player may change
+    // the keyboard mode, or rebind the key, while it is still down -- and
+    // resolving the keyup against the *new* map would leave the old port's
+    // switch held forever.
+    const pressed = new Map<string, ResolvedBinding>();
 
     /**
      * Whether the key event belongs to a text field rather than the console.
@@ -257,11 +276,17 @@ export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers
             || target.tagName === 'SELECT';
     };
 
+    const bindingFor = (event: KeyboardEvent): ResolvedBinding | undefined =>
+        handlers.bindings().get(event.code);
+
     const onKeyDown = (event: KeyboardEvent): void => {
         if (isTyping(event.target)) {
             return;
         }
 
+        // Commands first, so a rebinding cannot take Escape or a function key
+        // away from the application. The two lists are kept disjoint by the
+        // settings screen anyway; this is the second lock on the same door.
         const held = HELD_KEY_COMMANDS[event.code];
         if (held !== undefined) {
             event.preventDefault();
@@ -272,20 +297,21 @@ export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers
             return;
         }
 
-        const button = KEY_BINDINGS[event.code];
-        if (button !== undefined) {
-            // Space and the arrows do things to a web page -- scrolling it --
-            // and a game screen must not scroll.
-            event.preventDefault();
-            manager.set(button, true, 'keyboard');
-            return;
-        }
-
         const command = (event.shiftKey ? KEY_COMMANDS_SHIFTED[event.code] : undefined)
             ?? KEY_COMMANDS[event.code];
         if (command !== undefined) {
             event.preventDefault();
             handlers.onCommand?.(command);
+            return;
+        }
+
+        const binding = bindingFor(event);
+        if (binding !== undefined) {
+            // Space and the arrows do things to a web page -- scrolling it --
+            // and a game screen must not scroll.
+            event.preventDefault();
+            pressed.set(event.code, binding);
+            manager.set(binding.port, binding.button, true, 'keyboard');
         }
     };
 
@@ -303,10 +329,13 @@ export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers
             return;
         }
 
-        const button = KEY_BINDINGS[event.code];
-        if (button !== undefined) {
+        // The binding it went down with, not the one in force now. See the
+        // note on `pressed` above.
+        const binding = pressed.get(event.code);
+        if (binding !== undefined) {
             event.preventDefault();
-            manager.set(button, false, 'keyboard');
+            pressed.delete(event.code);
+            manager.set(binding.port, binding.button, false, 'keyboard');
         }
     };
 
@@ -317,6 +346,7 @@ export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers
     // Only the keyboard is released. A gamepad is a different source and the
     // player may still be holding it.
     const onBlur = (): void => {
+        pressed.clear();
         manager.releaseAll('keyboard');
 
         // And anything that was being held down. Losing focus mid rewind would

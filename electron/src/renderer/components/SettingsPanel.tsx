@@ -16,7 +16,8 @@ import type { ReactNode } from 'react';
 import * as Switch from '@radix-ui/react-switch';
 import { FolderCog } from 'lucide-react';
 
-import type { Library } from '../../shared/api';
+import type { InputSettings, Library } from '../../shared/api';
+import InputPanel from './InputPanel';
 import type { EngineStatus } from '../engineStatus';
 import type { PixelScale } from '../usePixelScale';
 import { formatCycles, formatHex16 } from '../format';
@@ -26,6 +27,10 @@ interface SettingsPanelProps {
     picture: PixelScale;
     scanlines: boolean;
     onScanlines: (on: boolean) => void;
+    /** Keyboard mode, key bindings and pad assignments. */
+    input: InputSettings;
+    /** Change the input settings and remember them. */
+    onInput: (next: InputSettings) => void;
     gamepadEnabled: boolean;
     /** Whether that source is the native GameController helper rather than
      *  the browser's Gamepad API. The two fail differently, so the panel says
@@ -83,6 +88,8 @@ export default function SettingsPanel({
     picture,
     scanlines,
     onScanlines,
+    input,
+    onInput,
     gamepadEnabled,
     gamepadNative,
     library,
@@ -96,7 +103,7 @@ export default function SettingsPanel({
             <header className="panel-head">
                 <div className="panel-title">
                     <h2>设置</h2>
-                    <span className="panel-count">只读 · 除画面滤镜与游戏库外</span>
+                    <span className="panel-count">画面滤镜 · 游戏库 · 输入</span>
                 </div>
             </header>
 
@@ -167,46 +174,13 @@ export default function SettingsPanel({
                 </Group>
 
                 <Group title="输入">
-                    <Rows
-                        rows={[
-                            ['方向', '方向键 / WASD'],
-                            ['A', 'X / K'],
-                            ['B', 'Z / J'],
-                            ['Start', 'Enter / Space'],
-                            ['Select', 'Tab / 右 Shift'],
-                            ['暂停', 'Esc / P'],
-                            ['重置', 'R'],
-                            ['截图', 'F12'],
-                            ['截图并设为封面', '⇧F12'],
-                            ['倒带', '按住 Backspace'],
-                        ]}
+                    <InputPanel
+                        input={input}
+                        onInput={onInput}
+                        pads={status.gamepad.pads}
+                        gamepadEnabled={gamepadEnabled}
+                        gamepadNative={gamepadNative}
                     />
-                </Group>
-
-                <Group title="手柄">
-                    <Rows
-                        rows={[
-                            ['开关', !gamepadEnabled
-                                ? '未启用'
-                                : (gamepadNative ? '原生 GameController 助手' : '浏览器 Gamepad API')],
-                            ['状态', !gamepadEnabled
-                                ? '—'
-                                : (status.gamepad.connected ? '已连接' : '未检测到')],
-                            ['名称', status.gamepad.id === '' ? '—' : status.gamepad.id],
-                            ['布局', status.gamepad.mapping === ''
-                                ? (status.gamepad.connected ? '未知（按键位置是猜测）' : '—')
-                                : (status.gamepad.mapping === 'native'
-                                    ? 'GameController 标准布局'
-                                    : status.gamepad.mapping)],
-                        ]}
-                    />
-                    {gamepadEnabled && !status.gamepad.connected && (
-                        <p className="prose">
-                            {gamepadNative
-                                ? '原生助手已启动，但没有看到手柄。先按一下手柄上的键，确认它已配对；如果还是没有，去系统设置 → 隐私与安全性 → 输入监控，勾上本应用后重新启动。'
-                                : '手柄要用过一次才会出现在浏览器里：先按一下它上面的键。如果按了还是没有，可能是 macOS 没把设备交给本应用：系统设置 → 隐私与安全性 → 输入监控，勾上本应用后重新启动。'}
-                        </p>
-                    )}
                 </Group>
             </div>
         </section>

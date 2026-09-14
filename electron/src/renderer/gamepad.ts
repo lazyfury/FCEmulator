@@ -1,42 +1,40 @@
 // ---------------------------------------------------------------------------
-// Gamepads, through the browser's Gamepad API.
+// Gamepads.
 //
-// The second source the InputManager was built for, and the browser path's
-// twin of the native helper's mapping. It reports into the same
-// manager as the keyboard, so a button held on a pad is not released by
-// letting go of a key.
+// Two sources, one shape: the browser's Gamepad API and the native helper in
+// native/gamepad. Both end up in the same list of summaries and the same
+// InputManager, and which one is running is a decision the main process makes
+// (see FcBridge.gamepadEnabled).
 //
-// The one structural difference from the keyboard
-// ----------------------------------------------
-// The Gamepad API has no events for button changes. There is no "the A button
-// went down" callback; there is a snapshot of where every control is right
-// now, and it is your job to look. So this is polled once per animation frame,
-// which is also why it lives next to the frame loop rather than next to the
-// keyboard listeners.
+// Multiple pads
+// -------------
+// The console has two ports and Chromium hands over every connected pad, so
+// "the first pad found" is no longer the whole story. Each pad has a slot
+// (`index`) and an assignment: which port it drives, or none. The assignment
+// is a setting, because which controller is player 2 is not something the
+// application can guess -- two identical pads report the same name.
 //
-// The one thing that *is* an event is connect and disconnect, and that matters
-// more than it looks. A pad that runs out of battery mid jump must not leave
-// the jump button held forever: there is nobody left to release it.
-//
-// Mapping
-// -------
-// The standard mapping is a browser guarantee -- `gamepad.mapping` says
-// 'standard' when the browser recognises the device and has arranged the
-// buttons the way the spec says. That layout is:
-//
-//   0 south (A on an Xbox pad)   8 back / select     12 d-pad up
-//   1 east  (B)                  9 start             13 d-pad down
-//   2 west  (X)                                      14 d-pad left
-//   3 north (Y)                                      15 d-pad right
-//
-// A pad that is not standard gets the same indices anyway, which is a guess.
-// It is a guess that costs nothing when it is wrong -- the buttons simply do
-// something else -- and there is no better answer available from inside a
-// browser.
+// The one structural difference between the two sources is direction. The
+// browser source is polled, once per animation frame, because the Gamepad API
+// has no change events: there is only a snapshot of where everything is now.
+// The native helper already polls at 60Hz in its own process and only speaks
+// when something changes, so that source sits and waits to be told.
 // ---------------------------------------------------------------------------
 
-import type { GamepadReading } from '../shared/api';
-import type { ButtonName, InputManager } from './input';
+import type { GamepadReading, PadReading } from '../shared/api';
+import type { ButtonName, InputManager, InputSource } from './input';
+
+/**
+ * The source name for one pad.
+ *
+ * A copy of input.ts's `padSource`, kept here rather than imported so that
+ * this module has no runtime imports and a plain Node test can load it. The
+ * two are one line each; what matters is that both spell `pad:<index>` the
+ * same way, and that is asserted in the tests.
+ */
+function padSource(index: number): InputSource {
+    return `pad:${index}`;
+}
 
 /** How far the stick has to move before it counts as a direction. The same
  *  0.5 the native helper uses, for the same reason: a worn stick drifts, and
@@ -61,23 +59,57 @@ export interface PadState {
     axes: readonly number[];
 }
 
+/** The eight names, so a reading can be walked without trusting its key order. */
+const BUTTONS: readonly ButtonName[] = [
+    'A', 'B', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT',
+];
+
 /**
- * What the browser says about the pad, for the status line and the log.
+ * One pad, as the status line and the settings screen see it.
  *
- * `mapping` is the one that matters when a pad "does not work": `'standard'`
- * means the browser recognised the device and arranged the buttons the way the
- * spec says, which is what the indices above assume. An empty string means it
- * did not, and every button below is a guess.
+ * This is a summary rather than a reading: `id` for a person to recognise the
+ * controller, `mapping` to explain why it might do nothing, and `port` to show
+ * or change which player it drives.
  */
-export interface PadReport {
-    connected: boolean;
-    /** The browser's name for it. Empty when there is nothing connected. */
+export interface PadSummary {
+    /** The slot it was found in. */
+    index: number;
+    /** The device's name. */
     id: string;
+    /** 'standard', 'native', or '' when the browser did not recognise it. */
     mapping: string;
+    /** The port it drives, or -1 when it is ignored. */
+    port: number;
+}
+
+/** Every pad that is connected right now. */
+export interface PadsReport {
+    pads: PadSummary[];
 }
 
 /** Nothing plugged in, which is where every session starts. */
-export const NO_PAD: PadReport = { connected: false, id: '', mapping: '' };
+export const NO_PADS: PadsReport = { pads: [] };
+
+/**
+ * Whether two reports say the same thing.
+ *
+ * Used to skip a state update -- and so a React render -- on the sixty polls a
+ * second that change nothing. Compared field by field rather than by identity,
+ * because a poll builds a fresh object every frame.
+ */
+export function samePads(a: PadsReport, b: PadsReport): boolean {
+    if (a.pads.length !== b.pads.length) {
+        return false;
+    }
+    return a.pads.every((pad, position) => {
+        const other = b.pads[position];
+        return other !== undefined
+            && pad.index === other.index
+            && pad.id === other.id
+            && pad.mapping === other.mapping
+            && pad.port === other.port;
+    });
+}
 
 /**
  * Which of the console's eight switches a pad has down.
@@ -114,6 +146,24 @@ export function mapPad(pad: PadState): Record<ButtonName, boolean> {
     };
 }
 
+/** Everything this module logs goes through here, so a reader can grep for
+ *  one word and see the whole story. */
+function say(...parts: unknown[]): void {
+    console.log('gamepad:', ...parts);
+}
+
+/**
+ * A gamepad source, whichever kind. Both classes satisfy this by shape.
+ *
+ * `poll()` exists on the native source too, and does nothing: the frame loop
+ * calls it unconditionally, and a push-driven source has nothing to ask for.
+ */
+export interface GamepadInput {
+    readonly report: PadsReport;
+    poll(): void;
+    destroy(): void;
+}
+
 /**
  * How long to keep quiet before saying that nothing has turned up.
  *
@@ -124,22 +174,118 @@ export function mapPad(pad: PadState): Record<ButtonName, boolean> {
  */
 const QUIET_POLLS = 120;
 
-/** Everything this class logs goes through here, so a reader can grep for
- *  one word and see the whole story. */
-function say(...parts: unknown[]): void {
-    console.log('gamepad:', ...parts);
-}
-
-export class GamepadSource {
+/**
+ * What one pad is holding, and on which port, so that a change of assignment
+ * or a disconnection can let go of exactly that pad's switches.
+ *
+ * It is per pad rather than one set for all of them because pads are named
+ * sources in the InputManager: player 2's button must not be dropped because
+ * player 1's controller ran out of battery.
+ */
+class PadHoldings {
+    readonly #held = new Map<number, Set<ButtonName>>();
+    readonly #ports = new Map<number, number>();
     readonly #manager: InputManager;
-    #report: PadReport = NO_PAD;
-    /** What we last told the manager, so a change can be logged once. */
-    readonly #held = new Set<string>();
-    #polls = 0;
-    #saidNothing = false;
 
     constructor(manager: InputManager) {
         this.#manager = manager;
+    }
+
+    /** Which indices are currently holding something. */
+    get indices(): number[] {
+        return [...this.#held.keys()];
+    }
+
+    /** Put a pad's current switches into the manager on `port`. */
+    apply(index: number, port: number, wanted: Record<ButtonName, boolean>, log: (text: string) => void): void {
+        if (port < 0) {
+            this.release(index);
+            return;
+        }
+
+        // A pad that changed port has to let go of the old one first, or the
+        // old player would keep walking.
+        const previous = this.#ports.get(index);
+        if (previous !== undefined && previous !== port) {
+            this.release(index);
+        }
+
+        const source = padSource(index);
+        let held = this.#held.get(index);
+        if (held === undefined) {
+            held = new Set<ButtonName>();
+            this.#held.set(index, held);
+        }
+        this.#ports.set(index, port);
+
+        for (const button of BUTTONS) {
+            const on = wanted[button];
+            const was = held.has(button);
+            if (on !== was) {
+                if (on) {
+                    held.add(button);
+                } else {
+                    held.delete(button);
+                }
+                log(`${on ? 'down' : 'up  '}  pad ${index}  p${port + 1}  ${button}`);
+            }
+            this.#manager.set(port, button, on, source);
+        }
+    }
+
+    /** Let go of everything one pad was holding. */
+    release(index: number): void {
+        const held = this.#held.get(index);
+        const port = this.#ports.get(index);
+        if (held !== undefined && port !== undefined) {
+            const source = padSource(index);
+            for (const button of held) {
+                this.#manager.set(port, button, false, source);
+            }
+        }
+        this.#held.delete(index);
+        this.#ports.delete(index);
+    }
+
+    releaseAll(): void {
+        for (const index of [...this.#held.keys()]) {
+            this.release(index);
+        }
+    }
+}
+
+/** Sum up a set of pads in index order, attaching each one's port. */
+function summarise(
+    portFor: (index: number) => number,
+    pads: readonly PadReading[],
+    mapping: string,
+): PadsReport {
+    return {
+        pads: [...pads]
+            .sort((a, b) => a.index - b.index)
+            .map((pad) => ({
+                index: pad.index,
+                id: pad.id,
+                mapping,
+                port: portFor(pad.index),
+            })),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// The browser source
+// ---------------------------------------------------------------------------
+
+export class GamepadSource implements GamepadInput {
+    readonly #portFor: (index: number) => number;
+    readonly #holdings: PadHoldings;
+    #report: PadsReport = NO_PADS;
+    #polls = 0;
+    #saidNothing = false;
+
+    constructor(manager: InputManager, portFor: (index: number) => number) {
+        this.#portFor = portFor;
+        this.#holdings = new PadHoldings(manager);
 
         // A pad that was already plugged in sends no connect event when the
         // page loads, but polling finds it on the first frame regardless.
@@ -148,55 +294,77 @@ export class GamepadSource {
         window.addEventListener('gamepaddisconnected', this.#onDisconnected);
     }
 
-    /** What the browser last said, for the status line. */
-    get report(): PadReport {
+    /** What the browser last said, for the status line and the settings screen. */
+    get report(): PadsReport {
         return this.#report;
     }
 
     /** Call once per animation frame. */
     poll(): void {
         this.#polls += 1;
-        const pads = navigator.getGamepads();
 
-        // Player one is the first pad that is actually there. The console has
-        // two ports and the core supports both; nothing in the box uses the
-        // second one.
-        let pad: Gamepad | null = null;
-        for (const candidate of pads) {
+        // Chromium's list is indexed by slot, with holes. Keep the holes: the
+        // slot is what the assignment names, so pressing pads into a dense
+        // array would silently reassign somebody else's controller.
+        const present = new Map<number, Gamepad>();
+        for (const candidate of navigator.getGamepads()) {
             if (candidate !== null && candidate.connected) {
-                pad = candidate;
-                break;
+                present.set(candidate.index, candidate);
             }
         }
 
-        if (pad === null) {
-            // Nothing connected. If something was, its buttons have to be let
-            // go -- a pad that runs out of battery mid jump must not leave the
-            // jump button held forever, because there is nobody left to
-            // release it.
-            if (this.#report.connected) {
-                say(`disconnected  ${this.#report.id}`);
-                this.#manager.releaseAll('gamepad');
-                this.#held.clear();
-                this.#report = NO_PAD;
+        // A pad that has gone. Its switches are let go here, once, so a pad
+        // that runs out of battery mid jump does not leave the jump held.
+        for (const index of this.#holdings.indices) {
+            if (!present.has(index)) {
+                this.#holdings.release(index);
+                say(`disconnected  pad ${index}`);
             }
+        }
+
+        const settings = this.#portFor;
+        const mapped = new Map<number, Record<ButtonName, boolean>>();
+        const pads: PadReading[] = [];
+        for (const [index, pad] of present) {
+            const buttons = mapPad(pad);
+            mapped.set(index, buttons);
+            pads.push({ index, id: pad.id, buttons });
+        }
+        this.#report = summarise(settings, pads, '');
+
+        // Describe any pad we have not seen before, once.
+        for (const [index, pad] of present) {
+            if (this.#described.has(index)) {
+                continue;
+            }
+            say(
+                `connected     pad ${index} "${pad.id}"`,
+                `mapping=${pad.mapping === '' ? '(none)' : pad.mapping}`,
+            );
+            if (pad.mapping !== 'standard') {
+                say('              not the standard mapping: the button indices are a guess');
+            }
+        }
+        this.#described = new Set(present.keys());
+
+        for (const [index, buttons] of mapped) {
+            const port = this.#portFor(index);
+            this.#holdings.apply(index, port, buttons, (text) => say(text));
+        }
+
+        if (present.size === 0) {
             this.#sayNothingYet();
-            return;
         }
-
-        if (!this.#report.connected || this.#report.id !== pad.id) {
-            this.#describe(pad);
-        }
-
-        this.#apply(pad);
     }
+
+    /** The slots whose connect line has already been printed. */
+    #described = new Set<number>();
 
     destroy(): void {
         window.removeEventListener('gamepadconnected', this.#onConnected);
         window.removeEventListener('gamepaddisconnected', this.#onDisconnected);
-        this.#manager.releaseAll('gamepad');
-        this.#held.clear();
-        this.#report = NO_PAD;
+        this.#holdings.releaseAll();
+        this.#report = NO_PADS;
     }
 
     readonly #onConnected = (): void => {
@@ -204,30 +372,9 @@ export class GamepadSource {
     };
 
     readonly #onDisconnected = (): void => {
-        this.#manager.releaseAll('gamepad');
-        this.#held.clear();
-        this.#report = NO_PAD;
+        // poll() notices the missing pad and releases it there, which keeps
+        // the release in one place rather than in two that can drift.
     };
-
-    /**
-     * One line explaining what the browser handed over, once per pad.
-     *
-     * This is the line to look at when a pad does nothing: if it never
-     * appears, the browser is not reporting a pad at all and nothing below
-     * this point is even being reached.
-     */
-    #describe(pad: Gamepad): void {
-        this.#report = { connected: true, id: pad.id, mapping: pad.mapping };
-        say(
-            `connected     "${pad.id}"`,
-            `mapping=${pad.mapping === '' ? '(none)' : pad.mapping}`,
-            `buttons=${pad.buttons.length}`,
-            `axes=${pad.axes.length}`,
-        );
-        if (pad.mapping !== 'standard') {
-            say('              not the standard mapping: the button indices are a guess');
-        }
-    }
 
     /** The one-off note that two seconds have gone by with nothing there. */
     #sayNothingYet(): void {
@@ -245,82 +392,35 @@ export class GamepadSource {
         say('     Security → Input Monitoring, tick Electron (or this application),');
         say('     then quit and start it again -- macOS reads that list at launch.');
     }
-
-    #apply(pad: Gamepad): void {
-        const wanted = mapPad(pad);
-        for (const [button, on] of Object.entries(wanted)) {
-            // The index as well as the name: if the mapping was not standard,
-            // the name is this build's guess and the index is the fact.
-            const index = PAD_INDICES[button as ButtonName];
-            const was = this.#held.has(button);
-            if (on !== was) {
-                if (on) {
-                    this.#held.add(button);
-                } else {
-                    this.#held.delete(button);
-                }
-                say(`${on ? 'down' : 'up  '}          ${button} (index ${index})`);
-            }
-            this.#manager.set(button as ButtonName, on, 'gamepad');
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
 // The native helper, from the renderer's side
-//
-// Same job as `GamepadSource` and the same destination -- one InputManager
-// shared with the keyboard -- but fed the other way round. The browser source
-// is polled: the Gamepad API has no change events, so every animation frame
-// asks "where is everything now". The native helper already does that polling
-// in its own process and only speaks when something changes, so here the
-// renderer sits and waits to be told.
-//
-// That difference is the entire reason `gamepadNative` exists on the bridge.
-// A source that is polled and a source that is pushed need different code, and
-// pretending otherwise would mean polling an IPC channel sixty times a second
-// to hear what we were already told.
 // ---------------------------------------------------------------------------
 
-/** The eight names, so a reading can be walked without trusting its key order. */
-const NATIVE_BUTTONS: readonly ButtonName[] = [
-    'A', 'B', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT',
-];
-
-/**
- * A gamepad source, whichever kind. Both classes satisfy this by shape.
- *
- * `poll()` exists on the native source too, and does nothing: the frame loop
- * calls it unconditionally, and a push-driven source has nothing to ask for.
- */
-export interface GamepadInput {
-    readonly report: PadReport;
-    poll(): void;
-    destroy(): void;
-}
-
 export class NativeGamepadSource implements GamepadInput {
-    readonly #manager: InputManager;
-    #report: PadReport = NO_PAD;
-    /** What we last told the manager, so a change can be logged once. */
-    readonly #held = new Set<ButtonName>();
+    readonly #portFor: (index: number) => number;
+    readonly #holdings: PadHoldings;
+    #report: PadsReport = NO_PADS;
+    /** The pads the last reading described, so a connect can be logged once. */
+    #known = new Set<number>();
 
-    constructor(manager: InputManager) {
-        this.#manager = manager;
+    constructor(manager: InputManager, portFor: (index: number) => number) {
+        this.#portFor = portFor;
+        this.#holdings = new PadHoldings(manager);
 
         // Ask first, then listen. The helper may already have a reading from
         // before this page existed -- a pad that was connected while the
         // window was loading -- and a change-only push would never repeat it.
-        // The two can race, which is harmless: #apply is idempotent, and the
-        // same reading twice costs nothing (see InputManager.set, which only
-        // reports a change when the *combined* state changes).
+        // The two can race, which is harmless: applying a reading is
+        // idempotent.
         window.fc.onGamepadState((reading: GamepadReading) => this.#apply(reading));
         void window.fc.getGamepadState()
             .then((reading: GamepadReading) => this.#apply(reading))
             .catch(() => undefined);
     }
 
-    get report(): PadReport {
+    get report(): PadsReport {
         return this.#report;
     }
 
@@ -331,46 +431,33 @@ export class NativeGamepadSource implements GamepadInput {
 
     destroy(): void {
         window.fc.offGamepadState();
-        this.#release();
-        this.#report = NO_PAD;
-    }
-
-    /** Let go of every switch this source is holding, and only this source. */
-    #release(): void {
-        this.#manager.releaseAll('gamepad');
-        this.#held.clear();
+        this.#holdings.releaseAll();
+        this.#report = NO_PADS;
     }
 
     #apply(reading: GamepadReading): void {
-        if (!reading.connected) {
-            // A pad that ran out of battery mid jump must not leave the jump
-            // button held. There is nobody left to release it, so it is
-            // released here, once, when the disconnection is heard.
-            if (this.#report.connected) {
-                say(`disconnected  ${this.#report.id}`);
-                this.#release();
-                this.#report = NO_PAD;
+        const settings = this.#portFor;
+        const present = new Set(reading.pads.map((pad) => pad.index));
+
+        // Pads that have gone.
+        for (const index of this.#holdings.indices) {
+            if (!present.has(index)) {
+                this.#holdings.release(index);
             }
-            return;
         }
 
-        if (!this.#report.connected || this.#report.id !== reading.id) {
-            this.#report = { connected: true, id: reading.id, mapping: 'native' };
-            say(`connected     "${reading.id}" (native, GameController)`);
+        for (const pad of reading.pads) {
+            if (!this.#known.has(pad.index)) {
+                say(`connected     pad ${pad.index} "${pad.id}" (native, GameController)`);
+            }
+            const port = this.#portFor(pad.index);
+            this.#holdings.apply(pad.index, port, pad.buttons, (text) => say(text));
         }
 
-        for (const button of NATIVE_BUTTONS) {
-            const on = reading.buttons[button] === true;
-            const was = this.#held.has(button);
-            if (on !== was) {
-                if (on) {
-                    this.#held.add(button);
-                } else {
-                    this.#held.delete(button);
-                }
-                say(`${on ? 'down' : 'up  '}          ${button}`);
-            }
-            this.#manager.set(button, on, 'gamepad');
-        }
+        this.#known = present;
+        this.#report = summarise(settings, reading.pads, 'native');
     }
 }
+
+/** The eight names, exported so the status code can walk a reading. */
+export const PAD_BUTTON_NAMES = BUTTONS;

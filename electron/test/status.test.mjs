@@ -20,7 +20,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { INITIAL_STATUS, unloaded } from '../src/renderer/engineStatus.ts';
-import { NO_PAD } from '../src/renderer/gamepad.ts';
+import { NO_PADS } from '../src/renderer/gamepad.ts';
 
 /** A machine that is running a game and has been for a while. */
 function playing() {
@@ -93,7 +93,7 @@ test('the empty gamepad report is one value, written twice', () => {
     // engineStatus.ts cannot import it -- see the note at the top of that file
     // -- so it is written out there and this is what keeps the two copies
     // honest.
-    assert.deepEqual(INITIAL_STATUS.gamepad, NO_PAD);
+    assert.deepEqual(INITIAL_STATUS.gamepad, NO_PADS);
 });
 
 test('a halted cartridge is over when it is taken out', () => {

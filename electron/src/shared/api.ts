@@ -60,6 +60,9 @@ export const IpcChannel = {
     /** Delete a screenshot: its file, and its row. */
     RemoveScreenshot: 'fc:remove-screenshot',
 
+    /** Rewrite the input settings: keyboard mode, bindings, pad assignment. */
+    WriteInputSettings: 'fc:write-input-settings',
+
     /** The window preferences: scanline overlay, middle column width. */
     ReadPreferences: 'fc:read-preferences',
 
@@ -149,30 +152,78 @@ export type GamepadButtonName =
     | 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 
 /**
- * What a real gamepad is doing right now, in the console's terms.
+ * One physical pad, as the helper or the browser sees it.
  *
- * One of these crosses the IPC boundary every time something changes, and not
- * once per frame: a reading that is the same as the last one is filtered out
- * by the main process before it is sent. Sixty no-op messages a second to say
- * "still nothing" would be sixty chances for the renderer to be a frame behind
- * for no reason.
+ * `index` is the slot it was found in, which is what the settings screen
+ * lists and what a player assignment names. It is stable for as long as the
+ * pad stays connected, and it is the only handle there is: two identical
+ * controllers report the same `id`, so the name cannot identify one.
  */
-export interface GamepadReading {
-    connected: boolean;
-    /** The framework's name for the pad, empty when nothing is connected. */
+export interface PadReading {
+    index: number;
+    /** The framework's or browser's name for the pad. */
     id: string;
-    /** Which of the eight are down. All false when nothing is connected. */
+    /** Which of the eight are down. */
     buttons: Record<GamepadButtonName, boolean>;
 }
 
+/**
+ * Every pad that is connected right now.
+ *
+ * A list rather than one pad, because the console has two ports and two
+ * players may each want a controller. One of these crosses the IPC boundary
+ * every time the list changes, and not once per frame: a reading that is the
+ * same as the last one is filtered out by the main process before it is sent.
+ */
+export interface GamepadReading {
+    pads: PadReading[];
+}
+
 /** Nothing plugged in, which is where every session starts. */
-export const NO_GAMEPAD_READING: GamepadReading = {
-    connected: false,
-    id: '',
-    buttons: {
-        A: false, B: false, SELECT: false, START: false,
-        UP: false, DOWN: false, LEFT: false, RIGHT: false,
-    },
+export const NO_GAMEPAD_READING: GamepadReading = { pads: [] };
+
+/**
+ * One key on the keyboard, and where it goes.
+ *
+ * `code` is a `KeyboardEvent.code` -- the physical key, not the character it
+ * produces -- so the same binding works on an AZERTY keyboard. `port` is the
+ * console's controller port: 0 is player 1, 1 is player 2.
+ */
+export interface KeyBinding {
+    code: string;
+    port: number;
+    button: GamepadButtonName;
+}
+
+/**
+ * How the keyboard and the pads are wired to the console's two ports.
+ *
+ * The keyboard can be one player or two. As one, every key drives the same
+ * port -- so the arrows and WASD are the same person, which is what a single
+ * player expects. As two, the keys keep their own ports and the usual split
+ * puts WASD on player 1 and the arrows on player 2.
+ */
+export interface InputSettings {
+    /** Whether the keyboard is one player or two. */
+    keyboard: '1p' | '2p';
+    /** In '1p' mode, the port the keyboard drives. Ignored in '2p'. */
+    keyboardPlayer: number;
+    /** The bindings, or null for the built-in defaults. */
+    bindings: KeyBinding[] | null;
+    /**
+     * Which port each connected pad drives, by pad index. `-1` means the pad
+     * is ignored. A missing entry falls back to the index: pad 0 to player 1,
+     * pad 1 to player 2, everything after that unused.
+     */
+    padPorts: number[];
+}
+
+/** Everything at its default, which is also what a fresh config file means. */
+export const DEFAULT_INPUT_SETTINGS: InputSettings = {
+    keyboard: '1p',
+    keyboardPlayer: 0,
+    bindings: null,
+    padPorts: [],
 };
 
 /** The host the `app://` protocol serves library files under. */
@@ -210,6 +261,8 @@ export interface Preferences {
     scanlines: boolean;
     /** Middle column width in CSS pixels, or null when it has never been set. */
     panelWidth: number | null;
+    /** How the keyboard and the pads are wired to the two ports. */
+    input: InputSettings;
 }
 
 /** Which preference a write is about. */
@@ -399,6 +452,16 @@ export interface FcBridge {
      * business. A failure to write is logged there, not thrown here.
      */
     setPreference(name: PreferenceName, value: PreferenceValue): Promise<void>;
+
+    /**
+     * Replace the whole input configuration.
+     *
+     * One verb for the whole object rather than a field at a time, because
+     * the parts are read together: a rebinding is only meaningful with the
+     * keyboard mode it was made under, and two writes would leave a window
+     * where the file holds half of one configuration and half of another.
+     */
+    saveInputSettings(settings: InputSettings): Promise<void>;
 
     /**
      * Say which cartridge is in the slot.

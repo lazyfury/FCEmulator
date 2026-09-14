@@ -74,21 +74,28 @@ function gamepadLabel(status: EngineStatus, enabled: boolean): string {
     if (!enabled) {
         return '手柄未启用';
     }
-    return status.gamepad.connected ? '手柄已连接' : '手柄未检测到';
+    const count = status.gamepad.pads.length;
+    if (count === 0) {
+        return '手柄未检测到';
+    }
+    return count === 1 ? '手柄已连接' : `手柄 ${count} 个`;
 }
 
-/** The device name, or the reason there is none. */
+/** The device names, or the reason there are none. */
 function gamepadDetail(status: EngineStatus, enabled: boolean, native: boolean): string {
     if (!enabled) {
         return '没有手柄来源在运行';
     }
-    if (!status.gamepad.connected) {
+    const pads = status.gamepad.pads;
+    if (pads.length === 0) {
         return native
             ? '原生 GameController 助手已启动，但未检测到手柄'
             : '浏览器 Gamepad API 已启动，但未检测到手柄';
     }
-    const path = native ? 'native' : status.gamepad.mapping || 'browser';
-    return `${status.gamepad.id} · ${path}`;
+    const path = native ? 'native' : 'browser';
+    return pads
+        .map((pad) => `#${pad.index} ${pad.id} · ${pad.port < 0 ? '未分配' : `玩家 ${pad.port + 1}`} · ${path}`)
+        .join('；');
 }
 
 /** The detailed audio readout the right hand group has always shown. */
@@ -163,7 +170,7 @@ export default function StatusBar({ status, gamepadEnabled, gamepadNative }: Sta
                     {audioIsReady(status) ? <Volume2 size={13} /> : <VolumeX size={13} />}
                 </Device>
                 <Device
-                    on={gamepadEnabled && status.gamepad.connected}
+                    on={gamepadEnabled && status.gamepad.pads.length > 0}
                     label={gamepadLabel(status, gamepadEnabled)}
                     detail={gamepadDetail(status, gamepadEnabled, gamepadNative)}
                 >

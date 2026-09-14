@@ -28,40 +28,43 @@ a pipe. Chromium never touches HID, and closing the window works.
 
 ## The protocol
 
-One JSON object per line on **stdout**, flushed per line. Three message kinds.
+One JSON object per line on **stdout**, flushed per line. Two message kinds.
 
 ### `hello`
 
 ```json
-{"type":"hello","version":1,"pid":84213}
+{"type":"hello","version":2,"pid":84213}
 ```
 
 Once, at startup. Its arrival is the only proof the helper is alive, which is
 worth having when a pad "does not work".
 
-### `pad` — connected, or changed
+### `pads` — the whole list, whenever it changes
 
 ```json
-{"type":"pad","connected":true,"id":"Xbox Wireless Controller Xbox One",
- "buttons":{"A":false,"B":true,"SELECT":false,"START":false,
-            "UP":false,"DOWN":false,"LEFT":false,"RIGHT":false}}
+{"type":"pads","pads":[
+  {"index":0,"id":"Xbox Wireless Controller Xbox One",
+   "buttons":{"A":false,"B":true,"SELECT":false,"START":false,
+              "UP":false,"DOWN":false,"LEFT":false,"RIGHT":false}},
+  {"index":1,"id":"DualSense Wireless Controller","buttons":{...}}]}
 ```
 
-On connect, and then **only when a button changes**. The helper polls at 60Hz,
+On connect, and then **only when something changes**. The helper polls at 60Hz,
 but a steady stream of "nothing changed" would be noise for the reader to
 parse, so it is filtered here. The reader (`src/main/gamepad.ts`) filters
-against the last reading once more, so the renderer hears each change exactly
+against the last list once more, so the renderer hears each change exactly
 once.
 
-### `pad` — disconnected
+The whole list is sent rather than one pad at a time, because the list is what
+the renderer draws and what a disconnection is measured against: "pad 1 is
+gone" is only meaningful next to "pads 0 and 2 are still here". A pad that
+disappears has to be reported, or its buttons stay held forever -- there is
+nobody left to release them.
 
-```json
-{"type":"pad","connected":false}
-```
-
-When the pad goes away — unplugged, out of battery, out of range. A pad that
-disappears must say so, or the jump button stays held forever: there is nobody
-left to release it.
+`index` is a **slot**, not a device: it is what the settings screen offers as
+"player 1" or "player 2", and it is the only name a pad has, because two
+identical controllers report the same `id`. A pad keeps its slot while it stays
+connected, and the lowest free slot is reused after it goes.
 
 ## The mapping
 
@@ -92,7 +95,7 @@ program was written to avoid.
 ## Reading it yourself
 
 ```bash
-# prints "hello" and one "pad" line, then exits when the 3 seconds are up
+# prints "hello" and one "pads" line, then exits when the 3 seconds are up
 (sleep 3) | native/bin/fc-gamepad
 ```
 

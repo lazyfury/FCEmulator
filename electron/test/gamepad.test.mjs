@@ -91,17 +91,17 @@ test('a pad reports into the input manager once per change', () => {
     // other. This is the same pad read twice, which is what polling does
     // sixty times a second, and it must not produce sixty events.
     const calls = [];
-    const manager = new InputManager((button, pressed) => calls.push([button, pressed]));
+    const manager = new InputManager((port, button, pressed) => calls.push([port, button, pressed]));
 
     const state = mapPad(pad({ buttons: { [PAD_INDICES.A]: true } }));
     for (const [button, on] of Object.entries(state)) {
-        manager.set(button, on, 'gamepad');
+        manager.set(0, button, on, 'pad:0');
     }
     for (const [button, on] of Object.entries(state)) {
-        manager.set(button, on, 'gamepad');
+        manager.set(0, button, on, 'pad:0');
     }
 
-    assert.deepEqual(calls, [['A', true]]);
+    assert.deepEqual(calls, [[0, 'A', true]]);
     assert.deepEqual(manager.held, ['A']);
 });
 
@@ -117,63 +117,81 @@ test('a pad reports into the input manager once per change', () => {
 //   pnpm test
 // ---------------------------------------------------------------------------
 
+/** One pads line, as the helper would write it. */
+function line(pads) {
+    return JSON.stringify({ type: 'pads', pads });
+}
+
 test('the hello line is not a reading', () => {
-    assert.equal(parseGamepadLine('{"pid":42,"type":"hello","version":1}'), null);
+    assert.equal(parseGamepadLine('{"pid":42,"type":"hello","version":2}'), null);
 });
 
 test('anything that is not JSON is dropped, not guessed at', () => {
     assert.equal(parseGamepadLine(''), null);
     assert.equal(parseGamepadLine('Swift runtime warning'), null);
-    assert.equal(parseGamepadLine('{"type":"pad"oops}'), null);
+    assert.equal(parseGamepadLine('{"type":"pads"oops}'), null);
     assert.equal(parseGamepadLine('null'), null);
     assert.equal(parseGamepadLine('[]'), null);
 });
 
-test('a pad line carries exactly the eight switches', () => {
-    const reading = parseGamepadLine(JSON.stringify({
-        type: 'pad',
-        connected: true,
-        id: 'Xbox Wireless Controller',
-        buttons: { A: true, START: true },
-    }));
+test('a pads line carries exactly the eight switches per pad', () => {
+    const reading = parseGamepadLine(line([
+        { index: 0, id: 'Xbox Wireless Controller', buttons: { A: true, START: true } },
+    ]));
 
-    assert.equal(reading.connected, true);
-    assert.equal(reading.id, 'Xbox Wireless Controller');
+    assert.equal(reading.pads.length, 1);
+    assert.equal(reading.pads[0].index, 0);
+    assert.equal(reading.pads[0].id, 'Xbox Wireless Controller');
     assert.deepEqual(
-        Object.keys(reading.buttons).sort(),
+        Object.keys(reading.pads[0].buttons).sort(),
         [...GAMEPAD_BUTTONS].sort(),
     );
-    assert.deepEqual(
-        down(reading.buttons),
-        ['A', 'START'],
-    );
+    assert.deepEqual(down(reading.pads[0].buttons), ['A', 'START']);
+});
+
+test('two pads are two readings in one message', () => {
+    const reading = parseGamepadLine(line([
+        { index: 0, id: 'pad A', buttons: { A: true } },
+        { index: 1, id: 'pad B', buttons: { B: true } },
+    ]));
+
+    assert.deepEqual(reading.pads.map((pad) => pad.index), [0, 1]);
+    assert.deepEqual(down(reading.pads[0].buttons), ['A']);
+    assert.deepEqual(down(reading.pads[1].buttons), ['B']);
 });
 
 test('a button that is missing or not true is not pressed', () => {
     // The helper always writes all eight, but a reader that treats a missing
     // key as "pressed" is one that sticks a button down for the rest of the
     // session. Exact true, or nothing.
-    const reading = parseGamepadLine(JSON.stringify({
-        type: 'pad',
-        connected: true,
-        buttons: { A: 1, B: 'true', LEFT: null, RIGHT: false },
-    }));
-    assert.deepEqual(down(reading.buttons), []);
+    const reading = parseGamepadLine(line([
+        { index: 0, buttons: { A: 1, B: 'true', LEFT: null, RIGHT: false } },
+    ]));
+    assert.deepEqual(down(reading.pads[0].buttons), []);
 });
 
-test('a disconnected pad is a reading, and an important one', () => {
-    // It is how a pad that ran out of battery gets let go of. Dropping the
-    // line would leave the jump button held forever.
-    const reading = parseGamepadLine('{"type":"pad","connected":false}');
+test('an empty pads list is a reading', () => {
+    // It is how the last pad going away gets let go of. Dropping the line
+    // would leave the jump button held forever.
+    const reading = parseGamepadLine(line([]));
     assert.notEqual(reading, null);
-    assert.equal(reading.connected, false);
-    assert.deepEqual(down(reading.buttons), []);
+    assert.deepEqual(reading.pads, []);
+});
+
+test('a pad with no slot is dropped, not guessed at', () => {
+    // The index is the pad's only name: two identical controllers report the
+    // same id, so a pad with no index could be listed and could not be
+    // assigned or released.
+    const reading = parseGamepadLine(line([
+        { id: 'no slot', buttons: { A: true } },
+        { index: 2, id: 'has a slot', buttons: { A: true } },
+    ]));
+    assert.deepEqual(reading.pads.map((pad) => pad.index), [2]);
 });
 
 test('a nameless pad is still a pad', () => {
-    const reading = parseGamepadLine('{"type":"pad","connected":true}');
-    assert.equal(reading.connected, true);
-    assert.equal(reading.id, 'Gamepad');
+    const reading = parseGamepadLine(line([{ index: 0 }]));
+    assert.equal(reading.pads[0].id, 'Gamepad');
 });
 
 test('the empty reading is one value, written twice', () => {
@@ -184,15 +202,22 @@ test('the empty reading is one value, written twice', () => {
     assert.deepEqual(EMPTY_READING, NO_GAMEPAD_READING);
 });
 
-test('sameReading notices a button, a name, and a connection', () => {
-    const idle = parseGamepadLine('{"type":"pad","connected":true,"id":"pad A"}');
+test('sameReading notices a button, a name, a slot and a count', () => {
+    const idle = parseGamepadLine(line([{ index: 0, id: 'pad A' }]));
     assert.equal(sameReading(idle, idle), true);
     assert.equal(sameReading(idle, parseGamepadLine(
-        '{"type":"pad","connected":true,"id":"pad A","buttons":{"A":true}}',
+        line([{ index: 0, id: 'pad A', buttons: { A: true } }]),
     )), false);
     assert.equal(sameReading(idle, parseGamepadLine(
-        '{"type":"pad","connected":true,"id":"pad B"}',
+        line([{ index: 0, id: 'pad B' }]),
     )), false);
+    assert.equal(sameReading(idle, parseGamepadLine(
+        line([{ index: 1, id: 'pad A' }]),
+    )), false);
+    assert.equal(sameReading(idle, parseGamepadLine(line([
+        { index: 0, id: 'pad A' },
+        { index: 1, id: 'pad B' },
+    ]))), false);
     assert.equal(sameReading(idle, EMPTY_READING), false);
 });
 

@@ -1,29 +1,33 @@
 // ---------------------------------------------------------------------------
-// fc-gamepad -- the console's controller port, read from a real pad.
+// fc-gamepad -- the console's controller ports, read from real pads.
 //
-// One job: turn whatever a player is holding into the eight switches of an NES
-// controller, and say so on stdout. It knows nothing about the emulator, the
-// Electron process, or what a button press does; it only reports.
+// One job: turn whatever the players are holding into the eight switches of an
+// NES controller each, and say so on stdout. It knows nothing about the
+// emulator, the Electron process, or what a button press does; it only reports.
 //
 // The output is JSON Lines -- one object per line, flushed immediately, so a
-// reader on the other end can parse it with a loop and a `JSON.parse`. The
-// three messages are:
+// reader on the other end can parse it with a loop and a `JSON.parse`. The two
+// messages are:
 //
-//   {"type":"hello","version":1,"pid":1234}
+//   {"type":"hello","version":2,"pid":1234}
 //       Once, at startup. Its arrival is the only proof the helper is alive,
 //       which is worth having when a pad "does not work".
 //
-//   {"type":"pad","connected":true,"id":"Xbox Wireless Controller","buttons":{
-//        "A":true,"B":false,"SELECT":false,"START":false,
-//        "UP":false,"DOWN":false,"LEFT":false,"RIGHT":false}}
+//   {"type":"pads","pads":[
+//        {"index":0,"id":"Xbox Wireless Controller","buttons":{
+//             "A":true,"B":false,"SELECT":false,"START":false,
+//             "UP":false,"DOWN":false,"LEFT":false,"RIGHT":false}},
+//        {"index":1,"id":"DualSense Wireless Controller","buttons":{...}}]}
 //       On connect, and then only when something changes. Polling happens at
 //       60Hz, but a steady stream of "nothing changed" would be noise on a
-//       pipe that the other end has to parse, so it is filtered here.
+//       pipe that the other end has to parse, so it is filtered here. The
+//       whole list is sent, not one pad at a time, because the list is what
+//       the renderer draws and what a disconnection is measured against.
 //
-//   {"type":"pad","connected":false}
-//       When the pad goes away -- unplugged, out of battery, out of range. A
-//       pad that disappears must say so, or the jump button stays held
-//       forever: there is nobody left to release it.
+// `index` is a slot, not a device: it is what the settings screen offers as
+// "player 1" or "player 2", and it is the only name a pad has, because two
+// identical controllers report the same `id`. A pad keeps its slot while it
+// stays connected, and the lowest free slot is reused after it goes.
 //
 // The mapping is the console's, not the framework's, and it is deliberately
 // the same eight switches the renderer's browser GamepadSource produces, so a
@@ -70,26 +74,28 @@ private func emit(_ object: [String: Any]) {
     FileHandle.standardOutput.write(line)
 }
 
-/// What a pad is doing right now, in the console's terms.
+/// What one pad is doing right now, in the console's terms.
 ///
-/// This is a `struct` and not just a dictionary so that "has anything changed"
-/// is a value comparison rather than a hand-written field-by-field check that
+/// A `struct` and not just a dictionary so that "has anything changed" is a
+/// value comparison rather than a hand-written field-by-field check that
 /// somebody will eventually forget to extend.
-private struct Reading: Equatable {
-    var connected: Bool
+private struct PadReading: Equatable {
+    var index: Int
     var identifier: String
     var buttons: [String: Bool]
-
-    static let gone = Reading(connected: false, identifier: "", buttons: allReleased())
 }
 
-/// Reads the first pad it can find, and reports the changes.
+/// Reads every pad it can find, and reports the changes.
 ///
-/// One pad, because the console's player one is on port 0 and the core's second
-/// port is unused by every game in the box. A second pad would be the same code
-/// with a controller index, and it is not here because nothing would test it.
+/// Every pad, not just the first: the console has two controller ports and two
+/// players may each want a controller. The renderer decides which slot drives
+/// which port; this only says what is there.
 private final class PadReporter {
-    private var last = Reading.gone
+    private var last: [PadReading] = []
+    /// Which slot each controller was given. Keyed by object identity because
+    /// two identical pads have the same name and nothing else to tell them
+    /// apart.
+    private var slots: [ObjectIdentifier: Int] = [:]
     private var discoveryStarted = false
 
     func poll() {
@@ -105,32 +111,59 @@ private final class PadReporter {
 
         // Already-connected pads and newly-connected ones both appear here;
         // the framework keeps the list current.
-        guard let controller = GCController.controllers().first,
-              let buttons = read(controller)
-        else {
-            if last.connected {
-                // The pad went away. Let go of everything, loudly.
-                last = .gone
-                emit(["type": "pad", "connected": false])
+        var present = Set<ObjectIdentifier>()
+        var readings: [PadReading] = []
+
+        for controller in GCController.controllers() {
+            guard let buttons = read(controller) else {
+                // A steering wheel or a flight stick has no mapping onto an
+                // NES controller. Ignoring it is the honest answer.
+                continue
             }
-            return
+            let key = ObjectIdentifier(controller)
+            present.insert(key)
+            readings.append(PadReading(
+                index: slot(for: key),
+                identifier: describe(controller),
+                buttons: buttons
+            ))
         }
 
-        let current = Reading(
-            connected: true,
-            identifier: describe(controller),
-            buttons: buttons
-        )
-        guard current != last else {
+        // Slots are released when a pad goes, so the number can be reused and
+        // the list does not grow a hole per unplugging.
+        for key in Array(slots.keys) where !present.contains(key) {
+            slots.removeValue(forKey: key)
+        }
+
+        readings.sort { $0.index < $1.index }
+        guard readings != last else {
             return
         }
-        last = current
+        last = readings
         emit([
-            "type": "pad",
-            "connected": true,
-            "id": current.identifier,
-            "buttons": current.buttons,
+            "type": "pads",
+            "pads": readings.map { reading in
+                [
+                    "index": reading.index,
+                    "id": reading.identifier,
+                    "buttons": reading.buttons,
+                ]
+            },
         ])
+    }
+
+    /// The lowest free slot, kept for as long as the pad stays connected.
+    private func slot(for key: ObjectIdentifier) -> Int {
+        if let existing = slots[key] {
+            return existing
+        }
+        let used = Set(slots.values)
+        var candidate = 0
+        while used.contains(candidate) {
+            candidate += 1
+        }
+        slots[key] = candidate
+        return candidate
     }
 
     /// What to call this pad in the log and on the settings screen.
@@ -201,7 +234,7 @@ private final class PadReporter {
 // Life
 // ---------------------------------------------------------------------------
 
-emit(["type": "hello", "version": 1, "pid": ProcessInfo.processInfo.processIdentifier])
+emit(["type": "hello", "version": 2, "pid": ProcessInfo.processInfo.processIdentifier])
 
 // stdin is a watchdog. The parent keeps it open for as long as it wants the
 // helper to live; when it exits, the pipe closes and this read returns nil.

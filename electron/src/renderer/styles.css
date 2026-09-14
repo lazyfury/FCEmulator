@@ -1010,6 +1010,168 @@ kbd,
     overflow-wrap: anywhere;
 }
 
+/* ---------------------------------------------------------------------------
+   Input settings
+
+   A segmented control (a few values, one chosen), a key cap that is a button,
+   and a per-player tag. The key cap is the one worth looking at: it has to
+   read as something you press while being a button in a panel, so it borrows
+   the shape of a key and keeps a button's focus ring.
+   --------------------------------------------------------------------------- */
+
+.setting-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 9px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--panel-alt);
+    font-size: 12px;
+}
+
+.setting-label {
+    flex: none;
+    min-width: 4.5em;
+    color: var(--text-dim);
+}
+
+.segmented {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+}
+
+.segment {
+    padding: 3px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+
+.segment:hover {
+    color: var(--text);
+}
+
+.segment-on {
+    background: var(--hover);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+}
+
+.binding-list {
+    margin: 0 0 9px;
+}
+
+.binding-row {
+    align-items: center;
+}
+
+.binding-row dt {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.binding-row dd {
+    text-align: right;
+}
+
+.port-tag {
+    display: inline-block;
+    min-width: 2.1em;
+    padding: 1px 5px;
+    border-radius: 5px;
+    border: 1px solid currentColor;
+    font-size: 10px;
+    text-align: center;
+}
+
+.port-0 {
+    color: var(--accent);
+}
+
+.port-1 {
+    color: var(--amber);
+}
+
+.keycap {
+    min-width: 3.4em;
+    padding: 2px 8px;
+    border: 1px solid var(--border-strong);
+    border-bottom-width: 2px;
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    cursor: pointer;
+}
+
+.keycap:hover {
+    border-color: var(--accent);
+}
+
+.keycap-capturing {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.pad-list {
+    list-style: none;
+    margin: 9px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.pad-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--panel-alt);
+    font-size: 12px;
+}
+
+.pad-name {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.pad-slot {
+    color: var(--text-faint);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+}
+
+.pad-id {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pad-warn {
+    flex: none;
+    font-size: 10.5px;
+    color: var(--amber);
+}
+
 .switch-row {
     display: flex;
     align-items: center;

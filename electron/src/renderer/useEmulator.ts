@@ -34,8 +34,13 @@ import { Button, Emulator } from '@wasm';
 
 import { AudioOutput } from './audio/output';
 import { bootLog } from '../shared/boot';
+import { DEFAULT_INPUT_SETTINGS, type InputSettings } from '../shared/api';
+import { resolveBindings, padPort } from './bindings';
 import { INITIAL_STATUS, unloaded, type EngineStatus } from './engineStatus';
-import { GamepadSource, NativeGamepadSource, NO_PAD, type GamepadInput, type PadReport } from './gamepad';
+import {
+    GamepadSource, NativeGamepadSource, NO_PADS, samePads,
+    type GamepadInput,
+} from './gamepad';
 import { attachKeyboard, InputManager, type ButtonName, type CommandName } from './input';
 import { Rewind } from './rewind';
 
@@ -75,6 +80,14 @@ export interface EmulatorHandle {
 
 /** Things the loop has to report to somebody else. */
 export interface EmulatorHandlers {
+    /**
+     * The input settings in force: keyboard mode, bindings, pad assignments.
+     *
+     * Read at every key event and every frame rather than captured, so a
+     * rebinding made in the settings screen takes effect without rebuilding
+     * the listeners or the machine.
+     */
+    input?: InputSettings;
     /**
      * A PNG of the picture, when the player takes a screenshot.
      *
@@ -135,9 +148,6 @@ export function useEmulator(
         let detachKeyboard: (() => void) | null = null;
         let commandHandler: ((command: CommandName) => void) | null = null;
         let gamepad: GamepadInput | null = null;
-        // The pad report the screen is currently showing, so that a poll that
-        // says the same thing as the last one costs no render.
-        let seenPad: PadReport = NO_PAD;
         let rewind: Rewind | null = null;
         // The flash message's timeout lives out here because the cleanup has
         // to be able to cancel it.
@@ -156,16 +166,24 @@ export function useEmulator(
         // loop state still lives in start().
         let nextFrameTime = performance.now() / 1000;
         let rewinding = false;
-        let engineApply: ((button: ButtonName, pressed: boolean) => void) | null = null;
+        let engineApply: ((port: number, button: ButtonName, pressed: boolean) => void) | null = null;
 
-        // One manager for every input source. The keyboard reports into it,
-        // and so does the pad, and the console will only ever see the combined
-        // state. See input.ts for why that indirection is not optional.
-        const manager = new InputManager((button, pressed) => {
-            engineApply?.(button, pressed);
+        // The settings in force, read afresh each time they are needed. The
+        // listeners and the machine are built once; what a key does may change
+        // an hour later.
+        const inputSettings = (): InputSettings =>
+            outward.current.input ?? DEFAULT_INPUT_SETTINGS;
+
+        // One manager for every input source and both ports. The keyboard
+        // reports into it, and so does every pad, and the console will only
+        // ever see the combined state. See input.ts for why that indirection
+        // is not optional.
+        const manager = new InputManager((port, button, pressed) => {
+            engineApply?.(port, button, pressed);
         });
 
         detachKeyboard = attachKeyboard(manager, {
+            bindings: () => resolveBindings(inputSettings()),
             onCommand: (command) => commandHandler?.(command),
             onCommandState: (command, held) => {
                 if (command === 'rewind') {
@@ -193,13 +211,53 @@ export function useEmulator(
         // and a source that started and found nothing, both produce no
         // `gamepad:` lines at all.
         if (window.fc.gamepadNative) {
-            gamepad = new NativeGamepadSource(manager);
+            gamepad = new NativeGamepadSource(manager, (index) => padPort(inputSettings(), index));
             console.log('gamepad: native source started, watching for a pad');
         } else if (window.fc.gamepadEnabled) {
-            gamepad = new GamepadSource(manager);
+            gamepad = new GamepadSource(manager, (index) => padPort(inputSettings(), index));
             console.log('gamepad: browser source started, watching for a pad');
         } else {
             console.log('gamepad: not enabled -- see the main process log for why');
+        }
+
+        // Pads are polled from the moment the effect runs, not from the moment
+        // a cartridge is loaded.
+        //
+        // This used to live in the frame loop, and the frame loop does not
+        // start until a game does -- so the pad list stayed empty while the
+        // library was on screen, which is exactly when somebody tries to
+        // assign a pad to a player. The pad is on the desk whether or not
+        // there is a game in the slot, and a reading has to reach the screen
+        // to be assignable.
+        //
+        // A loop of its own rather than part of `tick`, because the two have
+        // nothing to do with each other: this one runs at the display's rate
+        // for as long as the page is open, and does nothing but ask the pad
+        // source and publish a changed answer.
+        let padFrame = 0;
+        const pumpPads = (): void => {
+            padFrame = requestAnimationFrame(pumpPads);
+
+            // The browser's Gamepad API has no change events, so this is a
+            // poll; the native source's poll() is empty because its helper
+            // pushes. Both are called the same way so the loop does not have
+            // to know which one it has.
+            gamepad?.poll();
+
+            const pad = gamepad?.report ?? NO_PADS;
+
+            // Compared against the status itself rather than a local copy.
+            // Anything that replaces the status wholesale -- building the
+            // machine does -- would otherwise leave the screen showing no pads
+            // while the pads were still on the desk, because a local copy
+            // would still say "nothing changed".
+            setStatus((s) => (samePads(s.gamepad, pad) ? s : { ...s, gamepad: pad }));
+        };
+
+        // A scripted run has no gamepad source and must stay deterministic, so
+        // there is nothing to pump.
+        if (!window.fc.selftestOnly) {
+            padFrame = requestAnimationFrame(pumpPads);
         }
 
         const fail = (error: string): void => {
@@ -252,7 +310,8 @@ export function useEmulator(
             // Now that there is a machine, point the input manager at it. The
             // keyboard and the pad were set up when the effect ran; they start
             // reaching the console the moment this is assigned.
-            engineApply = (button, pressed) => engine.setButton(Button[button], pressed);
+            engineApply = (port, button, pressed) =>
+                engine.setButton(Button[button], pressed, port);
 
             // Audio. This can fail -- SharedArrayBuffer needs the page to be
             // cross origin isolated -- and when it does the game still runs,
@@ -387,27 +446,9 @@ export function useEmulator(
                 animationFrame = requestAnimationFrame(tick);
                 const now = nowMs / 1000;
 
-                // Polled here because the browser's Gamepad API has no change
-                // events: there is only a snapshot of where every control is
-                // now, and looking at it once per animation frame is the
-                // whole protocol. The native source's poll() is empty -- the
-                // helper does its own polling and pushes the changes -- but it
-                // is called anyway so that the frame loop does not have to know
-                // which kind of source it has.
-                gamepad?.poll();
-
-                // If the browser's answer changed, say so on the screen as
-                // well as in the log. This is here rather than with the rest
-                // of the status because it has to work with no cartridge in
-                // the slot -- which is exactly when somebody is trying to find
-                // out whether their pad is being seen at all.
-                const pad = gamepad?.report ?? NO_PAD;
-                if (pad.connected !== seenPad.connected
-                    || pad.id !== seenPad.id
-                    || pad.mapping !== seenPad.mapping) {
-                    seenPad = pad;
-                    setStatus((s) => ({ ...s, gamepad: pad }));
-                }
+                // The pads are not polled here. See pumpPads above: a pad has
+                // to be visible before a game is loaded, so its loop is its
+                // own.
 
                 // Rewinding: one snapshot per animation frame. A snapshot is
                 // everyFrames frames apart, so this walks backwards at about
@@ -979,6 +1020,9 @@ export function useEmulator(
             disposed = true;
             if (animationFrame !== 0) {
                 cancelAnimationFrame(animationFrame);
+            }
+            if (padFrame !== 0) {
+                cancelAnimationFrame(padFrame);
             }
             detachKeyboard?.();
             gamepad?.destroy();

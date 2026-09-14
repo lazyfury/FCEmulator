@@ -33,7 +33,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
-import type { GamepadButtonName, GamepadReading } from '../shared/api';
+import type { GamepadButtonName, GamepadReading, PadReading } from '../shared/api';
 
 /** The eight switches, in the order the C enum uses. */
 export const GAMEPAD_BUTTONS: readonly GamepadButtonName[] = [
@@ -48,14 +48,7 @@ export const GAMEPAD_BUTTONS: readonly GamepadButtonName[] = [
  * import of another `.ts` file at run time. The two are checked equal by a
  * test, so they cannot drift.
  */
-export const EMPTY_READING: GamepadReading = {
-    connected: false,
-    id: '',
-    buttons: {
-        A: false, B: false, SELECT: false, START: false,
-        UP: false, DOWN: false, LEFT: false, RIGHT: false,
-    },
-};
+export const EMPTY_READING: GamepadReading = { pads: [] };
 
 /** Where the built helper lives, given the Electron application folder. */
 export function gamepadBinaryPath(electronRoot: string): string {
@@ -64,20 +57,61 @@ export function gamepadBinaryPath(electronRoot: string): string {
 
 /** Two readings that would tell the renderer the same thing. */
 export function sameReading(a: GamepadReading, b: GamepadReading): boolean {
-    if (a.connected !== b.connected || a.id !== b.id) {
+    if (a.pads.length !== b.pads.length) {
         return false;
     }
-    return GAMEPAD_BUTTONS.every((button) => a.buttons[button] === b.buttons[button]);
+    return a.pads.every((pad, position) => {
+        const other = b.pads[position];
+        return other !== undefined
+            && pad.index === other.index
+            && pad.id === other.id
+            && GAMEPAD_BUTTONS.every((button) => pad.buttons[button] === other.buttons[button]);
+    });
+}
+
+/**
+ * One pad in a `pads` message.
+ *
+ * Returns null for anything without a usable slot, because the slot is the
+ * pad's only name: two identical controllers report the same `id`, so a pad
+ * with no index could be listed and could not be assigned, or released.
+ */
+function parsePad(raw: unknown): PadReading | null {
+    if (raw === null || typeof raw !== 'object') {
+        return null;
+    }
+    const pad = raw as { index?: unknown; id?: unknown; buttons?: unknown };
+    if (typeof pad.index !== 'number' || !Number.isInteger(pad.index) || pad.index < 0) {
+        return null;
+    }
+
+    const source = (pad.buttons ?? {}) as Record<string, unknown>;
+    const buttons = {} as Record<GamepadButtonName, boolean>;
+    for (const button of GAMEPAD_BUTTONS) {
+        // Exactly true, so a missing key, a null, or a string is "not pressed"
+        // rather than something the renderer has to defend against.
+        buttons[button] = source[button] === true;
+    }
+
+    return {
+        index: pad.index,
+        id: typeof pad.id === 'string' && pad.id !== '' ? pad.id : 'Gamepad',
+        buttons,
+    };
 }
 
 /**
  * One line of the helper's output, as a reading.
  *
- * Returns null for a line that is not a pad message -- the `hello` line, a
+ * The helper reports the whole list every time it changes, rather than one
+ * pad at a time, because the list is what the renderer draws and what a
+ * disconnect is measured against: "pad 1 is gone" is only meaningful next to
+ * "pads 0 and 2 are still here".
+ *
+ * Returns null for a line that is not a pads message -- the `hello` line, a
  * warning the framework printed, a line somebody's `console.log` got into --
- * because the right answer to "I do not understand this" is to drop it, not to
- * guess a state from it. A `{"connected":false}` line is a reading, and an
- * important one: it is how a pad that ran out of battery gets let go of.
+ * because the right answer to "I do not understand this" is to drop it, not
+ * to guess a state from it.
  */
 export function parseGamepadLine(line: string): GamepadReading | null {
     let parsed: unknown;
@@ -90,33 +124,19 @@ export function parseGamepadLine(line: string): GamepadReading | null {
     if (parsed === null || typeof parsed !== 'object') {
         return null;
     }
-    const message = parsed as {
-        type?: unknown;
-        connected?: unknown;
-        id?: unknown;
-        buttons?: unknown;
-    };
-    if (message.type !== 'pad') {
+    const message = parsed as { type?: unknown; pads?: unknown };
+    if (message.type !== 'pads' || !Array.isArray(message.pads)) {
         return null;
     }
 
-    if (message.connected !== true) {
-        return { ...EMPTY_READING, buttons: { ...EMPTY_READING.buttons } };
+    const pads: PadReading[] = [];
+    for (const raw of message.pads) {
+        const pad = parsePad(raw);
+        if (pad !== null) {
+            pads.push(pad);
+        }
     }
-
-    const source = (message.buttons ?? {}) as Record<string, unknown>;
-    const buttons = {} as Record<GamepadButtonName, boolean>;
-    for (const button of GAMEPAD_BUTTONS) {
-        // Exactly true, so a missing key, a null, or a string is "not pressed"
-        // rather than something the renderer has to defend against.
-        buttons[button] = source[button] === true;
-    }
-
-    return {
-        connected: true,
-        id: typeof message.id === 'string' ? message.id : 'Gamepad',
-        buttons,
-    };
+    return { pads };
 }
 
 export interface NativeGamepadOptions {

@@ -58,7 +58,7 @@ import { usePixelScale } from './usePixelScale';
 import { bootLog } from '../shared/boot';
 
 import type { CSSProperties } from 'react';
-import type { LibraryState, Preferences } from '../shared/api';
+import { DEFAULT_INPUT_SETTINGS, type InputSettings, type LibraryState, type Preferences } from '../shared/api';
 
 /** The four save slots, in the order the keyboard numbers them. */
 const SAVE_COMMANDS: readonly CommandName[] = ['quicksave', 'save1', 'save2', 'save3'];
@@ -91,6 +91,7 @@ export default function App() {
     // and invisibly. The value lives in the main process; see the preferences
     // effect below for why it is not in localStorage any more.
     const [scanlines, setScanlines] = useState(false);
+    const [input, setInput] = useState<InputSettings>(DEFAULT_INPUT_SETTINGS);
     const [notice, setNotice] = useState<string | null>(null);
 
     // How wide the middle column is. The divider between it and the picture is
@@ -142,6 +143,7 @@ export default function App() {
     }, [flash]);
 
     const { status, loadRom, unload, command } = useEmulator(canvasRef, {
+        input,
         onScreenshot: (png, asCover) => void saveScreenshot(png, asCover),
     });
 
@@ -207,6 +209,7 @@ export default function App() {
                 if (preferences.scanlines) {
                     setScanlines(true);
                 }
+                setInput(preferences.input);
             })
             .catch((error: unknown) => {
                 bootLog('renderer', 'preferences FAILED', String(error));
@@ -220,6 +223,19 @@ export default function App() {
     const changeScanlines = useCallback((on: boolean): void => {
         setScanlines(on);
         void window.fc.setPreference('scanlines', on);
+    }, []);
+
+    /**
+     * Change the input settings, and remember them.
+     *
+     * The settings reach the emulator through `useEmulator`'s handlers, which
+     * are read afresh at every key event and every frame -- so a rebinding
+     * takes effect immediately without rebuilding the machine or the
+     * listeners.
+     */
+    const changeInput = useCallback((next: InputSettings): void => {
+        setInput(next);
+        void window.fc.saveInputSettings(next);
     }, []);
 
     // The commit, as opposed to the render above: layout effects run after
@@ -423,6 +439,8 @@ export default function App() {
                     picture={picture}
                     scanlines={scanlines}
                     onScanlines={changeScanlines}
+                    input={input}
+                    onInput={changeInput}
                     gamepadEnabled={window.fc.gamepadEnabled}
                     gamepadNative={window.fc.gamepadNative}
                     library={library}

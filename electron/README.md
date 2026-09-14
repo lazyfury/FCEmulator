@@ -565,7 +565,46 @@ The same information is on screen, without the terminal: the 设置 panel has a
 the rail is lit only when a pad is actually being reported — the difference
 between "switched on" and "a pad is here" being the whole of the question.
 
+### Two players, one keyboard, and more than one pad
+
+The console has two controller ports, and the settings panel's **输入** group is
+where the two things a person can hold are wired to them.
+
+**The keyboard is one player or two.** In 单人 (one player) every key drives the
+same port — so the arrows and WASD are the same person, which is what the table
+below has always meant — and 作为 picks whether that person is player 1 or
+player 2. In 双人 (two players) the bindings keep their own ports, and the
+default split puts WASD, J/K, Enter and Tab on player 1 and the arrows, Z/X,
+Space and right Shift on player 2. The same list is read two ways; that is the
+whole of the difference, and it is why a custom binding does not have to know
+which mode it was made in. `bindings.ts` holds the list and the resolver, and
+`test/bindings.test.mjs` pins the rule.
+
+**Every key can be rebound.** Click a key cap in 按键绑定 and press the key you
+want. The capture is a capture-phase window listener, which is what keeps the
+key from reaching the game while it is being assigned. Rebinding a key that is
+already taken swaps the two rather than making one of them dead, because the
+resolver takes the first binding for a key and drops the rest. Escape, P, R,
+Backspace and F1–F12 belong to the application and cannot be bound.
+
+**Each pad picks its player.** 手柄 lists every connected pad by its slot, name
+and layout, with 1P / 2P / 关闭 next to each. With no assignment the first pad
+is player 1 and the second is player 2; an explicit assignment, including
+"off", wins. The slot is the handle, not the name: two identical controllers
+report the same `id`. The helper reports every pad it can see, not just the
+first — see `native/gamepad/README.md` for the protocol.
+
+All of it lives in the same `config.json` the library root does, under `input`,
+written through `WriteInputSettings`. It is one object rather than a field at a
+time, because a rebinding is only meaningful together with the keyboard mode it
+was made under. The main process validates it on the way in, so a config file
+somebody edited by hand cannot make the application start with a binding that
+means nothing.
+
 ### Keys
+
+These are the defaults. The settings panel is where they are changed, and where
+the keyboard is set to one player or two.
 
 | Key | |
 |---|---|

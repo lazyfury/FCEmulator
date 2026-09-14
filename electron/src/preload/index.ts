@@ -18,7 +18,8 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 
 import {
     IpcChannel,
-    type BootRom, type FcBridge, type GamepadReading, type LibraryState, type Preferences,
+    type BootRom, type FcBridge, type GamepadReading, type InputSettings,
+    type LibraryState, type Preferences,
 } from '../shared/api';
 import { bootLog, setBootOrigin } from '../shared/boot';
 
@@ -95,6 +96,9 @@ const bridge: FcBridge = {
 
     setPreference: (name, value) =>
         ipcRenderer.invoke(IpcChannel.WritePreference, { name, value }) as Promise<void>,
+
+    saveInputSettings: (settings: InputSettings) =>
+        ipcRenderer.invoke(IpcChannel.WriteInputSettings, settings) as Promise<void>,
 
     saveScreenshot: (gamePath, bytes, asCover) =>
         ipcRenderer.invoke(

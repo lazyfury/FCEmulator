@@ -27,8 +27,9 @@ import { pathToFileURL } from 'node:url';
 import { NativeGamepad, EMPTY_READING, gamepadBinaryPath } from './gamepad';
 import { GameLibrary, SCREENSHOT_DIRECTORY, collectGames, isInside } from './library';
 import {
-    IpcChannel, LIBRARY_HOST, type BootRom, type GamepadReading, type LibraryState,
-    type Preferences,
+    IpcChannel, LIBRARY_HOST, type BootRom, type GamepadButtonName, type GamepadReading,
+    type InputSettings, type KeyBinding, type LibraryState, type Preferences,
+    DEFAULT_INPUT_SETTINGS,
 } from '../shared/api';
 import { bootLog, bootOrigin, setBootOrigin } from '../shared/boot';
 
@@ -621,6 +622,52 @@ interface Config {
     scanlines?: boolean;
     /** Middle column width in CSS pixels. Absent means it was never chosen. */
     panelWidth?: number;
+    /** Keyboard mode, key bindings and pad assignments. */
+    input?: InputSettings;
+}
+
+/** The eight switch names, for validating a binding that came over IPC. */
+const SWITCH_NAMES: readonly GamepadButtonName[] = [
+    'A', 'B', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT',
+];
+
+/**
+ * An input configuration, with anything unrecognised replaced by a default.
+ *
+ * A config file is a text file a person can edit, so it is read defensively:
+ * a bad binding is dropped rather than throwing on start up. The parts that
+ * survive are always one of the shapes the renderer understands.
+ */
+function normaliseInput(raw: unknown): InputSettings {
+    if (raw === null || typeof raw !== 'object') {
+        return DEFAULT_INPUT_SETTINGS;
+    }
+    const value = raw as Partial<InputSettings>;
+
+    const keyboard = value.keyboard === '2p' ? '2p' : '1p';
+    const keyboardPlayer = value.keyboardPlayer === 1 ? 1 : 0;
+
+    let bindings: KeyBinding[] | null = null;
+    if (Array.isArray(value.bindings)) {
+        bindings = value.bindings.filter((entry): entry is KeyBinding => {
+            if (entry === null || typeof entry !== 'object') {
+                return false;
+            }
+            const binding = entry as Partial<KeyBinding>;
+            return typeof binding.code === 'string'
+                && binding.code !== ''
+                && (binding.port === 0 || binding.port === 1)
+                && SWITCH_NAMES.includes(binding.button as GamepadButtonName);
+        });
+    }
+
+    const padPorts: number[] = Array.isArray(value.padPorts)
+        ? value.padPorts.map((port) => (
+            port === 0 || port === 1 || port === -1 ? port : -1
+        ))
+        : [];
+
+    return { keyboard, keyboardPlayer, bindings, padPorts };
 }
 
 /** Cached, because this is asked for on every IPC call and reading a file to
@@ -970,7 +1017,20 @@ function registerIpc(): void {
                 && Number.isFinite(config.panelWidth)
                 ? config.panelWidth
                 : null,
+            input: normaliseInput(config.input),
         };
+    });
+
+    /**
+     * The input configuration: keyboard mode, key bindings, pad assignments.
+     *
+     * One verb for the whole object. A rebinding is only meaningful together
+     * with the keyboard mode it was made under, so writing it a field at a
+     * time would leave windows where the file holds half of one configuration
+     * and half of another.
+     */
+    ipcMain.handle(IpcChannel.WriteInputSettings, async (_event, settings: unknown): Promise<void> => {
+        writeConfig({ ...readConfig(), input: normaliseInput(settings) });
     });
 
     ipcMain.handle(

@@ -15,14 +15,14 @@
 //   pnpm test           (see test/status.test.mjs)
 // ---------------------------------------------------------------------------
 
-// `PadReport` is imported as a *type* and nothing else, which matters here:
+// `PadsReport` is imported as a *type* and nothing else, which matters here:
 // this file is loaded by plain Node from test/status.test.mjs, and Node's type
 // stripping cannot resolve an extensionless import of another `.ts` file at
 // run time. A value import would make this module untestable; a type import is
 // erased before Node ever sees it. The one value that would have crossed --
 // the empty report -- is written out below instead, and test/status.test.mjs
 // checks that the two stay equal.
-import type { PadReport } from './gamepad';
+import type { PadsReport } from './gamepad';
 import type { ButtonName } from './input';
 
 /** Where the engine is in its life cycle. */
@@ -77,12 +77,12 @@ export interface EngineStatus {
     audioError: string | null;
     error: string | null;
     /**
-     * What the browser says about the gamepad, if the source is running.
+     * What the gamepad sources say about the pads, if any are running.
      *
-     * This is a copy of a reading rather than a fact about the cartridge, so
-     * it survives an eject: the pad is still on the desk.
+     * This is a copy of readings rather than a fact about the cartridge, so
+     * it survives an eject: the pads are still on the desk.
      */
-    gamepad: PadReport;
+    gamepad: PadsReport;
 }
 
 /** Before anything has happened: no machine, no cartridge, no readings. */
@@ -103,9 +103,9 @@ export const INITIAL_STATUS: EngineStatus = {
     audio: null,
     audioError: null,
     error: null,
-    // `NO_PAD` from gamepad.ts, written out. See the note at the top of this
+    // `NO_PADS` from gamepad.ts, written out. See the note at the top of this
     // file for why it is not imported.
-    gamepad: { connected: false, id: '', mapping: '' },
+    gamepad: { pads: [] },
 };
 
 /**
