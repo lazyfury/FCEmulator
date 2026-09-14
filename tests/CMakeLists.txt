@@ -37,6 +37,15 @@ add_executable(fc_tests
     test_apu.cpp
     test_state.cpp
     test_ffi.cpp
+    test_libretro.cpp
+    # The libretro adapter is compiled in here as well as into the shared
+    # object, so the ABI is covered by the ordinary test run rather than only
+    # by the probe. One small file, two builds, and the same source either way.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/libretro/fc_libretro.cpp
+)
+
+target_include_directories(fc_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libretro
 )
 
 target_link_libraries(fc_tests PRIVATE
@@ -49,6 +58,7 @@ target_link_libraries(fc_tests PRIVATE
 # the tests skip themselves when the folder is empty.
 target_compile_definitions(fc_tests PRIVATE
     FC_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    FC_LIBRETRO_VERSION="${PROJECT_VERSION}"
 )
 
 include(GoogleTest)

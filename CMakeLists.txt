@@ -62,6 +62,12 @@ target_include_directories(fc_ffi PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+# The static libraries end up inside a shared object (the libretro core below),
+# so they are compiled position independent. On arm64 this is already true of
+# every instruction, but saying it keeps a future x86_64 build from having to
+# discover it the hard way, at link time, in a message about relocations.
+set_target_properties(fc_core fc_ffi PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # ---------------------------------------------------------------------------
 # The WebAssembly build.
 #
@@ -76,6 +82,53 @@ target_include_directories(fc_ffi PUBLIC
 if(EMSCRIPTEN)
     add_subdirectory(wasm)
     return()
+endif()
+
+# ---------------------------------------------------------------------------
+# The libretro core.
+#
+# A shared object that exports the retro_* ABI, so RetroArch and every other
+# libretro front end can load this emulator without knowing it exists yet. It
+# adds no emulation of its own: src/libretro/fc_libretro.cpp translates the
+# libretro calls into the same src/core the rest of the project uses.
+#
+# This is native only on purpose. A .dylib cannot be loaded from WebAssembly,
+# so the wasm build of the core is a separate stage with a separate target
+# (see docs/architecture/libretro-migration.md, stage L4).
+#
+#   macOS   -> fc_libretro.dylib      (PREFIX is empty on purpose)
+#   Linux   -> fc_libretro.so
+#   Windows -> fc_libretro.dll
+# ---------------------------------------------------------------------------
+option(FC_BUILD_LIBRETRO "Build the libretro core" ON)
+if(FC_BUILD_LIBRETRO)
+    add_library(fc_libretro MODULE
+        src/libretro/fc_libretro.cpp
+    )
+    target_include_directories(fc_libretro PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libretro
+    )
+    target_link_libraries(fc_libretro PRIVATE fc_core)
+
+    # The version in the core's library_version, from the one place the project
+    # declares it. A core whose name and version disagree with the build is a
+    # report that cannot be trusted.
+    target_compile_definitions(fc_libretro PRIVATE
+        FC_LIBRETRO_VERSION="${PROJECT_VERSION}"
+    )
+
+    # libretro cores are named fc_libretro.dylib, not libfc_libretro.dylib:
+    # every front end's core scanner expects the former. CMake gives a MODULE
+    # the .so suffix on macOS, which no front end looks for, so the suffix is
+    # set here too.
+    set_target_properties(fc_libretro PROPERTIES
+        PREFIX ""
+        POSITION_INDEPENDENT_CODE ON
+    )
+    if(APPLE)
+        set_target_properties(fc_libretro PROPERTIES SUFFIX ".dylib")
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -127,6 +180,16 @@ target_link_libraries(fc_headless PRIVATE fc_ffi)
 # interface is not for.
 add_executable(fc_testrom tools/fc_testrom.cpp)
 target_link_libraries(fc_testrom PRIVATE fc_core)
+
+# The libretro acceptance probe. Unlike every other tool here it does not link
+# the emulator: it dlopen()s fc_libretro.dylib the way a front end does, and
+# drives it through a stand-in front end. That is what makes it a test of the
+# loaded core rather than of the functions in this build.
+add_executable(fc_libretro_probe tools/fc_libretro_probe.cpp)
+target_include_directories(fc_libretro_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libretro
+)
+target_link_libraries(fc_libretro_probe PRIVATE ${CMAKE_DL_LIBS})
 
 # ---------------------------------------------------------------------------
 # Tests
