@@ -46,6 +46,7 @@ add_executable(fc_tests
 
 target_include_directories(fc_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libretro
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/libretro
 )
 
 target_link_libraries(fc_tests PRIVATE

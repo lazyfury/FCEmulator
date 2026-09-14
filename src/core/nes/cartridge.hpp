@@ -76,6 +76,28 @@ public:
     [[nodiscard]] bool has_prg_ram() const noexcept { return prg_ram_enabled_; }
     void set_prg_ram_enabled(bool enabled) noexcept { prg_ram_enabled_ = enabled; }
 
+    /// The 8KB of work RAM at $6000, as the front end sees it.
+    ///
+    /// A front end persists this as the cartridge's battery save, so the
+    /// pointer has to be the bytes the CPU actually reads and writes. On a
+    /// board that answers $6000 with its own registers instead of a RAM chip
+    /// (mapper 87, mapper 246, VRC2a) the cartridge's copy is unused, which is
+    /// what battery_backed() is careful about.
+    [[nodiscard]] std::span<u8> prg_ram() noexcept { return prg_ram_; }
+    [[nodiscard]] std::span<const u8> prg_ram() const noexcept { return prg_ram_; }
+
+    /// Whether that RAM is the game's save and should outlive the emulator.
+    ///
+    /// The battery bit lives in the iNES header (flags 6, bit 1). A cartridge
+    /// without it has RAM the game clears on power up and nobody misses; one
+    /// with it has the save file. The has_work_ram() half keeps the promise
+    /// honest: a board that does not answer $6000 with this buffer must not
+    /// hand a front end a buffer the game never wrote.
+    [[nodiscard]] bool battery_backed() const noexcept
+    {
+        return header_.has_battery && mapper_ != nullptr && mapper_->has_work_ram();
+    }
+
     /// A one line summary, for tooling.
     [[nodiscard]] std::string summary() const;
 

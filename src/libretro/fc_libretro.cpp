@@ -38,17 +38,20 @@
 //
 // What is not here yet
 // --------------------
-// Battery-backed save RAM and the debug memory view (retro_get_memory_data)
-// are stage L2, and cheat codes (retro_cheat_set, which speaks Game Genie
-// strings rather than this project's address/value pairs) are stage L3. Both
-// have deliberate stubs below so their absence is a log line rather than a
-// missing symbol.
+// Cheat codes (retro_cheat_set, which speaks Game Genie strings rather than
+// this project's address/value pairs) are stage L3, and so is telling the
+// front end where RAM sits (RETRO_ENVIRONMENT_SET_MEMORY_MAPS). Until then
+// retro_cheat_set logs rather than pretending, and the memory views below are
+// exposed without a map. The custom extension in fc_libretro_ext.h carries
+// what libretro has no place for, including the raw cheat format and the
+// debugger's peek and poke.
 // ---------------------------------------------------------------------------
 
 #include "libretro.h"
 
 #include "core/nes/machine.hpp"
 #include "core/types.hpp"
+#include "fc_libretro_ext.h"
 
 #include <array>
 #include <cmath>
@@ -58,6 +61,7 @@
 #include <cstring>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -90,6 +94,11 @@ retro_input_state_t g_input_state = nullptr;
 /// The front end's logger, when it has one. Cores are expected to stay quiet
 /// when it does not.
 retro_log_printf_t g_log = nullptr;
+
+/// The loaded cartridge's one line description, kept because the extension
+/// hands out a `const char*` and a temporary std::string would dangle the
+/// moment the call returned.
+std::string g_rom_summary;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -271,6 +280,100 @@ void drain_audio()
         g_audio(g_stereo[i * 2], g_stereo[i * 2 + 1]);
     }
 }
+
+// ---------------------------------------------------------------------------
+// The custom extension
+//
+// These are the functions a libretro front end cannot reach through the
+// standard ABI. See fc_libretro_ext.h for why each one exists and for the
+// rules on changing the table.
+// ---------------------------------------------------------------------------
+
+int ext_peek(uint16_t address)
+{
+    if (g_machine == nullptr) {
+        return 0;
+    }
+    return g_machine->bus().peek(address);
+}
+
+void ext_poke(uint16_t address, uint8_t value)
+{
+    if (g_machine == nullptr) {
+        return;
+    }
+    // Through the bus, so $075A and $0F5A are the same byte here as they are
+    // to the CPU. A debugger that wrote the RAM array directly would be a
+    // second, subtly different address decoder.
+    g_machine->bus().write(address, value);
+}
+
+int ext_set_raw_cheats(const uint8_t* data, int count)
+{
+    // Cheats are meaningless without a cartridge to write them into, and the
+    // header promises -1 rather than a silent success.
+    if (g_machine == nullptr || g_machine->cartridge() == nullptr) {
+        return -1;
+    }
+
+    std::vector<fc::nes::Cheat> cheats;
+    if (data != nullptr && count > 0) {
+        cheats.reserve(static_cast<std::size_t>(count));
+        for (int i = 0; i < count; ++i) {
+            const uint8_t* entry = data + static_cast<std::size_t>(i) * 4;
+            cheats.push_back(fc::nes::Cheat{
+                static_cast<uint16_t>(entry[0] | (entry[1] << 8)),
+                entry[2],
+                (entry[3] & 0x01u) != 0u,
+                (entry[3] & 0x02u) != 0u,
+            });
+        }
+    }
+
+    g_machine->cheats().set(cheats);
+    return static_cast<int>(g_machine->cheats().size());
+}
+
+int ext_raw_cheat_count()
+{
+    return g_machine == nullptr ? 0 : static_cast<int>(g_machine->cheats().size());
+}
+
+bool ext_mapper_saves_state()
+{
+    return g_machine != nullptr && g_machine->mapper_saves_state();
+}
+
+const char* ext_rom_summary()
+{
+    return g_rom_summary.c_str();
+}
+
+uint64_t ext_total_cycles()
+{
+    return g_machine == nullptr ? 0 : g_machine->cpu().total_cycles();
+}
+
+uint16_t ext_cpu_pc()
+{
+    return g_machine == nullptr ? 0 : g_machine->cpu().registers().pc;
+}
+
+/// The table itself. Field order has to match the header exactly, which the
+/// compiler checks as long as every field is initialized -- and it will warn
+/// if one is not.
+const fc_libretro_ext_v1 kExt = {
+    FC_LIBRETRO_EXT_VERSION,
+    sizeof(fc_libretro_ext_v1),
+    ext_peek,
+    ext_poke,
+    ext_set_raw_cheats,
+    ext_raw_cheat_count,
+    ext_mapper_saves_state,
+    ext_rom_summary,
+    ext_total_cycles,
+    ext_cpu_pc,
+};
 
 } // namespace
 
@@ -466,7 +569,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
 
     const auto* cartridge = g_machine->cartridge();
     if (cartridge != nullptr) {
-        log_message(RETRO_LOG_INFO, "FC Emulator: %s", cartridge->summary().c_str());
+        g_rom_summary = cartridge->summary();
+        log_message(RETRO_LOG_INFO, "FC Emulator: %s", g_rom_summary.c_str());
     }
     return true;
 }
@@ -487,6 +591,7 @@ RETRO_API void retro_unload_game(void)
     delete g_machine;
     g_machine = nullptr;
     g_halted = false;
+    g_rom_summary.clear();
 }
 
 RETRO_API unsigned retro_get_region(void)
@@ -496,15 +601,55 @@ RETRO_API unsigned retro_get_region(void)
 
 RETRO_API void* retro_get_memory_data(unsigned id)
 {
-    // Save RAM and the debug memory view are stage L2.
-    (void)id;
-    return nullptr;
+    if (g_machine == nullptr) {
+        return nullptr;
+    }
+
+    switch (id & RETRO_MEMORY_MASK) {
+    case RETRO_MEMORY_SYSTEM_RAM:
+        // The 2KB the CPU sees at $0000-$07FF, for cheat search and for a
+        // debugger. The CPU only reaches it through the mask in Ram; this is
+        // the view for everything that is not the CPU.
+        return g_machine->bus().ram().data();
+
+    case RETRO_MEMORY_SAVE_RAM: {
+        // The game's save file, and only when the cartridge says it keeps it.
+        // A board whose $6000 is registers rather than RAM has no save to
+        // hand over, and handing over the unused buffer would write an empty
+        // file as though it were the player's progress.
+        fc::nes::Cartridge* cartridge = g_machine->cartridge();
+        if (cartridge == nullptr || !cartridge->battery_backed()) {
+            return nullptr;
+        }
+        return cartridge->prg_ram().data();
+    }
+
+    default:
+        return nullptr;
+    }
 }
 
 RETRO_API size_t retro_get_memory_size(unsigned id)
 {
-    (void)id;
-    return 0;
+    if (g_machine == nullptr) {
+        return 0;
+    }
+
+    switch (id & RETRO_MEMORY_MASK) {
+    case RETRO_MEMORY_SYSTEM_RAM:
+        return fc::nes::Ram::kSize;
+
+    case RETRO_MEMORY_SAVE_RAM: {
+        const fc::nes::Cartridge* cartridge = g_machine->cartridge();
+        if (cartridge == nullptr || !cartridge->battery_backed()) {
+            return 0;
+        }
+        return cartridge->prg_ram().size();
+    }
+
+    default:
+        return 0;
+    }
 }
 
 // -- lifecycle ---------------------------------------------------------------
@@ -569,6 +714,7 @@ RETRO_API void retro_deinit(void)
     delete g_machine;
     g_machine = nullptr;
     g_halted = false;
+    g_rom_summary.clear();
     g_environ = nullptr;
     g_video = nullptr;
     g_audio = nullptr;
@@ -576,6 +722,15 @@ RETRO_API void retro_deinit(void)
     g_input_poll = nullptr;
     g_input_state = nullptr;
     g_log = nullptr;
+}
+
+// -- the custom extension ----------------------------------------------------
+
+/// The one symbol a standard front end never asks for and this project's own
+/// front end does. See fc_libretro_ext.h.
+const fc_libretro_ext_v1* fc_libretro_get_ext(void)
+{
+    return &kExt;
 }
 
 } // extern "C"

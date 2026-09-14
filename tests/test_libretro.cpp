@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 
 #include "libretro.h"
+#include "fc_libretro_ext.h"
 
 #include <gtest/gtest.h>
 
@@ -151,9 +152,14 @@ int16_t input_state_cb(unsigned port, unsigned device, unsigned index, unsigned 
 // ROM would drag a file and a mapper into a test about the ABI.
 // ---------------------------------------------------------------------------
 
-std::vector<uint8_t> make_rom()
+std::vector<uint8_t> make_rom(bool battery = false)
 {
     std::vector<uint8_t> rom = { 'N', 'E', 'S', 0x1A, 2, 1, 0, 0 };
+    // flags 6 bit 1 is the battery. A save RAM test needs it set, because
+    // without it the cartridge is not promising the RAM outlives power.
+    if (battery) {
+        rom[6] |= 0x02;
+    }
     rom.insert(rom.end(), 8, 0);
 
     std::vector<uint8_t> prg(2 * 16384, 0xEA);
@@ -220,9 +226,9 @@ protected:
     /// keeps pointing at it. The ROM outlives the call; libretro says the data
     /// is only valid until retro_load_game returns, and this core copies what
     /// it needs, so that is honoured.
-    retro_game_info load()
+    retro_game_info load(bool battery = false)
     {
-        rom_ = make_rom();
+        rom_ = make_rom(battery);
         retro_game_info game{};
         game.path = "synthetic.nes";
         game.data = rom_.data();
@@ -495,15 +501,130 @@ TEST_F(LibretroTest, UnserializeClearsTheHaltedFlag)
 // Stubs that are deliberate
 // ---------------------------------------------------------------------------
 
-TEST_F(LibretroTest, MemoryViewsAreNotExposedYet)
+TEST_F(LibretroTest, ConsoleRamIsExposedForCheatSearch)
 {
     load();
-    // Stage L2. The test exists so that the day these start returning
-    // something, it is a change and not a surprise.
+
+    void* ram = retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    ASSERT_NE(ram, nullptr);
+    // 2KB, and the same bytes the CPU sees at $0000.
+    EXPECT_EQ(retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM), 0x800u);
+
+    // Writing through the view is visible on the CPU's address bus, which is
+    // what makes it usable for a cheat search.
+    static_cast<uint8_t*>(ram)[0] = 0x5A;
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+    ASSERT_NE(ext, nullptr);
+    EXPECT_EQ(ext->peek(0x0000), 0x5A);
+    // And the mirrors are the same byte, because the mask is the hardware.
+    EXPECT_EQ(ext->peek(0x0800), 0x5A);
+}
+
+TEST_F(LibretroTest, SaveRamIsOnlyOfferedWhenTheBatteryBitIsSet)
+{
+    load(false);
     EXPECT_EQ(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), nullptr);
-    EXPECT_EQ(retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM), nullptr);
     EXPECT_EQ(retro_get_memory_size(RETRO_MEMORY_SAVE_RAM), 0u);
-    EXPECT_EQ(retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM), 0u);
+
+    // A second load with the bit set, on a fresh machine.
+    retro_unload_game();
+    load(true);
+
+    void* save = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    ASSERT_NE(save, nullptr);
+    EXPECT_EQ(retro_get_memory_size(RETRO_MEMORY_SAVE_RAM), 0x2000u);
+}
+
+TEST_F(LibretroTest, SaveRamIsTheSameMemoryTheCartridgeAnswersAt6000)
+{
+    load(true);
+    auto* save = static_cast<uint8_t*>(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM));
+    ASSERT_NE(save, nullptr);
+
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+    ASSERT_NE(ext, nullptr);
+
+    // Writing through the bus lands in the buffer a front end would persist;
+    // writing the buffer is visible to the CPU. Both directions, because a
+    // save file written from the wrong copy is silently empty.
+    ext->poke(0x6000, 0x5A);
+    EXPECT_EQ(save[0], 0x5A);
+    save[1] = 0xA5;
+    EXPECT_EQ(ext->peek(0x6001), 0xA5);
+}
+
+// ---------------------------------------------------------------------------
+// The custom extension
+// ---------------------------------------------------------------------------
+
+TEST_F(LibretroTest, TheCustomExtensionIsPresentAndVersioned)
+{
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+    ASSERT_NE(ext, nullptr);
+    EXPECT_EQ(ext->abi_version, FC_LIBRETRO_EXT_VERSION);
+    EXPECT_EQ(ext->struct_size, sizeof(fc_libretro_ext_v1));
+}
+
+TEST_F(LibretroTest, TheExtensionIsUsableWithoutACartridge)
+{
+    // Every field has to survive being asked before a game is loaded, because
+    // a front end's status bar does exactly that.
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+    ASSERT_NE(ext, nullptr);
+    EXPECT_EQ(ext->peek(0x0000), 0);
+    EXPECT_EQ(ext->raw_cheat_count(), 0);
+    EXPECT_FALSE(ext->mapper_saves_state());
+    EXPECT_STREQ(ext->rom_summary(), "");
+    EXPECT_EQ(ext->total_cycles(), 0u);
+    EXPECT_EQ(ext->cpu_pc(), 0u);
+    ext->poke(0x0000, 1);
+    EXPECT_EQ(ext->set_raw_cheats(nullptr, 0), -1);
+}
+
+TEST_F(LibretroTest, PeekAndPokeGoThroughTheBus)
+{
+    load();
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+
+    ext->poke(0x0010, 0x42);
+    EXPECT_EQ(ext->peek(0x0010), 0x42);
+    EXPECT_EQ(ext->peek(0x0810), 0x42);
+}
+
+TEST_F(LibretroTest, RawCheatsFreezeAValueEveryFrame)
+{
+    load();
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+
+    // 0x0010 is a byte the synthetic program never touches, so anything found
+    // there was put there by the cheat and not by the ROM.
+    const uint8_t cheat[] = { 0x10, 0x00, 0x77, 0x03 };  // freeze + enabled
+    EXPECT_EQ(ext->set_raw_cheats(cheat, 1), 1);
+    EXPECT_EQ(ext->raw_cheat_count(), 1);
+
+    run(2);
+    EXPECT_EQ(ext->peek(0x0010), 0x77);
+
+    // The whole list replaces the old one, and an empty one is how it is
+    // cleared -- there is no remove verb for the same reason there is no
+    // half-updated cheat list.
+    EXPECT_EQ(ext->set_raw_cheats(nullptr, 0), 0);
+    EXPECT_EQ(ext->raw_cheat_count(), 0);
+}
+
+TEST_F(LibretroTest, DiagnosticsDescribeTheMachine)
+{
+    load();
+    run(10);
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+
+    EXPECT_GT(ext->total_cycles(), 0u);
+    // The program runs out of PRG ROM, so the PC is up in cartridge space.
+    EXPECT_GE(ext->cpu_pc(), 0x8000u);
+    // NROM has no bank registers, but it does own its CHR RAM, so its board
+    // is one that saves. The field is the mapper's answer, not a guess.
+    EXPECT_TRUE(ext->mapper_saves_state());
+    EXPECT_NE(std::string(ext->rom_summary()).find("mapper 0"), std::string::npos);
 }
 
 TEST_F(LibretroTest, CheatStringsAreAcceptedAndIgnoredForNow)

@@ -28,6 +28,7 @@
 // ---------------------------------------------------------------------------
 
 #include "libretro.h"
+#include "fc_libretro_ext.h"
 
 #include <cstdarg>
 #include <cstdint>
@@ -75,6 +76,9 @@ struct Core {
     void* (*get_memory_data)(unsigned) = nullptr;
     size_t (*get_memory_size)(unsigned) = nullptr;
     void (*set_controller_port_device)(unsigned, unsigned) = nullptr;
+
+    // Optional: a standard front end never asks for it.
+    const fc_libretro_ext_v1* (*get_ext)(void) = nullptr;
 };
 
 int g_failures = 0;
@@ -300,6 +304,10 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    core.get_ext = reinterpret_cast<const fc_libretro_ext_v1* (*)(void)>(
+        dlsym(core.handle, "fc_libretro_get_ext"));
+    check(core.get_ext != nullptr, "the optional custom extension is exported");
+
     check(core.api_version() == RETRO_API_VERSION, "retro_api_version is 1");
 
     // -- 2. what the core says it is -----------------------------------------
@@ -378,7 +386,44 @@ int main(int argc, char** argv)
     check(g_rec.input_queries >= warmup * 16,
           "both ports were queried every frame (8 buttons each)");
 
-    // -- 5. save state round trip --------------------------------------------
+    // -- 5. the memory views and the custom extension ------------------------
+
+    void* system_ram = core.get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    const size_t system_ram_size = core.get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
+    check(system_ram != nullptr, "console RAM is exposed");
+    check(system_ram_size == 0x800, "console RAM is 2KB");
+
+    void* save_ram = core.get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    const size_t save_ram_size = core.get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    // nestest is an NROM with no battery, so there is nothing to persist. A
+    // battery-backed cartridge is what the unit tests cover.
+    check(save_ram == nullptr && save_ram_size == 0,
+          "save RAM is withheld from a cartridge with no battery");
+
+    if (core.get_ext != nullptr) {
+        const fc_libretro_ext_v1* ext = core.get_ext();
+        check(ext->abi_version == FC_LIBRETRO_EXT_VERSION,
+              "the extension reports its version");
+        check(ext->struct_size == sizeof(fc_libretro_ext_v1),
+              "the extension reports its own size");
+
+        ext->poke(0x0010, 0x42);
+        check(ext->peek(0x0010) == 0x42, "the extension's poke reaches peek");
+        check(ext->peek(0x0810) == 0x42, "the extension's peek honours the RAM mask");
+        check(ext->total_cycles() > 0, "the extension reports the cycle count");
+        check(ext->cpu_pc() >= 0x8000, "the extension reports a program counter in ROM");
+
+        const uint8_t cheat[] = { 0x10, 0x00, 0x77, 0x03 };
+        check(ext->set_raw_cheats(cheat, 1) == 1, "a raw cheat can be installed");
+        for (int i = 0; i < 2; ++i) {
+            core.run();
+        }
+        check(ext->peek(0x0010) == 0x77, "a frozen cheat is rewritten every frame");
+        ext->set_raw_cheats(nullptr, 0);
+        check(ext->raw_cheat_count() == 0, "the cheat list can be cleared");
+    }
+
+    // -- 6. save state round trip --------------------------------------------
 
     const size_t state_size = core.serialize_size();
     std::printf("state size: %zu bytes\n", state_size);

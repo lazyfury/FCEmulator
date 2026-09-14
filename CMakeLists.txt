@@ -188,6 +188,7 @@ target_link_libraries(fc_testrom PRIVATE fc_core)
 add_executable(fc_libretro_probe tools/fc_libretro_probe.cpp)
 target_include_directories(fc_libretro_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libretro
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/libretro
 )
 target_link_libraries(fc_libretro_probe PRIVATE ${CMAKE_DL_LIBS})
 
