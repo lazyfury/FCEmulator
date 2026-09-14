@@ -104,6 +104,8 @@ struct Recording {
     enum retro_pixel_format pixel_format = RETRO_PIXEL_FORMAT_0RGB1555;
     bool input_descriptors_set = false;
     bool controller_info_set = false;
+    bool memory_map_published = false;
+    unsigned memory_map_descriptors = 0;
 
     int video_calls = 0;
     int video_width = 0;
@@ -162,6 +164,12 @@ bool environment_cb(unsigned cmd, void* data)
 
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
         g_rec.controller_info_set = true;
+        return true;
+
+    case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
+        g_rec.memory_map_published = true;
+        g_rec.memory_map_descriptors =
+            static_cast<const retro_memory_map*>(data)->num_descriptors;
         return true;
 
     default:
@@ -363,6 +371,8 @@ int main(int argc, char** argv)
     }
     check(g_rec.input_descriptors_set, "input descriptors were published");
     check(g_rec.controller_info_set, "controller info was published");
+    check(g_rec.memory_map_published, "a memory map was published for cheat search");
+    check(g_rec.memory_map_descriptors >= 1, "the memory map names console RAM");
     check(g_rec.pixel_format_asked, "the core asked for a pixel format");
     check(g_rec.pixel_format == RETRO_PIXEL_FORMAT_XRGB8888,
           "the pixel format asked for is XRGB8888");
@@ -421,6 +431,17 @@ int main(int argc, char** argv)
         check(ext->peek(0x0010) == 0x77, "a frozen cheat is rewritten every frame");
         ext->set_raw_cheats(nullptr, 0);
         check(ext->raw_cheat_count() == 0, "the cheat list can be cleared");
+
+        // Game Genie goes through the standard ABI and lands as a ROM patch.
+        // The original byte is whatever this ROM has; only the change and the
+        // change back are asserted, so any content file works.
+        const int original = ext->peek(0x91D9);
+        core.cheat_set(0, true, "SXIOPO");
+        check(ext->peek(0x91D9) == 0xAD,
+              "a Game Genie code patches the byte the cartridge returns");
+        core.cheat_reset();
+        check(ext->peek(0x91D9) == original,
+              "resetting cheats puts the ROM byte back");
     }
 
     // -- 6. save state round trip --------------------------------------------

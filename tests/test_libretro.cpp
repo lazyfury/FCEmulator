@@ -46,6 +46,8 @@ struct FakeFrontend {
     enum retro_pixel_format pixel_format = RETRO_PIXEL_FORMAT_0RGB1555;
     bool input_descriptors_published = false;
     bool controller_info_published = false;
+    bool memory_map_published = false;
+    unsigned memory_map_descriptors = 0;
 
     int video_calls = 0;
     unsigned video_width = 0;
@@ -92,6 +94,12 @@ bool environment_cb(unsigned cmd, void* data)
 
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
         g_front->controller_info_published = true;
+        return true;
+
+    case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
+        g_front->memory_map_published = true;
+        g_front->memory_map_descriptors =
+            static_cast<const retro_memory_map*>(data)->num_descriptors;
         return true;
 
     default:
@@ -319,6 +327,19 @@ TEST_F(LibretroTest, LoadAsksForXrgb8888AndPublishesTheInput)
     EXPECT_EQ(front_.pixel_format, RETRO_PIXEL_FORMAT_XRGB8888);
     EXPECT_TRUE(front_.input_descriptors_published);
     EXPECT_TRUE(front_.controller_info_published);
+}
+
+TEST_F(LibretroTest, LoadPublishesAMemoryMapForCheatSearch)
+{
+    // Without a battery the only searchable memory is the console's 2KB.
+    load(false);
+    EXPECT_TRUE(front_.memory_map_published);
+    EXPECT_EQ(front_.memory_map_descriptors, 1u);
+
+    // With one, the save RAM is searchable too.
+    retro_unload_game();
+    load(true);
+    EXPECT_EQ(front_.memory_map_descriptors, 2u);
 }
 
 TEST_F(LibretroTest, LoadGameSpecialIsRefusedBecauseThereAreNoSubsystems)
@@ -627,13 +648,59 @@ TEST_F(LibretroTest, DiagnosticsDescribeTheMachine)
     EXPECT_NE(std::string(ext->rom_summary()).find("mapper 0"), std::string::npos);
 }
 
-TEST_F(LibretroTest, CheatStringsAreAcceptedAndIgnoredForNow)
+TEST_F(LibretroTest, ANonCodeIsRejectedQuietly)
 {
     load();
-    // Stage L3. Calling them must not crash, which is the whole assertion.
+    // A string that is not a code must not crash and must not claim success.
     retro_cheat_reset();
-    retro_cheat_set(0, true, "SXIOPO");
+    retro_cheat_set(0, true, "NOT A CODE");
     SUCCEED();
+}
+
+TEST_F(LibretroTest, A_GameGenieCodePatchesRomReads)
+{
+    load();
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+    ASSERT_NE(ext, nullptr);
+
+    // $91D9 is a NOP in the synthetic program. SXIOPO decodes to $91D9 with
+    // value $AD, so the byte the CPU would read changes only after the code
+    // is installed -- and changes back when it is reset.
+    EXPECT_EQ(ext->peek(0x91D9), 0xEA);
+
+    retro_cheat_set(0, true, "SXIOPO");
+    EXPECT_EQ(ext->peek(0x91D9), 0xAD);
+
+    // Switching the one code off must take the patch back out, not merely
+    // remember that it is off.
+    retro_cheat_set(0, false, "SXIOPO");
+    EXPECT_EQ(ext->peek(0x91D9), 0xEA);
+
+    retro_cheat_set(0, true, "SXIOPO");
+    EXPECT_EQ(ext->peek(0x91D9), 0xAD);
+    retro_cheat_reset();
+    EXPECT_EQ(ext->peek(0x91D9), 0xEA);
+}
+
+TEST_F(LibretroTest, A_ProActionReplayCodeFreezesRam)
+{
+    load();
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+    ASSERT_NE(ext, nullptr);
+
+    // PAR 000010A1 is address $0010, value $A1, and $0010 is a byte the
+    // synthetic program never touches. The freeze runs at the start of every
+    // frame, so it survives the program incrementing its own counter.
+    retro_cheat_set(0, true, "000010A1");
+    run(3);
+    EXPECT_EQ(ext->peek(0x0010), 0xA1);
+
+    retro_cheat_reset();
+    // The machine writes a fresh value; this only proves the cheat stopped
+    // rewriting it, so clear it and let a frame pass.
+    ext->poke(0x0010, 0x00);
+    run(1);
+    EXPECT_EQ(ext->peek(0x0010), 0x00);
 }
 
 } // namespace

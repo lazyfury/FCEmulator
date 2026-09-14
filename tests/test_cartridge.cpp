@@ -1865,3 +1865,50 @@ TEST(Cartridge, ABoardThatDoesNotAnswer6000WithRamHasNoSave)
 
     EXPECT_FALSE(cart->battery_backed());
 }
+
+// ===========================================================================
+// Game Genie patches
+//
+// The patch acts on the byte the cartridge returned, at the CPU address, after
+// the mapper has banked. A compare byte lets a code apply to one bank and not
+// another, which is the only reason eight letter codes exist.
+// ===========================================================================
+
+TEST(Cartridge, APrgPatchReplacesTheByteTheMapperReturned)
+{
+    // make_ines fills PRG so that byte i is (i & 0xFF). NROM maps $8000 to
+    // PRG offset 0, so $8002 reads 0x02 before any patch.
+    const std::vector<u8> rom = make_ines(2, 1);
+    std::string error;
+    auto cart = load(rom, error);
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    EXPECT_EQ(cart->read(0x8002), 0x02);
+
+    const nes::Cartridge::PrgPatch patch{ 0x8002, 0x55, -1 };
+    cart->set_prg_patches(std::span<const nes::Cartridge::PrgPatch>(&patch, 1));
+    EXPECT_EQ(cart->read(0x8002), 0x55);
+    // Only the named address moved.
+    EXPECT_EQ(cart->read(0x8003), 0x03);
+
+    cart->clear_prg_patches();
+    EXPECT_EQ(cart->read(0x8002), 0x02);
+}
+
+TEST(Cartridge, ACompareByteLetsAPatchApplyToOnlyOneValue)
+{
+    const std::vector<u8> rom = make_ines(2, 1);
+    std::string error;
+    auto cart = load(rom, error);
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    // $8002 is 0x02. A patch that expects 0x02 applies; one that expects
+    // anything else leaves the byte alone.
+    const nes::Cartridge::PrgPatch matching{ 0x8002, 0x55, 0x02 };
+    cart->set_prg_patches(std::span<const nes::Cartridge::PrgPatch>(&matching, 1));
+    EXPECT_EQ(cart->read(0x8002), 0x55);
+
+    const nes::Cartridge::PrgPatch missing{ 0x8002, 0x66, 0x03 };
+    cart->set_prg_patches(std::span<const nes::Cartridge::PrgPatch>(&missing, 1));
+    EXPECT_EQ(cart->read(0x8002), 0x02);
+}

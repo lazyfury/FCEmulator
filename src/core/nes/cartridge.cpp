@@ -393,7 +393,22 @@ u8 Cartridge::read(u16 address)
         return prg_ram_[static_cast<std::size_t>(address - kPrgRamBase) % prg_ram_.size()];
     }
 
-    return mapper_->read_prg(address);
+    u8 value = mapper_->read_prg(address);
+
+    // Game Genie patches act here, on the byte the cartridge returned, at the
+    // CPU address -- after banking. An eight letter code only applies when
+    // the byte already matches its compare value, which is how two banks that
+    // share an address are told apart.
+    for (const PrgPatch& patch : prg_patches_) {
+        if (patch.address != address) {
+            continue;
+        }
+        if (patch.compare >= 0 && static_cast<u8>(patch.compare) != value) {
+            continue;
+        }
+        value = patch.value;
+    }
+    return value;
 }
 
 void Cartridge::write(u16 address, u8 value)

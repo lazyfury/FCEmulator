@@ -38,17 +38,14 @@
 //
 // What is not here yet
 // --------------------
-// Cheat codes (retro_cheat_set, which speaks Game Genie strings rather than
-// this project's address/value pairs) are stage L3, and so is telling the
-// front end where RAM sits (RETRO_ENVIRONMENT_SET_MEMORY_MAPS). Until then
-// retro_cheat_set logs rather than pretending, and the memory views below are
-// exposed without a map. The custom extension in fc_libretro_ext.h carries
-// what libretro has no place for, including the raw cheat format and the
-// debugger's peek and poke.
+// Nothing in the standard ABI. The custom extension in fc_libretro_ext.h
+// carries what libretro has no place for: the raw cheat format, the debugger's
+// peek and poke, and the diagnostics the status line shows.
 // ---------------------------------------------------------------------------
 
 #include "libretro.h"
 
+#include "cheat_codes.hpp"
 #include "core/nes/machine.hpp"
 #include "core/types.hpp"
 #include "fc_libretro_ext.h"
@@ -375,6 +372,123 @@ const fc_libretro_ext_v1 kExt = {
     ext_cpu_pc,
 };
 
+// ---------------------------------------------------------------------------
+// Cheat codes
+//
+// libretro hands each code over by slot index and can disable one without
+// removing it, so the core remembers every code by index and rebuilds the
+// machine's two lists whenever anything changes. Rebuilding is cheap and
+// happens on load and on a settings edit, never in the frame loop.
+// ---------------------------------------------------------------------------
+
+struct CheatSlot {
+    bool enabled = false;
+    std::string code;
+};
+
+std::vector<CheatSlot> g_cheats;
+
+/// Turn the remembered code strings into the machine's two mechanisms.
+///
+/// A Game Genie code becomes a PRG patch on the cartridge; a Pro Action
+/// Replay code becomes a frozen RAM byte. They are separate lists because
+/// they are separate hardware ideas, and a machine can hold both.
+void rebuild_cheats()
+{
+    // The machine's cheat lists are only meaningful with a cartridge to apply
+    // them to, but the strings are remembered either way, so a front end that
+    // sets a code before loading still gets it.
+    if (g_machine == nullptr || g_machine->cartridge() == nullptr) {
+        return;
+    }
+
+    std::vector<fc::nes::Cartridge::PrgPatch> patches;
+    std::vector<fc::nes::Cheat> ram_cheats;
+
+    for (const CheatSlot& slot : g_cheats) {
+        if (!slot.enabled) {
+            continue;
+        }
+
+        const fc::libretro::DecodedCheat decoded = fc::libretro::decode_cheat(slot.code);
+        if (!decoded.ok) {
+            log_message(RETRO_LOG_WARN, "FC Emulator: not a cheat code: %s",
+                        slot.code.c_str());
+            continue;
+        }
+
+        if (decoded.rom_patch) {
+            patches.push_back(fc::nes::Cartridge::PrgPatch{
+                decoded.address, decoded.value, decoded.compare,
+            });
+        } else {
+            ram_cheats.push_back(fc::nes::Cheat{
+                decoded.address, decoded.value, /*freeze=*/true, /*enabled=*/true,
+            });
+        }
+    }
+
+    g_machine->cartridge()->set_prg_patches(patches);
+    g_machine->cheats().set(ram_cheats);
+
+    if (!patches.empty() || !ram_cheats.empty()) {
+        log_message(RETRO_LOG_INFO, "FC Emulator: %zu ROM patches, %zu RAM cheats",
+                    patches.size(), ram_cheats.size());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The memory map the front end searches
+//
+// A cheat search needs to know which emulated addresses are backed by which
+// host bytes, or it cannot turn "this byte changed" into an address a code
+// can name. The descriptors live at file scope because the front end is
+// promised the pointers stay valid, not just valid for the call.
+// ---------------------------------------------------------------------------
+
+retro_memory_descriptor g_memory_descriptors[2]{};
+retro_memory_map g_memory_map{};
+
+void publish_memory_maps()
+{
+    if (g_environ == nullptr || g_machine == nullptr) {
+        return;
+    }
+
+    unsigned count = 0;
+
+    // Console RAM: 2KB at $0000. The mirrors at $0800 and up are the same
+    // bytes, and a search that walks them would report each hit four times,
+    // so only the first range is published.
+    g_memory_descriptors[count].flags = RETRO_MEMDESC_SYSTEM_RAM;
+    g_memory_descriptors[count].ptr = g_machine->bus().ram().data();
+    g_memory_descriptors[count].offset = 0;
+    g_memory_descriptors[count].start = 0x0000;
+    g_memory_descriptors[count].select = 0;
+    g_memory_descriptors[count].disconnect = 0;
+    g_memory_descriptors[count].len = fc::nes::Ram::kSize;
+    g_memory_descriptors[count].addrspace = nullptr;
+    ++count;
+
+    // The cartridge's save RAM, when it has one a player would expect to keep.
+    fc::nes::Cartridge* cartridge = g_machine->cartridge();
+    if (cartridge != nullptr && cartridge->battery_backed()) {
+        g_memory_descriptors[count].flags = RETRO_MEMDESC_SAVE_RAM;
+        g_memory_descriptors[count].ptr = cartridge->prg_ram().data();
+        g_memory_descriptors[count].offset = 0;
+        g_memory_descriptors[count].start = fc::nes::Cartridge::kPrgRamBase;
+        g_memory_descriptors[count].select = 0;
+        g_memory_descriptors[count].disconnect = 0;
+        g_memory_descriptors[count].len = cartridge->prg_ram().size();
+        g_memory_descriptors[count].addrspace = nullptr;
+        ++count;
+    }
+
+    g_memory_map.descriptors = g_memory_descriptors;
+    g_memory_map.num_descriptors = count;
+    g_environ(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &g_memory_map);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -513,21 +627,35 @@ RETRO_API bool retro_unserialize(const void* data, size_t len)
 
 RETRO_API void retro_cheat_reset(void)
 {
+    g_cheats.clear();
+
+    // Take the patches back out of the running machine as well as out of the
+    // list, or a disabled cheat would keep working.
     if (g_machine != nullptr) {
         g_machine->cheats().clear();
+        if (g_machine->cartridge() != nullptr) {
+            g_machine->cartridge()->clear_prg_patches();
+        }
     }
 }
 
 RETRO_API void retro_cheat_set(unsigned index, bool enabled, const char* code)
 {
-    (void)index;
-    (void)enabled;
-    (void)code;
+    if (code == nullptr) {
+        return;
+    }
 
-    // libretro carries cheats as Game Genie and Pro Action Replay strings,
-    // which are a different language from this machine's address/value pairs.
-    // Translating them is stage L3; until then, say so rather than pretending.
-    log_message(RETRO_LOG_WARN, "FC Emulator: cheat codes are not implemented yet");
+    // The front end indexes cheats, and can switch one off without telling the
+    // core what the others are. A slot that has never been written is simply
+    // not there, which is why the list is grown rather than required to be
+    // dense.
+    if (g_cheats.size() <= index) {
+        g_cheats.resize(static_cast<std::size_t>(index) + 1);
+    }
+    g_cheats[index].enabled = enabled;
+    g_cheats[index].code = code;
+
+    rebuild_cheats();
 }
 
 RETRO_API bool retro_load_game(const struct retro_game_info* game)
@@ -572,6 +700,13 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
         g_rom_summary = cartridge->summary();
         log_message(RETRO_LOG_INFO, "FC Emulator: %s", g_rom_summary.c_str());
     }
+
+    // Both of these depend on the cartridge that just went in: the memory map
+    // on whether it has save RAM, the cheats on which addresses its PRG space
+    // answers. A front end may have set cheats before loading, so they are
+    // applied here rather than only on the next retro_cheat_set.
+    publish_memory_maps();
+    rebuild_cheats();
     return true;
 }
 
@@ -592,6 +727,9 @@ RETRO_API void retro_unload_game(void)
     g_machine = nullptr;
     g_halted = false;
     g_rom_summary.clear();
+    // Codes are the front end's, but the patches they became were this
+    // machine's. The next cartridge starts with neither.
+    g_cheats.clear();
 }
 
 RETRO_API unsigned retro_get_region(void)
@@ -715,6 +853,7 @@ RETRO_API void retro_deinit(void)
     g_machine = nullptr;
     g_halted = false;
     g_rom_summary.clear();
+    g_cheats.clear();
     g_environ = nullptr;
     g_video = nullptr;
     g_audio = nullptr;

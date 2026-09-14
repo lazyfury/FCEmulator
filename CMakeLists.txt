@@ -104,6 +104,7 @@ option(FC_BUILD_LIBRETRO "Build the libretro core" ON)
 if(FC_BUILD_LIBRETRO)
     add_library(fc_libretro MODULE
         src/libretro/fc_libretro.cpp
+        src/libretro/cheat_codes.cpp
     )
     target_include_directories(fc_libretro PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src

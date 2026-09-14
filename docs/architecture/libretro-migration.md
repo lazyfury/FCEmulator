@@ -1,6 +1,6 @@
 # 迁移到 libretro ABI —— 调研与计划 v2
 
-> 状态：**L1、L2 完成，L3+ 未执行**。
+> 状态：**L1、L2、L3 完成，L4+ 未执行**。
 > v2 变更：确立 **libretro 为准**；列出**暂时隐藏**的功能；新增 **custom ABI 扩展**设计；
 > 用实验**确认了 wasm 动态加载外部核心的可行性**（结论：原生 core 不行，专用
 > wasm side module 可以，已验证）。
@@ -186,8 +186,8 @@ interface CoreHost {
 | **L0** | 调研（本文） | 文档 + wasm 实验 | ✅ |
 | **L1** | native 适配层 `fc_libretro.cpp` + `third_party/libretro/libretro.h` + CMake MODULE target；音频/视频/输入/存档转换 | RetroArch 能加载运行 | ✅ 已完成 |
 | **L2** | custom 扩展符号 `fc_libretro_get_ext()`；`Cartridge::prg_ram()`、`NesBus::ram_data()`、电池标志；RAM 型金手指 | 电池存档、内存视图、custom 通道 | ✅ 已完成 |
-| **L3** | Game Genie/PAR 解码 + ROM 补丁钩子 + `SET_MEMORY_MAPS` | 金手指完整、搜索可用 | 进行中 |
-| **L4** | wasm：`fc_core` 编译为 SIDE_MODULE，宿主编译为 MAIN_MODULE，回调桥接；解决内存增长导致的视图失效 | 浏览器/Electron 可 `dlopen` 本 core | 4~7 人天 |
+| **L3** | Game Genie/PAR 解码 + ROM 补丁钩子 + `SET_MEMORY_MAPS` | 金手指完整、搜索可用 | ✅ 已完成 |
+| **L4** | wasm：`fc_core` 编译为 SIDE_MODULE，宿主编译为 MAIN_MODULE，回调桥接；解决内存增长导致的视图失效 | 浏览器/Electron 可 `dlopen` 本 core | 进行中 |
 | **L5** | Electron `CoreHost` 切到 libretro 宿主；隐藏 §4.2 功能；回归 | 前端 libretro 化 | 1 周 |
 | **L6** | mGBA 编为 wasm side module + 系统注册表 + UI 泛化 | `.gba` 可玩 | 3~7 人天 |
 | 备选 | native core host（B1）`native/core-host` + IPC | 可加载任意现成 `.dylib` | 1~2 周 |

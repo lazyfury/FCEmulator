@@ -98,6 +98,38 @@ public:
         return header_.has_battery && mapper_ != nullptr && mapper_->has_work_ram();
     }
 
+    // -- Game Genie patches --------------------------------------------------
+    //
+    // A Game Genie does not modify the ROM. It sits between the cartridge and
+    // the console and rewrites the byte on the data bus, which means it acts
+    // on the CPU address ($8000-$FFFF), after the mapper has done its banking.
+    // That is why the patch lives here and not in the mapper: two different
+    // banks of the same address get the patch separately, exactly as on the
+    // real hardware.
+    //
+    // `compare` is the value the cartridge must already be returning for the
+    // patch to apply, or -1 to apply unconditionally. It is what an eight
+    // letter code carries and a six letter code does not.
+
+    /// One patch applied to PRG ROM reads.
+    struct PrgPatch {
+        u16 address = 0;
+        u8 value = 0;
+        int compare = -1;
+    };
+
+    void set_prg_patches(std::span<const PrgPatch> patches)
+    {
+        prg_patches_.assign(patches.begin(), patches.end());
+    }
+
+    void clear_prg_patches() noexcept { prg_patches_.clear(); }
+
+    [[nodiscard]] std::span<const PrgPatch> prg_patches() const noexcept
+    {
+        return prg_patches_;
+    }
+
     /// A one line summary, for tooling.
     [[nodiscard]] std::string summary() const;
 
@@ -111,6 +143,7 @@ private:
     std::vector<u8> prg_ram_ = std::vector<u8>(kPrgRamSize, 0);
     std::unique_ptr<Mapper> mapper_;
     bool prg_ram_enabled_ = true;
+    std::vector<PrgPatch> prg_patches_;
 
     friend struct fc::StateAccess;
 };

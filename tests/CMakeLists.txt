@@ -38,10 +38,12 @@ add_executable(fc_tests
     test_state.cpp
     test_ffi.cpp
     test_libretro.cpp
+    test_cheat_codes.cpp
     # The libretro adapter is compiled in here as well as into the shared
     # object, so the ABI is covered by the ordinary test run rather than only
     # by the probe. One small file, two builds, and the same source either way.
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/libretro/fc_libretro.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/libretro/cheat_codes.cpp
 )
 
 target_include_directories(fc_tests PRIVATE
