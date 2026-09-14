@@ -1,6 +1,6 @@
 # 迁移到 libretro ABI —— 调研与计划 v2
 
-> 状态：**L1、L2、L3 完成；L4 已实测调研，方案待决策（见 §7.5）**。
+> 状态：**L1~L4 完成（L4 采用 L4a）；L5、L6 未执行**。
 > v2 变更：确立 **libretro 为准**；列出**暂时隐藏**的功能；新增 **custom ABI 扩展**设计；
 > 用实验**确认了 wasm 动态加载外部核心的可行性**（结论：原生 core 不行，专用
 > wasm side module 可以，已验证）。
@@ -187,7 +187,7 @@ interface CoreHost {
 | **L1** | native 适配层 `fc_libretro.cpp` + `third_party/libretro/libretro.h` + CMake MODULE target；音频/视频/输入/存档转换 | RetroArch 能加载运行 | ✅ 已完成 |
 | **L2** | custom 扩展符号 `fc_libretro_get_ext()`；`Cartridge::prg_ram()`、`NesBus::ram_data()`、电池标志；RAM 型金手指 | 电池存档、内存视图、custom 通道 | ✅ 已完成 |
 | **L3** | Game Genie/PAR 解码 + ROM 补丁钩子 + `SET_MEMORY_MAPS` | 金手指完整、搜索可用 | ✅ 已完成 |
-| **L4** | wasm 加载本 core：side module 已验证可行但 C++ 运行时需对齐；推荐改为**独立 wasm 模块 + JS libretro frontend**（§7.5 L4a） | 浏览器/Electron 可加载本 core | ⏸ 待决策 |
+| **L4** | wasm 加载本 core：采用 **L4a —— 独立 wasm 模块 + JS libretro frontend**（`wasm/libretro.mjs`）。side module 机制对 C core 已验证可行；C++ 运行时对齐问题绕开 | 浏览器/Node 可加载本 core | ✅ 已完成 |
 | **L5** | Electron `CoreHost` 切到 libretro 宿主；隐藏 §4.2 功能；回归 | 前端 libretro 化 | 1 周 |
 | **L6** | mGBA 编为 wasm side module + 系统注册表 + UI 泛化 | `.gba` 可玩 | 3~7 人天 |
 | 备选 | native core host（B1）`native/core-host` + IPC | 可加载任意现成 `.dylib` | 1~2 周 |
@@ -355,6 +355,16 @@ callback count=3
 **建议**：L4a 落地本项目自身的 libretro wasm 产物与 JS `CoreHost`；
 L6 接 mGBA 时优先 L4a（编 mGBA wasm 模块），若坚持用官方预编译 core
 则走 L4c。L5 的 `CoreHost` 接口对 a/b/c 三者都兼容。
+
+**已决策并实现**：L4 采用 L4a。`wasm/CMakeLists.txt` 新增 `fc_libretro_wasm`
+目标，产出 `wasm/dist/fc_libretro.mjs` + `fc_libretro.wasm`；回调由
+`wasm/libretro.mjs` 用 `addFunction` 注册（environment / video / audio batch /
+input poll+state），并对外暴露与计划一致的 `CoreHost` 形状（loadGame / run /
+framebuffer / audio / memory / serialize / cheat / extension）。因为是独立模块，
+`ALLOW_MEMORY_GROWTH=0` 得以保留，typed array 视图不会失效。
+验收：`node wasm/libretro_test.mjs`（合成电池 NROM，无需真实 ROM）——
+ABI、XRGB8888、256×240、~734 stereo/帧、两端口轮询、2KB/8KB 内存视图、
+存档往返像素一致、custom 扩展版本，全部通过。
 
 ---
 
