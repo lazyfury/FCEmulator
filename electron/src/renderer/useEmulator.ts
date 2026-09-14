@@ -1,0 +1,858 @@
+// ---------------------------------------------------------------------------
+// The engine loop.
+//
+// Everything that has to happen once per frame, once per second, and once per
+// lifetime lives here, so the component below it can be a canvas and nothing
+// else.
+//
+// Who owns the clock
+// ------------------
+// The NES does not run at 60Hz. It runs at 60.0988, because the PPU's dot
+// clock divides the NTSC colour burst that way, and that 0.16% is not noise:
+// over ten minutes it is a whole second of drift, and the music will not line
+// up with the picture.
+//
+// A display, on the other hand, refreshes at exactly 60.000Hz, and the only
+// event a web page gets is requestAnimationFrame, which fires once per
+// refresh. So the renderer cannot run "one frame per animation frame" -- that
+// is the subtle bug the Swift front end shipped with, and it makes the game
+// run 0.16% slow.
+//
+// What works instead is an accumulator. Keep the time the next emulated frame
+// is *due*, and on every animation frame run however many frames have come
+// due since last time -- usually one, occasionally two, sometimes none. The
+// game then runs at the right speed, and the cost is that the picture judders
+// by up to one frame, which is the correct trade.
+//
+// The alternative, running frames in a Web Worker on its own clock, is more
+// accurate still and will be worth doing when audio needs it. It is not
+// needed to draw a correct picture.
+// ---------------------------------------------------------------------------
+
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import { Button, Emulator } from '@wasm';
+
+import { AudioOutput } from './audio/output';
+import { attachKeyboard, InputManager, type ButtonName, type CommandName } from './input';
+import { GamepadSource } from './gamepad';
+import { Rewind } from './rewind';
+
+/** 60.0988 frames per second, the console's real rate. */
+const NES_FRAME_SECONDS = 1 / 60.0988;
+
+/**
+ * How many frames one animation frame is allowed to catch up on.
+ *
+ * Without a cap, one long stall -- a breakpoint, a laptop waking up, a virus
+ * scanner -- would leave the accumulator permanently behind, and the emulator
+ * would spend the next minute running at double speed trying to catch up. Past
+ * this many, the backlog is abandoned instead.
+ */
+const MAX_CATCHUP_FRAMES = 4;
+
+/** How often the status line is refreshed. Sixty React renders a second to
+ *  update a text field is waste, and it shows up as jitter. */
+const STATUS_INTERVAL_MS = 250;
+
+export type EngineState = 'loading' | 'running' | 'halted' | 'error';
+
+/** What the audio ring is doing, for the status line. */
+export interface AudioStatus {
+    /** 'running', 'suspended', 'closed', or 'unavailable'. */
+    state: string;
+    /** Samples waiting in the ring. */
+    fill: number;
+    /** Where the fill is being held, by the rate control. */
+    targetFill: number;
+    /** Times the audio thread ran out. */
+    underruns: number;
+    /** Samples the ring had no room for. Should stay at zero. */
+    dropped: number;
+}
+
+export interface EngineStatus {
+    state: EngineState;
+    /** Emulated frames per second, averaged over the last status window. */
+    fps: number;
+    frameCount: number;
+    totalCycles: number;
+    cpuPc: number;
+    romSummary: string;
+    romPath: string | null;
+    /** Highest APU sample in the last window. 0.000 means silence. */
+    audioPeak: number;
+    /** Which switches are down right now, for the status line. */
+    held: ButtonName[];
+    /** True while the frame loop is held still. */
+    paused: boolean;
+    /** True while the player is holding the rewind key. */
+    rewinding: boolean;
+    /** How far back the machine can be wound, or null if it cannot be. */
+    rewind: { depth: number; seconds: number; bytes: number } | null;
+    /** A short lived note about the last thing the player asked for, such as
+     *  "saved slot 1". Null most of the time. */
+    message: string | null;
+    /** Null until the audio pipeline exists, and if it could not be built. */
+    audio: AudioStatus | null;
+    audioError: string | null;
+    error: string | null;
+}
+
+const INITIAL: EngineStatus = {
+    state: 'loading',
+    fps: 0,
+    frameCount: 0,
+    totalCycles: 0,
+    cpuPc: 0,
+    romSummary: '',
+    romPath: null,
+    audioPeak: 0,
+    held: [],
+    paused: false,
+    rewinding: false,
+    rewind: null,
+    message: null,
+    audio: null,
+    audioError: null,
+    error: null,
+};
+
+export interface EmulatorHandle {
+    status: EngineStatus;
+    /** Load a game by path. False if it could not be read or is not a ROM. */
+    loadRom(path: string): Promise<boolean>;
+    /** Take the cartridge out and stop running. */
+    unload(): void;
+    /**
+     * The same commands the keyboard sends: pause, reset, save and load.
+     *
+     * The toolbar buttons are not a second implementation of any of them --
+     * they go through the one command handler, so a button and F1 cannot
+     * disagree about what "save" means.
+     */
+    command(command: CommandName): void;
+}
+
+export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): EmulatorHandle {
+    const [status, setStatus] = useState<EngineStatus>(INITIAL);
+
+    // The two things a caller can ask for, held in a ref so that the functions
+    // handed out never change identity. A component that put them in a
+    // dependency array would otherwise reload the emulator on every render.
+    const actions = useRef<{
+        loadRom: (path: string) => Promise<boolean>;
+        unload: () => void;
+        command: (command: CommandName) => void;
+    }>({
+        loadRom: async () => false,
+        unload: () => undefined,
+        command: () => undefined,
+    });
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (canvas === null) {
+            return;
+        }
+
+        // alpha:false because every pixel is opaque and the compositor should
+        // not have to blend the whole screen every frame.
+        const context = canvas.getContext('2d', { alpha: false });
+        if (context === null) {
+            setStatus({ ...INITIAL, state: 'error', error: 'the canvas has no 2d context' });
+            return;
+        }
+
+        let disposed = false;
+        let animationFrame = 0;
+        let emulator: Emulator | null = null;
+        let detachKeyboard: (() => void) | null = null;
+        let commandHandler: ((command: CommandName) => void) | null = null;
+        let gamepad: GamepadSource | null = null;
+        let rewind: Rewind | null = null;
+        // The flash message's timeout lives out here because the cleanup has
+        // to be able to cancel it.
+        let flashTimer = 0;
+        let audio: AudioOutput | null = null;
+        let audioError: string | null = null;
+
+        const fail = (error: string): void => {
+            setStatus({ ...INITIAL, state: 'error', error });
+        };
+
+        const start = async (): Promise<void> => {
+            setStatus((s) => ({ ...s, state: 'loading' }));
+
+            // Where fc_core.mjs lives depends on whether this page came from
+            // the Vite dev server or the app:// protocol, so ask the document
+            // instead of hardcoding. `@vite-ignore` stops Vite trying to
+            // bundle a path it cannot resolve at build time.
+            const moduleUrl = new URL('fc_core.mjs', document.baseURI).href;
+            const factory = (await import(/* @vite-ignore */ moduleUrl)) as {
+                default: () => Promise<unknown>;
+            };
+
+            const wasm = await factory.default();
+            if (disposed) {
+                return;
+            }
+
+            emulator = await Emulator.create({ module: wasm as never });
+            const engine = emulator;
+            if (disposed) {
+                engine.destroy();
+                emulator = null;
+                return;
+            }
+
+            // A machine with no cartridge in it yet. The library screen runs
+            // over the top of this, and a game is loaded when the player picks
+            // one -- or straight away, if the command line named one.
+            let loaded = false;
+
+            // One manager for every input source. The keyboard reports into
+            // it today; a gamepad will report into the same one, and the
+            // console will only ever see the combined state. See input.ts for
+            // why that indirection is not optional.
+            const manager = new InputManager((button, pressed) => {
+                engine.setButton(Button[button], pressed);
+            });
+
+            detachKeyboard = attachKeyboard(manager, {
+                onCommand: (command) => commandHandler?.(command),
+                onCommandState: (command, held) => {
+                    if (command === 'rewind') {
+                        rewinding = held;
+                        if (!held) {
+                            // Coming out of a rewind, do not run a burst of
+                            // frames to make up for the time it took.
+                            nextFrameTime = performance.now() / 1000;
+                        }
+                    }
+                },
+            });
+
+            // The second input source. It reports into the same manager, so a
+            // button held on a pad is not dropped by letting go of a key.
+            //
+            // Switched off unless asked for, and the reason is not caution --
+            // see FcBridge.gamepadEnabled. Merely listening for a gamepad
+            // makes this application impossible to quit on macOS.
+            if (window.fc.gamepadEnabled) {
+                gamepad = new GamepadSource(manager);
+            }
+
+            // Audio. This can fail -- SharedArrayBuffer needs the page to be
+            // cross origin isolated -- and when it does the game still runs,
+            // silently. Reporting that in the status line is better than
+            // throwing away a working picture because the speaker was busy.
+            try {
+                audio = await AudioOutput.create();
+                audio.resume().catch(() => undefined);
+            } catch (error) {
+                audioError = error instanceof Error ? error.message : String(error);
+                audio = null;
+            }
+            if (disposed) {
+                void audio?.close();
+                audio = null;
+                engine.destroy();
+                emulator = null;
+                return;
+            }
+
+            canvas.width = engine.width;
+            canvas.height = engine.height;
+
+            // 256x240 RGBA, allocated once and rewritten every frame.
+            const image = context.createImageData(engine.width, engine.height);
+
+            // And the framebuffer view, taken once. This is only safe because
+            // the wasm heap never grows (see wasm/CMakeLists.txt): if it could,
+            // this view would be detached by the first growth and every frame
+            // after that would be drawn from an empty buffer.
+            const framebuffer = engine.framebufferBytes();
+
+            /**
+             * Turn the emulator's pixels into an image on the canvas.
+             *
+             * The emulator stores 0x00RRGGBB, so little endian in memory the
+             * bytes run B, G, R, 0. A canvas wants R, G, B, A. This loop is
+             * the whole of the conversion, 61440 iterations, roughly a fifth
+             * of a millisecond. Later this can become a WebGL texture with a
+             * BGRA format and cost nothing at all; it is not yet worth the
+             * complexity, and it is worth measuring before optimising.
+             */
+            const blit = (): void => {
+                const destination = image.data;
+                for (let source = 0, out = 0; out < destination.length; source += 4, out += 4) {
+                    destination[out] = framebuffer[source + 2];
+                    destination[out + 1] = framebuffer[source + 1];
+                    destination[out + 2] = framebuffer[source];
+                    destination[out + 3] = 255;
+                }
+                context.putImageData(image, 0, 0);
+            };
+
+            /**
+             * Empty the APU's queue: measure it, and hand it to the speaker.
+             *
+             * This is not free to skip. The APU queues samples until somebody
+             * takes them, and with a fixed 64MB heap a front end that never
+             * drains would run the emulator out of memory in about a quarter
+             * of an hour.
+             */
+            const drainAudio = (): number => {
+                const samples = engine.takeSamples();
+                if (samples.length === 0) {
+                    return 0;
+                }
+
+                let peak = 0;
+                for (let i = 0; i < samples.length; i += 1) {
+                    const sample = samples[i];
+                    if (sample > peak) {
+                        peak = sample;
+                    }
+                }
+
+                audio?.push(samples);
+                return peak;
+            };
+
+            /**
+             * A fingerprint of the picture on screen, so a test can compare
+             * this window against another build without anybody having to look
+             * at it.
+             *
+             * The bytes hashed are the R,G,B triples, which is exactly what a
+             * PPM holds after its 15 byte header -- so a hash taken here can be
+             * compared with `tail -c +16 frame.ppm | shasum -a 256`.
+             *
+             * A screenshot would not do. It has the browser's scaling in it,
+             * and a picture that is subtly wrong in a way nobody notices is
+             * precisely what these tests exist to catch.
+             */
+            const hashPixels = async (): Promise<string> => {
+                const rgb = new Uint8Array(engine.width * engine.height * 3);
+                for (let source = 0, out = 0; out < rgb.length; source += 4, out += 3) {
+                    rgb[out] = framebuffer[source + 2];
+                    rgb[out + 1] = framebuffer[source + 1];
+                    rgb[out + 2] = framebuffer[source];
+                }
+                const digest = await crypto.subtle.digest('SHA-256', rgb);
+                return Array.from(new Uint8Array(digest))
+                    .map((byte) => byte.toString(16).padStart(2, '0'))
+                    .join('');
+            };
+
+            let nextFrameTime = performance.now() / 1000;
+            let paused = false;
+            let rewinding = false;
+            let windowFrames = 0;
+            let windowStartedAt = performance.now();
+            let windowPeak = 0;
+
+            // Kept for the whole run, not just the current status window, so
+            // `--audiotest` can ask whether the game ever made a sound.
+            let peakSeen = 0;
+
+            const tick = (nowMs: number): void => {
+                animationFrame = requestAnimationFrame(tick);
+                const now = nowMs / 1000;
+
+                // Polled here because the Gamepad API has no change events:
+                // there is only a snapshot of where every control is now, and
+                // looking at it once per animation frame is the whole
+                // protocol.
+                gamepad?.poll();
+
+                // Rewinding: one snapshot per animation frame. A snapshot is
+                // everyFrames frames apart, so this walks backwards at about
+                // the speed the console ran forwards.
+                if (rewinding && loaded) {
+                    nextFrameTime = now;
+                    if (rewind === null || !rewind.stepBack()) {
+                        // At the beginning of the ring. Stop, rather than
+                        // holding the key and doing nothing.
+                        rewinding = false;
+                    } else {
+                        audio?.clear();
+                        blit();
+                        return;
+                    }
+                }
+
+                // Paused: keep the clock pinned to now rather than letting the
+                // backlog grow, so resuming runs the next frame immediately
+                // instead of running four frames to catch up.
+                if (paused || !loaded) {
+                    nextFrameTime = now;
+                    return;
+                }
+
+                if (now < nextFrameTime) {
+                    return;
+                }
+
+                let ran = 0;
+                while (now >= nextFrameTime && ran < MAX_CATCHUP_FRAMES) {
+                    if (!engine.runFrame()) {
+                        setStatus((s) => ({
+                            ...s,
+                            state: 'halted',
+                            error: 'the CPU halted: the emulator met an opcode it does not implement',
+                        }));
+                        cancelAnimationFrame(animationFrame);
+                        animationFrame = 0;
+                        return;
+                    }
+                    const peak = drainAudio();
+                    if (peak > windowPeak) {
+                        windowPeak = peak;
+                    }
+                    if (peak > peakSeen) {
+                        peakSeen = peak;
+                    }
+
+                    // The emulator's frame rate is nudged by up to half a
+                    // percent so the audio ring stays at its target. See
+                    // audio/output.ts: the system clock and the sound card's
+                    // crystal disagree, and without this the ring slowly
+                    // fills or empties until the player hears a gap.
+                    rewind?.record();
+
+                    nextFrameTime += NES_FRAME_SECONDS * (1 + (audio?.rateCorrection ?? 0));
+                    ran += 1;
+                }
+
+                if (ran === MAX_CATCHUP_FRAMES) {
+                    nextFrameTime = now;
+                }
+
+                blit();
+
+                windowFrames += ran;
+                const elapsed = nowMs - windowStartedAt;
+                if (elapsed >= STATUS_INTERVAL_MS) {
+                    const fps = (windowFrames * 1000) / elapsed;
+                    setStatus((s) => ({
+                        ...s,
+                        state: 'running',
+                        fps,
+                        frameCount: engine.frameCount,
+                        totalCycles: engine.totalCycles,
+                        cpuPc: engine.cpuPc,
+                        audioPeak: windowPeak,
+                        held: manager.held,
+                        paused,
+                        rewinding,
+                        rewind: rewind === null || !rewind.available ? null : {
+                            depth: rewind.depth,
+                            seconds: rewind.seconds,
+                            bytes: rewind.bytes,
+                        },
+                        audio: audio === null ? null : {
+                            state: audio.state,
+                            fill: audio.fill,
+                            targetFill: audio.targetFill,
+                            underruns: audio.underruns,
+                            dropped: audio.dropped,
+                        },
+                    }));
+                    windowFrames = 0;
+                    windowPeak = 0;
+                    windowStartedAt = nowMs;
+                }
+            };
+
+            /**
+             * Put a cartridge in the slot and start running.
+             *
+             * Also reaches the machine's own reset() and clears the audio, so
+             * that changing games does not leave the previous one's sound
+             * queued up or its keys held down.
+             */
+            const applyRom = (bytes: Uint8Array, path: string): boolean => {
+                if (!engine.loadRom(bytes)) {
+                    flash(`could not load ${path}: ${engine.lastError}`);
+                    return false;
+                }
+
+                // What the native tools do before their loop, so a run here can
+                // be compared against theirs cycle for cycle.
+                engine.reset();
+
+                manager.releaseEverything();
+                engine.releaseAllButtons();
+                audio?.clear();
+
+                // A new cartridge means the old snapshots describe a machine
+                // that no longer exists, and the ring's slot size depended on
+                // the old cartridge's RAM.
+                rewind?.destroy();
+                rewind = new Rewind(engine);
+
+                loaded = true;
+                paused = false;
+                nextFrameTime = performance.now() / 1000;
+                setStatus((s) => ({
+                    ...s,
+                    state: 'running',
+                    paused: false,
+                    message: null,
+                    romPath: path,
+                    romSummary: engine.romSummary,
+                }));
+
+                void window.fc.notePlayed(path);
+                // And which cartridge this is, so that saving and loading know
+                // where the slots belong. The main process cannot work it out
+                // from the command line alone -- a game picked out of the
+                // library was never on it.
+                void window.fc.setCartridge(path);
+                return true;
+            };
+
+            const loadRom = async (path: string): Promise<boolean> => {
+                const bytes = await window.fc.readRom(path);
+                if (bytes === null) {
+                    flash('could not read that game');
+                    return false;
+                }
+                return applyRom(bytes, path);
+            };
+
+            const unload = (): void => {
+                loaded = false;
+                paused = false;
+                rewinding = false;
+                rewind?.destroy();
+                rewind = null;
+                manager.releaseEverything();
+                engine.releaseAllButtons();
+                audio?.clear();
+                // No cartridge, no save slots. The next game will name its own.
+                void window.fc.setCartridge(null);
+                setStatus((s) => ({ ...s, paused: false, message: null, held: [] }));
+            };
+
+            actions.current = { loadRom, unload, command: (c) => commandHandler?.(c) };
+
+            /** A short note in the status line, gone again in two seconds. */
+            const flash = (text: string): void => {
+                setStatus((s) => ({ ...s, message: text }));
+                window.clearTimeout(flashTimer);
+                flashTimer = window.setTimeout(() => {
+                    setStatus((s) => ({ ...s, message: null }));
+                }, 2000);
+            };
+
+            const saveTo = async (slot: number): Promise<void> => {
+                const bytes = engine.saveState();
+                if (bytes === null) {
+                    flash('nothing to save');
+                    return;
+                }
+                const written = await window.fc.saveState(slot, bytes);
+                flash(written ? `saved slot ${slot}` : `could not save slot ${slot}`);
+            };
+
+            const loadFrom = async (slot: number): Promise<void> => {
+                const bytes = await window.fc.loadState(slot);
+                if (bytes === null) {
+                    flash(`slot ${slot} is empty`);
+                    return;
+                }
+                if (!engine.loadState(bytes)) {
+                    flash('that save is not for this game');
+                    return;
+                }
+                // The audio queued before the jump describes a machine that no
+                // longer exists, and neither do the snapshots.
+                audio?.clear();
+                rewind?.reset();
+                flash(`loaded slot ${slot}`);
+            };
+
+            commandHandler = (command: CommandName): void => {
+                switch (command) {
+                case 'pause':
+                    paused = !paused;
+                    if (paused) {
+                        audio?.clear();
+                    } else {
+                        nextFrameTime = performance.now() / 1000;
+                        void audio?.resume();
+                    }
+                    setStatus((s) => ({ ...s, paused }));
+                    flash(paused ? 'paused' : 'running');
+                    break;
+                case 'reset':
+                    engine.reset();
+                    audio?.clear();
+                    rewind?.reset();
+                    flash('reset');
+                    break;
+                case 'save1': case 'save2': case 'save3':
+                    void saveTo(Number(command.slice(4)));
+                    break;
+                case 'load1': case 'load2': case 'load3':
+                    void loadFrom(Number(command.slice(4)));
+                    break;
+                case 'quicksave':
+                    void saveTo(0);
+                    break;
+                case 'quickload':
+                    void loadFrom(0);
+                    break;
+                }
+            };
+
+            // Ready, with no cartridge in the slot. applyRom() above fills in
+            // the game's details when one arrives.
+            setStatus({ ...INITIAL, state: 'running', audioError });
+
+            // The hook `pnpm run selftest` drives, through
+            // webContents.executeJavaScript. Nothing in the game uses it.
+            //
+            // It takes a plan rather than a frame count because input has to
+            // be part of the test. A scripted press is applied at the same
+            // point in the frame the real one would be, and the picture is
+            // hashed at each requested frame so the caller can compare more
+            // than just the end state.
+            window.__fc = {
+                ready: true,
+
+                /** Which switches are down, as the emulator has them. Used by
+                 *  `electron . --keytest`, which presses real keys through
+                 *  Chromium and then asks what arrived. */
+                held: () => manager.held,
+
+                /**
+                 * Frames completed since power on. Paired with a reading taken
+                 * a few seconds earlier, this is how `--audiotest` finds out
+                 * whether the emulator kept up while audio was running.
+                 */
+                frames: () => engine.frameCount,
+
+                /**
+                 * The live audio pipeline: fill, underruns, dropped samples.
+                 *
+                 * `--audiotest` runs the application in real time and then
+                 * asks for this, which is the only way to find out whether
+                 * samples are reaching the audio thread. The self test cannot
+                 * answer that, because it runs a whole run's worth of frames
+                 * in one go and never touches the ring.
+                 */
+                audio: () => (audio === null ? { peak: peakSeen, error: audioError } : {
+                    state: audio.state,
+                    fill: audio.fill,
+                    targetFill: audio.targetFill,
+                    underruns: audio.underruns,
+                    dropped: audio.dropped,
+                    peak: peakSeen,
+                    error: audioError,
+                }),
+
+                selftest: async (plan) => {
+                    let error: string | null = null;
+                    let peak = 0;
+                    const audioChunks: Float32Array[] = [];
+
+                    // Group the script by frame, so the inner loop does not
+                    // search for each frame's events.
+                    const byFrame = new Map<number, typeof plan.script>();
+                    for (const event of plan.script) {
+                        const events = byFrame.get(event.frame) ?? [];
+                        events.push(event);
+                        byFrame.set(event.frame, events);
+                    }
+
+                    const wanted = new Set(plan.snapshots);
+                    const hashes: { frame: number; hash: string }[] = [];
+
+                    // The round trip, through the real save path: serialize,
+                    // hand the bytes to the main process, let it write them to
+                    // disk, read them back and put the machine into them.
+                    //
+                    // It happens in the middle of every self test run, which
+                    // means it is checked against the native build's own
+                    // hashes: a round trip that changed anything would show up
+                    // as a mismatch rather than needing a test of its own.
+                    let roundtripError: string | null = null;
+
+                    for (let frame = 1; frame <= plan.frames; frame += 1) {
+                        // Pressed before the frame runs, which is where a real
+                        // press lands: the game samples the port once per
+                        // frame, during vblank.
+                        for (const event of byFrame.get(frame) ?? []) {
+                            engine.setButton(Button[event.button], event.pressed);
+                        }
+
+                        if (!engine.runFrame()) {
+                            error = `the CPU halted at frame ${frame}`;
+                            break;
+                        }
+
+                        // The ring the self test drives directly, because the
+                        // loop below is not the animation frame loop and would
+                        // otherwise never fill it.
+                        rewind?.record();
+
+                        // Drained by hand rather than through drainAudio():
+                        // this loop runs a whole run's worth of frames in one
+                        // go, which is far more than the ring holds, and the
+                        // point here is to keep a copy to hash.
+                        const samples = engine.takeSamples();
+                        if (samples.length > 0) {
+                            for (let i = 0; i < samples.length; i += 1) {
+                                if (samples[i] > peak) {
+                                    peak = samples[i];
+                                }
+                            }
+                            audioChunks.push(samples.slice());
+                        }
+
+                        if (plan.roundtrip !== null && frame === plan.roundtrip.frame) {
+                            const bytes = engine.saveState();
+                            if (bytes === null) {
+                                roundtripError = 'nothing to save';
+                            } else if (!await window.fc.saveState(plan.roundtrip.slot, bytes)) {
+                                roundtripError = 'the main process could not write the save';
+                            } else {
+                                const back = await window.fc.loadState(plan.roundtrip.slot);
+                                if (back === null || !engine.loadState(back)) {
+                                    roundtripError = 'the save did not load back';
+                                }
+                            }
+                        }
+
+                        if (wanted.has(frame)) {
+                            hashes.push({ frame, hash: await hashPixels() });
+                        }
+                    }
+
+                    // Wind back and replay, at the very end so that the audio
+                    // collected above is not disturbed by frames running a
+                    // second time.
+                    //
+                    // This is the property that matters for rewind: going back
+                    // five snapshots and running forward the same number of
+                    // frames has to land on exactly the frame it left, or the
+                    // snapshots are not what they claim to be.
+                    let rewindHash: string | null = null;
+                    if (plan.rewindSteps > 0 && rewind !== null) {
+                        let stepped = 0;
+                        for (let i = 0; i < plan.rewindSteps; i += 1) {
+                            if (!rewind.stepBack()) {
+                                break;
+                            }
+                            stepped += 1;
+                        }
+
+                        for (let i = 0; i < stepped * rewind.everyFrames; i += 1) {
+                            if (!engine.runFrame()) {
+                                error = 'the CPU halted while replaying after a rewind';
+                                break;
+                            }
+                        }
+
+                        rewindHash = await hashPixels();
+                        rewind.reset();
+                    }
+
+                    blit();
+
+                    // The samples, as raw little endian float32, in the order
+                    // the APU produced them. The same bytes
+                    // `fc_headless --samples` writes, so the two can be
+                    // compared with cmp -- which is the only way to be sure
+                    // the mixing did not change on the way to the speaker.
+                    const total = audioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                    const all = new Float32Array(total);
+                    let offset = 0;
+                    for (const chunk of audioChunks) {
+                        all.set(chunk, offset);
+                        offset += chunk.length;
+                    }
+                    const audioDigest = await crypto.subtle.digest(
+                        'SHA-256',
+                        new Uint8Array(all.buffer, all.byteOffset, all.byteLength),
+                    );
+                    const audioHash = Array.from(new Uint8Array(audioDigest))
+                        .map((byte) => byte.toString(16).padStart(2, '0'))
+                        .join('');
+
+                    return {
+                        frameCount: engine.frameCount,
+                        totalCycles: engine.totalCycles,
+                        cpuPc: engine.cpuPc,
+                        sampleRate: engine.sampleRate,
+                        audioPeak: peak,
+                        audioHash,
+                        audioSamples: total,
+                        rewindHash,
+                        audioState: audio === null ? null : audio.state,
+                        audioError,
+                        hashes,
+                        error: error ?? roundtripError,
+                    };
+                },
+            };
+
+            // A game named on the command line loads straight away; without
+            // one the application sits on the library screen until the player
+            // picks something.
+            const boot = await window.fc.getBootRom();
+            if (boot !== null && !disposed) {
+                if (!applyRom(boot.bytes, boot.path)) {
+                    loaded = false;
+                }
+            }
+
+            // In self test mode the machine is left exactly where
+            // load_rom + reset put it, so that N frames from here run the same
+            // cycles as N frames from the same place in the native build.
+            if (!window.fc.selftestOnly) {
+                animationFrame = requestAnimationFrame(tick);
+            } else if (!loaded) {
+                fail('no ROM. Start with --rom <game.nes>, or put one in tests/data/');
+            }
+        };
+
+        void start().catch((error: unknown) => {
+            if (!disposed) {
+                fail(error instanceof Error ? error.message : String(error));
+            }
+        });
+
+        return () => {
+            disposed = true;
+            if (animationFrame !== 0) {
+                cancelAnimationFrame(animationFrame);
+            }
+            detachKeyboard?.();
+            gamepad?.destroy();
+            gamepad = null;
+            rewind?.destroy();
+            rewind = null;
+            commandHandler = null;
+            window.clearTimeout(flashTimer);
+            delete window.__fc;
+            // Closing the context stops the audio thread before the ring is
+            // abandoned underneath it.
+            void audio?.close();
+            audio = null;
+            emulator?.destroy();
+            emulator = null;
+        };
+    }, [canvasRef]);
+
+    return {
+        status,
+        loadRom: (path: string) => actions.current.loadRom(path),
+        unload: () => actions.current.unload(),
+        command: (command: CommandName) => actions.current.command(command),
+    };
+}

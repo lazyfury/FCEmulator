@@ -1,0 +1,1379 @@
+/* ---------------------------------------------------------------------------
+   The look.
+
+   A macOS application, drawn the way macOS draws one: a unified translucent
+   title bar over three columns, a translucent rail down the left, a white
+   document area in the middle, and the content of the window -- here a
+   television set -- in the remaining space. The vocabulary is Aqua's, reduced
+   to the parts a window made of HTML can honestly reproduce:
+
+     * translucency plus a blur, for the chrome, not for the content
+     * one accent colour, used only for selection and focus
+     * 1px separators rather than shadows to divide regions
+     * rounded rectangles at 6-9px, never more
+     * the system font, and a monospaced one for the numbers
+
+   Both appearances are here. `prefers-color-scheme` is the same signal the
+   rest of the system uses, so a window that ignores it is the one that looks
+   wrong at night. The `color-scheme` property goes with it, so that form
+   controls, scroll bars and the caret are provided by Chromium in the right
+   shade instead of being restyled by hand and getting it subtly wrong.
+   --------------------------------------------------------------------------- */
+
+:root {
+    color-scheme: light dark;
+
+    --bg: #e9e9ec;
+    --chrome: rgba(246, 246, 248, 0.82);
+    --rail: rgba(232, 232, 236, 0.72);
+    --panel: #ffffff;
+    --panel-alt: #f5f5f7;
+    --hover: rgba(0, 0, 0, 0.05);
+
+    --border: rgba(0, 0, 0, 0.1);
+    --border-strong: rgba(0, 0, 0, 0.16);
+
+    --text: #1d1d1f;
+    --text-dim: #6f6f76;
+    --text-faint: #9a9aa2;
+
+    --accent: #0a6cff;
+    --accent-soft: rgba(10, 108, 255, 0.13);
+    --accent-text: #ffffff;
+    --danger: #d70015;
+    --green: #28a745;
+    --amber: #a86a00;
+
+    --button-top: #ffffff;
+    --button-bottom: #f0f0f2;
+    --switch-off: rgba(0, 0, 0, 0.16);
+    --scroll-thumb: rgba(0, 0, 0, 0.2);
+    --scanline: rgba(0, 0, 0, 0.2);
+
+    --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.05), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+    --radius: 7px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #1b1b1d;
+        --chrome: rgba(38, 38, 41, 0.84);
+        --rail: rgba(30, 30, 33, 0.7);
+        --panel: #232326;
+        --panel-alt: #2b2b2f;
+        --hover: rgba(255, 255, 255, 0.07);
+
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.18);
+
+        --text: #f2f2f5;
+        --text-dim: #a0a0a8;
+        --text-faint: #6f6f77;
+
+        --accent: #0a84ff;
+        --accent-soft: rgba(10, 132, 255, 0.24);
+        --danger: #ff453a;
+        --green: #32d74b;
+        --amber: #ffd60a;
+
+        --button-top: #3d3d42;
+        --button-bottom: #313136;
+        --switch-off: rgba(255, 255, 255, 0.22);
+        --scroll-thumb: rgba(255, 255, 255, 0.22);
+        --scanline: rgba(0, 0, 0, 0.34);
+
+        --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.45);
+    }
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',
+        'PingFang SC', 'Hiragino Sans GB', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+}
+
+code,
+kbd,
+.status-num,
+.game-meta,
+.play-summary,
+.slot-keys,
+.row dd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ---------------------------------------------------------------------------
+   The shell
+   --------------------------------------------------------------------------- */
+
+.app {
+    display: grid;
+    grid-template-rows: 52px minmax(0, 1fr) 26px;
+    height: 100%;
+}
+
+.workspace {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* ---------------------------------------------------------------------------
+   Title bar
+   --------------------------------------------------------------------------- */
+
+.titlebar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-right: 10px;
+    background: var(--chrome);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border-bottom: 1px solid var(--border);
+
+    /* The strip is the window's handle. Anything clickable inside has to
+       opt out again -- see .titlebar-actions. */
+    -webkit-app-region: drag;
+}
+
+/* Room for the traffic lights, which the window server draws at a fixed
+   offset. A control placed under them cannot be clicked. */
+.titlebar-lights {
+    width: 78px;
+    flex: none;
+}
+
+.titlebar-titles {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    line-height: 1.25;
+    min-width: 0;
+}
+
+.titlebar-app {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.titlebar-sub {
+    font-size: 11px;
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 360px;
+}
+
+.titlebar-drag {
+    flex: 1;
+    align-self: stretch;
+}
+
+.titlebar-actions {
+    display: flex;
+    gap: 2px;
+    -webkit-app-region: no-drag;
+}
+
+.toolbar-button {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+}
+
+.toolbar-button:hover:not(:disabled) {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.toolbar-button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.toolbar-button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.spin {
+    animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ---------------------------------------------------------------------------
+   The function area -- the left rail
+   --------------------------------------------------------------------------- */
+
+.sidebar {
+    flex: 0 0 76px;
+    display: flex;
+    flex-direction: column;
+    padding: 8px 6px;
+    background: var(--rail);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border-right: 1px solid var(--border);
+}
+
+.rail {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.rail-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    padding: 9px 2px 7px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text-dim);
+    font: inherit;
+    cursor: pointer;
+}
+
+.rail-item:hover:not(.rail-item-active) {
+    background: var(--hover);
+    color: var(--text);
+}
+
+/* The accent fill is the second signal, not the only one: `aria-current` is
+   set on the same element, so a screen reader hears it too. */
+.rail-item-active {
+    background: var(--accent);
+    color: var(--accent-text);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.rail-item:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.rail-icon {
+    flex: none;
+}
+
+.rail-label {
+    font-size: 10.5px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+.rail-foot {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0 4px;
+    color: var(--text-faint);
+}
+
+.rail-dot {
+    display: grid;
+    place-items: center;
+    opacity: 0.5;
+}
+
+.rail-dot-on {
+    opacity: 1;
+    color: var(--green);
+}
+
+/* ---------------------------------------------------------------------------
+   The middle column
+   --------------------------------------------------------------------------- */
+
+.panel {
+    flex: 0 1 320px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+}
+
+.panel-head {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.panel-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.panel-title-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 2px;
+    flex: none;
+}
+
+.panel-title h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.panel-count {
+    font-size: 11px;
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.panel-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.panel-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px 8px 20px;
+}
+
+.panel-scroll::-webkit-scrollbar {
+    width: 11px;
+}
+
+.panel-scroll::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb);
+    border: 3px solid transparent;
+    border-radius: 6px;
+    background-clip: content-box;
+}
+
+/* A short note about the last thing that happened to the library. Accent
+   rather than green: it is news, not a success or a failure. */
+.notice {
+    margin: 4px 8px 10px;
+    padding: 7px 10px;
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 11.5px;
+}
+
+.panel-actions {
+    display: flex;
+    gap: 8px;
+    margin: 14px 4px 0;
+}
+
+/* The search field: a small rounded well, accent ring only while focused. */
+.search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 8px;
+    border-radius: var(--radius);
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    color: var(--text-faint);
+}
+
+.search:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    outline: none;
+    font: inherit;
+    font-size: 12px;
+    color: var(--text);
+}
+
+.search input::placeholder {
+    color: var(--text-faint);
+}
+
+.search button {
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+}
+
+/* A segmented control, which is what macOS uses wherever there are three
+   mutually exclusive orders of the same list. */
+.segmented {
+    display: flex;
+    padding: 2px;
+    border-radius: var(--radius);
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+}
+
+.segment {
+    flex: 1;
+    padding: 3px 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    font: inherit;
+    font-size: 11.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+}
+
+.segment[data-state='off']:hover {
+    color: var(--text);
+}
+
+.segment[data-state='on'] {
+    background: var(--panel);
+    color: var(--text);
+    font-weight: 500;
+    box-shadow: var(--shadow-sm);
+}
+
+/* Radix puts `data-state` on both the trigger and the selected pill, so the
+   stylesheet can style the control without a class toggled from JavaScript. */
+.segment:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* One icon on its own. The macOS toolbar button, at the two sizes the
+   interface needs: 28px in the title bar, 24px beside a list row. */
+.icon-button {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+}
+
+.icon-button:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.icon-button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* A pressed pin is the one icon with a colour of its own, because it is the
+   one icon that is a state rather than a verb. */
+.icon-button[aria-pressed='true'] {
+    color: var(--amber);
+}
+
+/* ---------------------------------------------------------------------------
+   The game list
+   --------------------------------------------------------------------------- */
+
+.games {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+/* A row is two controls: the game, which fills it, and the pin and delete,
+   which appear when the row is pointed at or focused. They cannot be inside
+   the game button, so the button is a child of the row instead. */
+.game-row {
+    display: flex;
+    align-items: center;
+    border-radius: var(--radius);
+}
+
+.game-row:hover,
+.game-row:focus-within {
+    background: var(--hover);
+}
+
+.game {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 4px 7px 8px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.game:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.game-actions {
+    flex: none;
+    display: flex;
+    gap: 1px;
+    padding-right: 4px;
+    opacity: 0;
+    transition: opacity 0.1s ease;
+}
+
+/* Visible when the row is pointed at, tabbed into, or pinned -- a pinned game
+   says so without being hovered. */
+.game-row:hover .game-actions,
+.game-row:focus-within .game-actions,
+.game-row.game-pinned .game-actions {
+    opacity: 1;
+}
+
+/* The cartridge in the slot, marked the way a Finder selection is: fill,
+   colour, and weight -- not one of the three on its own. */
+.game-row.game-playing {
+    background: var(--accent-soft);
+}
+
+.game-playing .game-name {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.game-mark {
+    flex: none;
+    width: 12px;
+    display: grid;
+    place-items: center;
+    color: var(--accent);
+    opacity: 0;
+}
+
+.game-row:hover .game-mark,
+.game-playing .game-mark {
+    opacity: 1;
+}
+
+.game-mark-icon {
+    transform: rotate(90deg);
+}
+
+.game-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.game-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
+}
+
+.game-meta {
+    display: flex;
+    gap: 10px;
+    font-size: 10.5px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+.game-when {
+    min-width: 4.5em;
+}
+
+.panel-foot {
+    margin: 12px 8px 0;
+    font-size: 10.5px;
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The empty state: what is wrong, where the folder is, and the one button
+   that fixes it. */
+.empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 22px 12px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+}
+
+.empty p {
+    margin: 0;
+}
+
+.empty-path {
+    font-size: 11px;
+    color: var(--text-faint);
+    overflow-wrap: anywhere;
+}
+
+.empty-hint {
+    font-size: 11.5px;
+    color: var(--text-faint);
+}
+
+.empty code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--panel-alt);
+    color: var(--text);
+    font-size: 11px;
+}
+
+/* ---------------------------------------------------------------------------
+   Buttons
+   --------------------------------------------------------------------------- */
+
+.button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: linear-gradient(180deg, var(--button-top), var(--button-bottom));
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: var(--shadow-sm);
+}
+
+.button:hover:not(:disabled) {
+    filter: brightness(1.03);
+}
+
+.button:active:not(:disabled) {
+    filter: brightness(0.95);
+}
+
+.button:disabled {
+    opacity: 0.42;
+    box-shadow: none;
+    cursor: default;
+}
+
+.button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* ---------------------------------------------------------------------------
+   Save slots
+   --------------------------------------------------------------------------- */
+
+.slots {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.slot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 9px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+}
+
+.slot-badge {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.slot-badge-full {
+    background: var(--accent);
+    border-color: transparent;
+    color: var(--accent-text);
+}
+
+.slot-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.slot-label {
+    font-size: 12.5px;
+}
+
+.slot-state {
+    display: flex;
+    gap: 8px;
+    font-size: 10.5px;
+    color: var(--text-faint);
+}
+
+.slot-keys {
+    opacity: 0.8;
+}
+
+.slot-actions {
+    display: flex;
+    gap: 6px;
+    flex: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Settings: groups, rows, the one switch
+   --------------------------------------------------------------------------- */
+
+.group {
+    margin: 14px 4px 18px;
+}
+
+.group:first-child {
+    margin-top: 6px;
+}
+
+.group .prose {
+    margin-top: 9px;
+}
+
+.group .panel-actions {
+    margin: 9px 0 0;
+}
+
+.group h3 {
+    margin: 0 0 8px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-faint);
+}
+
+.rows {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--panel-alt);
+    overflow: hidden;
+}
+
+.row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 7px 10px;
+    font-size: 12px;
+}
+
+.row + .row {
+    border-top: 1px solid var(--border);
+}
+
+.row dt {
+    flex: none;
+    min-width: 4.5em;
+    color: var(--text-dim);
+}
+
+.row dd {
+    flex: 1;
+    margin: 0;
+    text-align: right;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+.switch-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 9px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--panel-alt);
+    font-size: 12px;
+}
+
+/* The switch is a Radix Switch: a real `role="switch"` with a real checked
+   state and keyboard handling. Only its appearance is ours. */
+.switch-root {
+    flex: none;
+    position: relative;
+    width: 34px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    background: var(--switch-off);
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.switch-root[data-state='checked'] {
+    background: var(--green);
+}
+
+.switch-root:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.switch-thumb {
+    display: block;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    transform: translateX(2px);
+    transition: transform 0.15s ease;
+}
+
+.switch-thumb[data-state='checked'] {
+    transform: translateX(16px);
+}
+
+.switch-label {
+    cursor: pointer;
+}
+
+/* Tooltips: small, dark, and gone the moment the pointer leaves. In a portal,
+   so a tooltip near the edge of a clipped column is still whole. */
+.tooltip {
+    z-index: 50;
+    padding: 4px 8px;
+    border-radius: 5px;
+    background: rgba(40, 40, 43, 0.94);
+    color: #f5f5f7;
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+    user-select: none;
+    animation: tooltip-in 80ms ease-out;
+}
+
+@keyframes tooltip-in {
+    from {
+        opacity: 0;
+        transform: translateY(-2px);
+    }
+}
+
+/* ---------------------------------------------------------------------------
+   About
+   --------------------------------------------------------------------------- */
+
+.prose {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--text-dim);
+}
+
+.chain {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.chain li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: var(--radius);
+    font-size: 12px;
+}
+
+.chain li:nth-child(odd) {
+    background: var(--panel-alt);
+}
+
+.chain-tick {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-text);
+}
+
+.chain-stage {
+    flex: none;
+    min-width: 4.5em;
+    font-weight: 500;
+}
+
+.chain-what {
+    font-size: 11.5px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+kbd {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 0 var(--border);
+    font-size: 11px;
+    color: var(--text);
+}
+
+/* ---------------------------------------------------------------------------
+   The play area
+   --------------------------------------------------------------------------- */
+
+.play {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+}
+
+.play-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.play-titles {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.play-name {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.play-summary {
+    font-size: 11px;
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.play-badges {
+    flex: none;
+    display: flex;
+    gap: 6px;
+}
+
+.badge {
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--panel-alt);
+    font-size: 10.5px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.badge-warn {
+    background: transparent;
+    border-color: currentColor;
+    color: var(--amber);
+}
+
+.badge-rewind {
+    background: transparent;
+    border-color: currentColor;
+    color: var(--accent);
+}
+
+/* The well is the padding; the stage is exactly the box the picture has to
+   fit inside. Splitting them keeps the measured box free of padding, which
+   matters because usePixelScale sizes the picture to the measured box -- a
+   padded stage would make the picture eat its own margins.
+
+   Black, all of it: the picture sits in a dark surround with no frame, no
+   shadow and no visible join, so the only thing on screen is the game. */
+.stage-well {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    background: #000;
+}
+
+.stage {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    place-items: center;
+    background: #000;
+}
+
+.screen-wrap {
+    position: relative;
+    overflow: hidden;
+    background: #000;
+
+    /* So the placeholder inside can ask how much room it has. A picture
+       scaled down to 90px cannot hold a sentence, and a sentence clipped in
+       half looks like a bug. */
+    container-type: size;
+}
+
+.screen {
+    display: block;
+
+    /* The size comes from JavaScript as a whole number of device pixels per
+       game pixel. See usePixelScale.ts: letting the browser fit it with
+       max-width is what makes some pixels wider than their neighbours. */
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+}
+
+.scanlines {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+        to bottom,
+        var(--scanline) 0,
+        var(--scanline) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+}
+
+/* Over the picture, not beside it: a pause has to be visible from across the
+   room, and a status line is not. */
+.paused {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.55);
+    color: #ffffff;
+    font-size: 26px;
+    letter-spacing: 0.4em;
+    text-indent: 0.4em;
+    text-transform: uppercase;
+    pointer-events: none;
+}
+
+.stage-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 14px;
+    text-align: center;
+    background: #000;
+}
+
+.stage-empty-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #f0f0f4;
+}
+
+.stage-empty-hint {
+    margin: 0;
+    max-width: 30ch;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #9a9aa2;
+}
+
+.stage-empty code {
+    padding: 0 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #e8e8ee;
+}
+
+/* In a small window the television is small too, and the placeholder has to
+   shrink with it rather than spill. */
+@container (max-width: 260px) {
+    .stage-empty-hint {
+        display: none;
+    }
+
+    .stage-empty {
+        gap: 6px;
+        padding: 8px;
+    }
+
+    .stage-empty-title {
+        font-size: 11px;
+    }
+
+    .stage-empty .button {
+        padding: 3px 7px;
+        font-size: 10px;
+    }
+}
+
+.transport {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--chrome);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+.transport-spacer {
+    flex: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   Status bar
+   --------------------------------------------------------------------------- */
+
+.statusbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 12px;
+    border-top: 1px solid var(--border);
+    background: var(--chrome);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.status-spacer {
+    flex: 1;
+}
+
+.status-num {
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+.status-message {
+    color: var(--green);
+}
+
+.status-error {
+    color: var(--danger);
+}
+
+.status-live {
+    color: var(--green);
+    font-variant-numeric: tabular-nums;
+}
+
+.status-rewind {
+    color: var(--amber);
+    font-variant-numeric: tabular-nums;
+}
+
+.status-dim {
+    color: var(--text-faint);
+}
+
+/* ---------------------------------------------------------------------------
+   Drag and drop
+   --------------------------------------------------------------------------- */
+
+/* Over everything, and out of the way of everything: `pointer-events: none`
+   so that the drop itself still lands on the window underneath, which is
+   where the listener is. */
+.dropzone {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    background: rgba(110, 110, 122, 0.22);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    animation: fade-in 90ms ease-out;
+}
+
+.dropzone-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 26px 40px;
+    border: 2px dashed var(--accent);
+    border-radius: 16px;
+    background: var(--panel);
+    color: var(--accent);
+    text-align: center;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+}
+
+.dropzone-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.dropzone-hint {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--text-dim);
+}
+
+@keyframes fade-in {
+    from {
+        opacity: 0;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+   Small windows
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 1000px) {
+    .sidebar {
+        flex-basis: 62px;
+    }
+
+    .rail-label {
+        display: none;
+    }
+
+    .rail-item {
+        padding: 10px 0;
+    }
+}
+
+/* A window this short is a test window. The controls have nothing to sit on,
+   and the picture would rather have the room. */
+@media (max-height: 460px) {
+    .play-head,
+    .transport {
+        display: none;
+    }
+
+    .stage-well {
+        padding: 6px;
+    }
+}
+
+@media (max-height: 380px) {
+    .app {
+        grid-template-rows: 38px minmax(0, 1fr) 22px;
+    }
+
+    .titlebar {
+        padding-right: 8px;
+    }
+}
