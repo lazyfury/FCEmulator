@@ -1,6 +1,6 @@
 # 迁移到 libretro ABI —— 调研与计划 v2
 
-> 状态：**L1、L2、L3 完成，L4+ 未执行**。
+> 状态：**L1、L2、L3 完成；L4 已实测调研，方案待决策（见 §7.5）**。
 > v2 变更：确立 **libretro 为准**；列出**暂时隐藏**的功能；新增 **custom ABI 扩展**设计；
 > 用实验**确认了 wasm 动态加载外部核心的可行性**（结论：原生 core 不行，专用
 > wasm side module 可以，已验证）。
@@ -187,7 +187,7 @@ interface CoreHost {
 | **L1** | native 适配层 `fc_libretro.cpp` + `third_party/libretro/libretro.h` + CMake MODULE target；音频/视频/输入/存档转换 | RetroArch 能加载运行 | ✅ 已完成 |
 | **L2** | custom 扩展符号 `fc_libretro_get_ext()`；`Cartridge::prg_ram()`、`NesBus::ram_data()`、电池标志；RAM 型金手指 | 电池存档、内存视图、custom 通道 | ✅ 已完成 |
 | **L3** | Game Genie/PAR 解码 + ROM 补丁钩子 + `SET_MEMORY_MAPS` | 金手指完整、搜索可用 | ✅ 已完成 |
-| **L4** | wasm：`fc_core` 编译为 SIDE_MODULE，宿主编译为 MAIN_MODULE，回调桥接；解决内存增长导致的视图失效 | 浏览器/Electron 可 `dlopen` 本 core | 进行中 |
+| **L4** | wasm 加载本 core：side module 已验证可行但 C++ 运行时需对齐；推荐改为**独立 wasm 模块 + JS libretro frontend**（§7.5 L4a） | 浏览器/Electron 可加载本 core | ⏸ 待决策 |
 | **L5** | Electron `CoreHost` 切到 libretro 宿主；隐藏 §4.2 功能；回归 | 前端 libretro 化 | 1 周 |
 | **L6** | mGBA 编为 wasm side module + 系统注册表 + UI 泛化 | `.gba` 可玩 | 3~7 人天 |
 | 备选 | native core host（B1）`native/core-host` + IPC | 可加载任意现成 `.dylib` | 1~2 周 |
@@ -321,6 +321,40 @@ callback count=3
 - 想直接跑官方 `mgba_libretro.dylib` → 走**备选 B1 native host**，代价是 IPC。
 - 两条路都成立，**不冲突**：native 产物给 RetroArch/桌面 host；wasm 产物给
   渲染进程内 host。
+
+### 7.5 L4 实测：真实 C++ core 的运行时障碍（**需决策**）
+
+`L1~L3` 的适配层已能作为 side module 编出（单条 `emcc` 调用含全部 `fc_core`
+源文件，4 秒，172KB），且 **C 语言 core 的 `dlopen`/`dlsym`/回调/共享内存
+已在 §7.2 验证**。但把**本项目这个 C++ core** 装进 side module 时，
+`dlopen` 失败，原因不在本项目，而在 Emscripten 的 C++ 运行时模型：
+
+1. side module 会 **import** 一批 libc/libc++ 符号，而不是自带：
+   `operator new/delete`、`__cxa_throw`、`std::logic_error`、
+   `std::string::__grow_by_and_replace`、`std::to_string`、`lroundf`、
+   `vsnprintf` 等。
+2. 这些必须由 **main module 导出**。而 main 只链接自己用到的 libc++ 子集，
+   一个普通 `host.cpp` 用不到 `std::to_string` / 异常，于是导出缺失。
+3. 实测：给 core 加 `-fvisibility=hidden` 后，项目自身符号降为本地，
+   side module 的 import 从 33 个降到 **17 个纯运行时符号**；但只要 main
+   不导出它们，`dlopen` 就报 `could not load dynamic lib`（**不告诉你是哪个
+   符号**）。在 main 里手动引用这些 libc++ 特性来“拉齐”也能走，但新增一个
+   core 用到的运行时函数就会再次静默破坏加载，属于脆弱方案。
+
+**结论：Emscripten side module 对 C core（mGBA）成立；对 C++ core
+需要 main/side 的 libc++ 对齐，不宜作为本项目自身 core 的主路径。**
+
+因此 L4 有三条路线，需选一条（推荐 L4a）：
+
+| 路线 | 做法 | 适用 | 代价 |
+|---|---|---|---|
+| **L4a（推荐）** | core 编成**独立 wasm 模块**（各自一块线性内存），JS 侧实现 libretro frontend 回调（`addFunction` 传函数指针）；每个 core 一个模块 | 本项目 C++ core、mGBA（mGBA 官方也有 wasm 构建） | 每 core 各自的内存，JS 桥接；不是“dlopen 同一地址空间” |
+| **L4b** | side module + `MAIN_MODULE` 宿主，共享地址空间 `dlopen` | **C core（mGBA）**；已验证机制 | C++ 运行时对齐问题（见上） |
+| **L4c** | native host（`native/core-host`，仿 gamepad helper）加载 `.dylib` | 现成第三方 core、无需重编 | 帧/音频过 IPC；非 wasm |
+
+**建议**：L4a 落地本项目自身的 libretro wasm 产物与 JS `CoreHost`；
+L6 接 mGBA 时优先 L4a（编 mGBA wasm 模块），若坚持用官方预编译 core
+则走 L4c。L5 的 `CoreHost` 接口对 a/b/c 三者都兼容。
 
 ---
 
