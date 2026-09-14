@@ -5,9 +5,10 @@
 //   │ ●●●   FC Emulator                                   ⧉ ⧉ ⧉   │  unified title bar
 //   ├────────┬─────────────────────┬───────────────────────────────┤
 //   │ 功能区  │ 中间栏              │ 游戏画面                       │
-//   │ 游戏库  │ 列表 / 存档 / 设置  │ canvas + 控制条                │
+//   │ 游戏库  │ 卡片 / 截图 / 存档  │ canvas + 控制条                │
 //   │ 置顶    │                     │                               │
 //   │ 最近    │                     │                               │
+//   │ 截图    │                     │                               │
 //   │ 存档    │                     │                               │
 //   │ 设置    │                     │                               │
 //   │ 关于    │                     │                               │
@@ -25,10 +26,12 @@
 // text, the sort order, the library itself -- because two columns have to
 // agree about it. State that only one panel needs stays in that panel.
 //
-// The library is the main process's, not this file's. Every call below either
-// reads it back whole or changes it and gets the new state back, so there is
-// one copy of the truth and no way for the screen to disagree with the
-// database.
+// The library and its screenshots are one value, `LibraryState`, because they
+// are drawn together and revised together: taking a screenshot changes a
+// game's cover. Every call below either reads that whole value back or changes
+// something and gets the whole new value back, so there is one copy of the
+// truth and no way for the screen to be showing half of one revision and half
+// of another.
 // ---------------------------------------------------------------------------
 
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -39,6 +42,7 @@ import AboutPanel from './components/AboutPanel';
 import LibraryPanel, { type SortKey } from './components/LibraryPanel';
 import PlayPanel from './components/PlayPanel';
 import SavesPanel from './components/SavesPanel';
+import ScreenshotsPanel from './components/ScreenshotsPanel';
 import SettingsPanel from './components/SettingsPanel';
 import Sidebar from './components/Sidebar';
 import StatusBar from './components/StatusBar';
@@ -48,8 +52,10 @@ import type { CommandName } from './input';
 import { SECTION_BY_ID, type SectionId } from './sections';
 import { useEmulator } from './useEmulator';
 import { useFileDrop } from './useFileDrop';
+import { usePanelWidth } from './usePanelWidth';
 import { usePixelScale } from './usePixelScale';
-import type { Library as LibraryData } from '../shared/api';
+import type { CSSProperties } from 'react';
+import type { LibraryState } from '../shared/api';
 
 /** The four save slots, in the order the keyboard numbers them. */
 const SAVE_COMMANDS: readonly CommandName[] = ['quicksave', 'save1', 'save2', 'save3'];
@@ -57,18 +63,18 @@ const LOAD_COMMANDS: readonly CommandName[] = ['quickload', 'load1', 'load2', 'l
 
 const SCANLINE_KEY = 'fc.scanlines';
 
+/** Before the first read comes back: no games, no pictures, no folder. */
+const NOTHING_YET: LibraryState = {
+    library: { directory: '', database: '', games: [] },
+    screenshots: [],
+};
+
 export default function App() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
-    const { status, loadRom, unload, command } = useEmulator(canvasRef);
-
-    // The canvas keeps its 256x240 backing store -- that is the emulator's
-    // output and nothing changes it -- and this decides how large those 256
-    // pixels are drawn. See usePixelScale for why it is a whole number.
-    const picture = usePixelScale(stageRef, 256, 240);
 
     const [section, setSection] = useState<SectionId>('library');
-    const [library, setLibrary] = useState<LibraryData | null>(null);
+    const [state, setState] = useState<LibraryState>(NOTHING_YET);
     const [loading, setLoading] = useState(true);
     const [query, setQuery] = useState('');
     const [sort, setSort] = useState<SortKey>('recent');
@@ -76,9 +82,13 @@ export default function App() {
     const [scanlines, setScanlines] = useState(() => window.localStorage.getItem(SCANLINE_KEY) === '1');
     const [notice, setNotice] = useState<string | null>(null);
 
-    // A note under the list, gone again in a moment. Used for the things a
-    // player did that the list itself cannot show -- a drop that turned out
-    // not to be a ROM.
+    // How wide the middle column is. The divider between it and the picture is
+    // the drag; see usePanelWidth for why it is written out by hand.
+    const panel = usePanelWidth();
+
+    // A short note about the last thing the player asked for, gone again in a
+    // moment. It belongs to the shell rather than to a panel, because the
+    // panels come and go and the feedback should not.
     const noticeTimer = useRef(0);
     const flash = useCallback((text: string): void => {
         setNotice(text);
@@ -88,10 +98,53 @@ export default function App() {
 
     useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
 
+    // Which cartridge is in the slot, for the screenshot callback. A ref
+    // because that callback is handed to the emulator once and must not
+    // rebuild the machine every time a game is loaded.
+    const cartridge = useRef<string | null>(null);
+
+    /**
+     * Write a screenshot the emulator just handed up.
+     *
+     * The bytes come from the canvas, so this is where they stop being a
+     * picture and become a file: the main process names it, writes it into the
+     * library's screenshots folder and files it under the game, then answers
+     * with the library as it now is.
+     *
+     * `asCover` is the 更新封面 button: the picture replaces whatever the
+     * game's card was showing, and — because the card is drawn from the state
+     * that comes back — the change is on screen by the time the toast has
+     * faded in.
+     */
+    const saveScreenshot = useCallback(async (png: Uint8Array, asCover: boolean): Promise<void> => {
+        const path = cartridge.current;
+        if (path === null) {
+            return;
+        }
+        const next = await window.fc.saveScreenshot(path, png, asCover);
+        if (next === null) {
+            flash(asCover ? '封面没有更新' : '截图没有保存');
+            return;
+        }
+        setState(next);
+        flash(asCover ? '已更新封面' : '已保存截图');
+    }, [flash]);
+
+    const { status, loadRom, unload, command } = useEmulator(canvasRef, {
+        onScreenshot: (png, asCover) => void saveScreenshot(png, asCover),
+    });
+
+    cartridge.current = status.romPath;
+
+    // The canvas keeps its 256x240 backing store -- that is the emulator's
+    // output and nothing changes it -- and this decides how large those 256
+    // pixels are drawn. See usePixelScale for why it is a whole number.
+    const picture = usePixelScale(stageRef, 256, 240);
+
     const refreshLibrary = useCallback(async (): Promise<void> => {
         setLoading(true);
         try {
-            setLibrary(await window.fc.listGames());
+            setState(await window.fc.library());
         } finally {
             setLoading(false);
         }
@@ -136,7 +189,7 @@ export default function App() {
     );
 
     /**
-     * Every library change answers with the whole library, so the screen is
+     * Every library change answers with the whole state, so the screen is
      * never left guessing. Null means the player closed a panel or declined an
      * alert, and the screen keeps what it had.
      *
@@ -148,28 +201,44 @@ export default function App() {
     const addGames = useCallback(async (): Promise<void> => {
         const next = await window.fc.addGames();
         if (next !== null) {
-            setLibrary(next);
+            setState(next);
         }
     }, []);
 
     const chooseDirectory = useCallback(async (): Promise<void> => {
         const next = await window.fc.chooseLibraryDirectory();
         if (next !== null) {
-            setLibrary(next);
+            setState(next);
             setQuery('');
         }
     }, []);
 
     const togglePinned = useCallback(async (path: string, pinned: boolean): Promise<void> => {
-        setLibrary(await window.fc.togglePinned(path, pinned));
+        setState(await window.fc.togglePinned(path, pinned));
     }, []);
 
     const removeGame = useCallback(async (path: string): Promise<void> => {
         const next = await window.fc.removeGame(path);
         if (next !== null) {
-            setLibrary(next);
+            setState(next);
         }
     }, []);
+
+    const setCover = useCallback(async (id: number): Promise<void> => {
+        const next = await window.fc.setScreenshotCover(id);
+        if (next !== null) {
+            setState(next);
+            flash('已设为封面');
+        }
+    }, [flash]);
+
+    const removeShot = useCallback(async (id: number): Promise<void> => {
+        const next = await window.fc.removeScreenshot(id);
+        if (next !== null) {
+            setState(next);
+            flash('已删除截图');
+        }
+    }, [flash]);
 
     /**
      * Games dropped on the window.
@@ -186,18 +255,24 @@ export default function App() {
                 flash('拖进来的不是 .nes 文件');
                 return;
             }
-            setLibrary(next);
+            setState(next);
+            flash(`已添加 ${paths.length} 个文件`);
         })();
     });
 
-    const openFolder = useCallback((): void => {
-        void window.fc.openFolder();
+    /** The library folder, or a folder inside it -- `screenshots`, say. */
+    const openFolder = useCallback((subdirectory?: string): void => {
+        void window.fc.openFolder(subdirectory);
     }, []);
 
     const eject = useCallback((): void => {
         unload();
         void refreshLibrary();
-    }, [unload, refreshLibrary]);
+        // Said out loud, because an eject is mostly the *absence* of things:
+        // the picture goes back to the placeholder and the buttons grey out,
+        // and neither of those is a confirmation that the button worked.
+        flash('卡带已弹出');
+    }, [unload, refreshLibrary, flash]);
 
     /** A slot button. The command goes through the keyboard's own handler, and
      *  the disk is re-read a moment later -- the write is asynchronous and
@@ -211,22 +286,22 @@ export default function App() {
         command(LOAD_COMMANDS[slot] ?? 'quickload');
     }, [command]);
 
-    const games = library?.games ?? [];
+    const library = state.library;
+    const games = library.games;
     const loaded = status.romPath !== null;
     const title = loaded ? gameTitle(status.romPath as string) : null;
 
-    /** The three list sections, which differ only in what they filter to. */
-    const listPanel = (
+    /** The three card sections, which differ only in what they filter to. */
+    const cards = (
         panelTitle: string,
         shown: typeof games,
         emptyTitle: string,
     ) => (
         <LibraryPanel
             title={panelTitle}
-            directory={library?.directory ?? ''}
+            directory={library.directory}
             games={shown}
             loading={loading}
-            notice={notice}
             query={query}
             onQuery={setQuery}
             sort={sort}
@@ -235,7 +310,7 @@ export default function App() {
             onPick={(path) => void play(path)}
             onAdd={() => void addGames()}
             onChooseDirectory={() => void chooseDirectory()}
-            onOpenFolder={openFolder}
+            onOpenFolder={() => openFolder()}
             onTogglePinned={(path, pinned) => void togglePinned(path, pinned)}
             onRemove={(path) => void removeGame(path)}
             emptyTitle={emptyTitle}
@@ -245,18 +320,27 @@ export default function App() {
     const middle = (() => {
         switch (section) {
         case 'library':
-            return listPanel('游戏库', games, '这个游戏库里还没有游戏。');
+            return cards('游戏库', games, '这个游戏库里还没有游戏。');
         case 'pinned':
-            return listPanel(
+            return cards(
                 '置顶游戏',
                 games.filter((game) => game.pinned),
                 '还没有置顶的游戏。在游戏库里点图钉，把它放到最上面。',
             );
         case 'recent':
-            return listPanel(
+            return cards(
                 '最近游玩',
                 games.filter((game) => game.lastPlayedAt > 0),
                 '还没有玩过任何游戏。',
+            );
+        case 'screenshots':
+            return (
+                <ScreenshotsPanel
+                    screenshots={state.screenshots}
+                    onOpenFolder={() => openFolder('screenshots')}
+                    onSetCover={(id) => void setCover(id)}
+                    onRemove={(id) => void removeShot(id)}
+                />
             );
         case 'saves':
             return (
@@ -277,6 +361,7 @@ export default function App() {
                     onScanlines={setScanlines}
                     gamepadEnabled={window.fc.gamepadEnabled}
                     library={library}
+                    screenshots={state.screenshots.length}
                     onChooseDirectory={() => void chooseDirectory()}
                 />
             );
@@ -300,19 +385,30 @@ export default function App() {
                     subtitle={subtitle}
                     busy={loading}
                     onRefresh={() => void refreshLibrary()}
-                    onOpenFolder={openFolder}
+                    onOpenFolder={() => openFolder()}
                     onAbout={() => setSection('about')}
                 />
 
-                <div className="workspace">
+                <div
+                    className="workspace"
+                    style={{ '--panel-width': `${panel.width}px` } as CSSProperties}
+                >
                     <Sidebar
                         active={section}
                         onSelect={setSection}
                         audioOk={status.audioError === null}
                         gamepadEnabled={window.fc.gamepadEnabled}
+                        gamepadConnected={status.gamepad.connected}
                     />
 
                     {middle}
+
+                    {/* Between the panel and the picture. A separator, not a
+                        button: it moves the edge and it is a tab stop. */}
+                    <div
+                        className={panel.dragging ? 'splitter splitter-active' : 'splitter'}
+                        {...panel.handleProps}
+                    />
 
                     <PlayPanel
                         canvasRef={canvasRef}
@@ -327,6 +423,10 @@ export default function App() {
                 </div>
 
                 <StatusBar status={status} />
+
+                {notice !== null && (
+                    <div className="toast" role="status">{notice}</div>
+                )}
 
                 {/* Over everything, and not in the way of anything: it has no
                     pointer events, so the drop lands on the window as it

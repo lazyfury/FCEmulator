@@ -13,12 +13,12 @@
 // ---------------------------------------------------------------------------
 
 import {
-    Download, Eject, Library, Pause, Play, RotateCcw, Upload,
+    Camera, Download, Eject, ImagePlus, Library, Pause, Play, RotateCcw, Upload,
 } from 'lucide-react';
 import type { RefObject } from 'react';
 
 import type { CommandName } from '../input';
-import type { EngineStatus } from '../useEmulator';
+import type { EngineStatus } from '../engineStatus';
 import type { PixelScale } from '../usePixelScale';
 import { gameTitle } from '../format';
 
@@ -138,6 +138,26 @@ export default function PlayPanel({
                 >
                     <Upload size={13} />
                     读档
+                </button>
+                <button
+                    type="button"
+                    className="button"
+                    onClick={() => onCommand('screenshot')}
+                    disabled={!loaded}
+                    title="截图（F12）"
+                >
+                    <Camera size={13} />
+                    截图
+                </button>
+                <button
+                    type="button"
+                    className="button"
+                    onClick={() => onCommand('screenshot-cover')}
+                    disabled={!loaded}
+                    title="截图并设为封面（⇧F12）"
+                >
+                    <ImagePlus size={13} />
+                    更新封面
                 </button>
                 <span className="transport-spacer" />
                 <button

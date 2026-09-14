@@ -1,31 +1,35 @@
 // ---------------------------------------------------------------------------
 // The game library -- the middle column.
 //
-// A list of what is in the library folder. There is no cover art, because
-// there is nowhere to get it from: a .nes file contains no title, no publisher
-// and no date that can be read without running the game, and scraping a
-// database for artwork would mean this application talked to the network,
-// which it otherwise never does.
+// A grid of cards. There is no cover art on the internet to fetch -- a .nes
+// contains no title, no publisher and no date that can be read without running
+// it, and scraping a database for artwork would mean this application talked
+// to the network, which it otherwise never does -- so a card's picture comes
+// from one place: a screenshot the player took of it.
 //
-// What is left is the file name, which for ROMs is surprisingly informative --
-// "Super Mario Bros. (Japan, USA)" is a better label than most title screens.
-// So the list is built around the name: a search field over it, three orders
-// for it, and one line of facts beside each entry.
+// Until they take one, the card is a block of colour with the game's name
+// clipped into it. The colour is derived from the name, so it is stable across
+// runs and different between neighbours, and the name is the only label there
+// has ever been.
 //
-// The row carries two controls besides "open". A pin, which is the one thing
-// the database remembers that a folder listing could not (see main/library.ts),
-// and a delete, which is the only control in the application that destroys
-// something and therefore goes through a native confirmation in the main
-// process. They sit outside the row's open button because a button inside a
-// button is not a thing.
+// The name is still the search key and the sort key, because for ROMs it is
+// surprisingly informative -- "Super Mario Bros. (Japan, USA)" is a better
+// label than most title screens.
+//
+// A card carries two controls besides "open": a pin, which is the one thing
+// the database remembers that a folder listing could not, and a delete, which
+// is the only control in the application that destroys something and therefore
+// goes through a native confirmation in the main process. They sit outside the
+// card's open button because a button inside a button is not a thing.
 // ---------------------------------------------------------------------------
 
 import * as ToggleGroup from '@radix-ui/react-toggle-group';
 import {
-    FolderCog, FolderOpen, Pin, Plus, Search, Trash2, Triangle, X,
+    Camera, FolderCog, FolderOpen, Pin, Plus, Search, Trash2, X,
 } from 'lucide-react';
+import type { CSSProperties } from 'react';
 
-import type { GameEntry } from '../../shared/api';
+import { libraryAssetUrl, type GameEntry } from '../../shared/api';
 import { formatSize, formatWhen } from '../format';
 
 export type SortKey = 'recent' | 'name' | 'size';
@@ -36,19 +40,56 @@ const SORTS: readonly { key: SortKey; label: string }[] = [
     { key: 'size', label: '大小' },
 ];
 
+/**
+ * A colour for a game with no screenshot.
+ *
+ * A hash of the name, folded into a hue. Two things matter and neither is
+ * taste: it has to be the same colour every time the application starts, which
+ * rules out anything random, and two games side by side have to look
+ * different, which is what the hash is for. Saturation and lightness are fixed
+ * so that every one of them has enough contrast for white text.
+ */
+function coverHue(name: string): number {
+    let hash = 0;
+    for (let i = 0; i < name.length; i += 1) {
+        hash = (hash * 31 + name.codePointAt(i)!) % 360;
+    }
+    return hash;
+}
+
+/** The card's picture: the cover, or the coloured block that stands in for it. */
+function Cover({ game }: { game: GameEntry }) {
+    if (game.cover !== null) {
+        return (
+            <img
+                className="cover-image"
+                src={libraryAssetUrl(game.cover)}
+                alt=""
+                loading="lazy"
+                draggable={false}
+            />
+        );
+    }
+    return (
+        <span
+            className="cover-blank"
+            style={{ '--cover-hue': coverHue(game.name) } as CSSProperties}
+        >
+            <span className="cover-blank-name">{game.name}</span>
+        </span>
+    );
+}
+
 interface LibraryPanelProps {
     title: string;
     directory: string;
     games: GameEntry[];
     loading: boolean;
-    /** A short note about the last thing that happened to the library, or
-     *  null. Cleared by the shell after a moment. */
-    notice: string | null;
     query: string;
     onQuery: (query: string) => void;
     sort: SortKey;
     onSort: (sort: SortKey) => void;
-    /** The cartridge in the slot, so the list can mark the row. */
+    /** The cartridge in the slot, so the list can mark the card. */
     activePath: string | null;
     onPick: (path: string) => void;
     onAdd: () => void;
@@ -56,8 +97,8 @@ interface LibraryPanelProps {
     onOpenFolder: () => void;
     onTogglePinned: (path: string, pinned: boolean) => void;
     onRemove: (path: string) => void;
-    /** What to say when the folder has nothing in it. Different sections are
-     *  empty for different reasons -- no games at all, or none pinned. */
+    /** What to say when there is nothing to show. Different sections are empty
+     *  for different reasons -- no games at all, or none pinned. */
     emptyTitle: string;
 }
 
@@ -97,7 +138,6 @@ export default function LibraryPanel({
     directory,
     games,
     loading,
-    notice,
     query,
     onQuery,
     sort,
@@ -195,8 +235,6 @@ export default function LibraryPanel({
             </header>
 
             <div className="panel-scroll">
-                {notice !== null && <p className="notice">{notice}</p>}
-
                 {!loading && games.length === 0 && (
                     <div className="empty">
                         <p>{emptyTitle}</p>
@@ -222,42 +260,41 @@ export default function LibraryPanel({
                     </div>
                 )}
 
-                <ul className="games">
+                <ul className="cards">
                     {shown.map((game) => {
                         const playing = game.path === activePath;
-                        const classes = ['game-row'];
+                        const classes = ['card-cell'];
                         if (playing) {
-                            classes.push('game-playing');
+                            classes.push('card-playing');
                         }
                         if (game.pinned) {
-                            classes.push('game-pinned');
+                            classes.push('card-pinned');
                         }
                         return (
                             <li key={game.path} className={classes.join(' ')}>
                                 <button
                                     type="button"
-                                    className="game"
+                                    className="card"
                                     onClick={() => onPick(game.path)}
                                     title={game.path}
                                 >
-                                    <span className="game-mark" aria-hidden="true">
-                                        <Triangle size={9} className="game-mark-icon" />
+                                    <span className="card-cover">
+                                        <Cover game={game} />
                                     </span>
-                                    <span className="game-body">
-                                        <span className="game-name">{game.name}</span>
-                                        <span className="game-meta">
-                                            <span>{formatSize(game.size)}</span>
-                                            <span className="game-when">
-                                                {formatWhen(game.lastPlayedAt)}
-                                            </span>
-                                            {game.playCount > 0 && (
-                                                <span>{game.playCount} 次</span>
-                                            )}
-                                        </span>
+                                    <span className="card-name">{game.name}</span>
+                                    <span className="card-meta">
+                                        {formatSize(game.size)}
+                                        <span className="card-when">{formatWhen(game.lastPlayedAt)}</span>
                                     </span>
                                 </button>
 
-                                <span className="game-actions">
+                                <span className="card-actions">
+                                    {game.screenshots > 0 && (
+                                        <span className="card-shots" title={`${game.screenshots} 张截图`}>
+                                            <Camera size={10} />
+                                            {game.screenshots}
+                                        </span>
+                                    )}
                                     <button
                                         type="button"
                                         className="icon-button"

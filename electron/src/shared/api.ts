@@ -15,8 +15,8 @@ export const IpcChannel = {
     /** Read the ROM named on the command line. Returns BootRom or null. */
     GetBootRom: 'fc:get-boot-rom',
 
-    /** Every .nes in the ROM folder, and where that folder is. */
-    ListGames: 'fc:list-games',
+    /** The whole library: every game and every screenshot. */
+    Library: 'fc:library',
 
     /** Read one ROM by path, for when the player picks one from the list. */
     ReadRom: 'fc:read-rom',
@@ -50,6 +50,15 @@ export const IpcChannel = {
 
     /** Which cartridge is in the slot, so its save states can be filed. */
     SetCartridge: 'fc:set-cartridge',
+
+    /** Write a PNG taken from the picture into the library. */
+    SaveScreenshot: 'fc:save-screenshot',
+
+    /** Make one screenshot the game's cover. */
+    SetScreenshotCover: 'fc:set-screenshot-cover',
+
+    /** Delete a screenshot: its file, and its row. */
+    RemoveScreenshot: 'fc:remove-screenshot',
 } as const;
 
 /** One game in the library. */
@@ -68,6 +77,44 @@ export interface GameEntry {
     /** When it entered the library, and when it was last run. 0 means never. */
     addedAt: number;
     lastPlayedAt: number;
+    /**
+     * The screenshot used as this game's cover, relative to the library root,
+     * or null if it has none. Null is not an error state: a game with no
+     * cover is drawn as a coloured card with its name on it.
+     *
+     * Relative rather than absolute, and a path rather than a URL, because
+     * this is what the database stores -- see src/main/library.ts. Turn it
+     * into something an `<img>` can fetch with `libraryAssetUrl`.
+     */
+    cover: string | null;
+    /** How many screenshots have been taken of it. */
+    screenshots: number;
+}
+
+/** One screenshot, as the screenshots section sees it. */
+export interface Screenshot {
+    id: number;
+    /** The game it was taken from. */
+    gamePath: string;
+    game: string;
+    /** Relative to the library root. */
+    file: string;
+    createdAt: number;
+    /** Whether this is the game's cover. At most one per game. */
+    isCover: boolean;
+}
+
+/**
+ * The library and its screenshots, in one answer.
+ *
+ * The two move together -- taking a screenshot changes the cover and the
+ * screenshot count on a game -- so the verbs that change either one return
+ * both. One round trip, and no window in which the screen is showing a game
+ * with a cover it no longer has.
+ */
+export interface LibraryState {
+    library: Library;
+    screenshots: Screenshot[];
 }
 
 export interface Library {
@@ -76,6 +123,25 @@ export interface Library {
     /** The SQLite file inside it, which models these rows. */
     database: string;
     games: GameEntry[];
+}
+
+/** The host the `app://` protocol serves library files under. */
+export const LIBRARY_HOST = 'library';
+
+/**
+ * A URL for a file inside the library, for an `<img>` to fetch.
+ *
+ * The renderer cannot read the filesystem, so the picture has to arrive the
+ * way every other subresource in a page does: a URL, fetched by Chromium,
+ * cached by Chromium, and decoded off the main thread. The alternative -- the
+ * bytes over IPC, made into a blob URL per card -- would mean a round trip and
+ * a live object per thumbnail, for no benefit at all.
+ *
+ * The handler behind this URL serves one directory and one file type; see
+ * registerAppProtocol in src/main/index.ts. It is not a window into the disk.
+ */
+export function libraryAssetUrl(file: string): string {
+    return `app://${LIBRARY_HOST}/${file.split('/').map(encodeURIComponent).join('/')}`;
 }
 
 /** A ROM the main process read off disk, on its way to the renderer. */
@@ -106,8 +172,16 @@ export interface FrameStats {
 export interface FcBridge {
     getBootRom(): Promise<BootRom | null>;
 
-    /** The whole library, pinned first and then most recently played. */
-    listGames(): Promise<Library>;
+    /**
+     * The whole library: every game, and every screenshot.
+     *
+     * One call rather than two, because the two are drawn together -- a card
+     * shows a game's cover and its screenshot count, and the screenshots
+     * section lists the pictures themselves -- and two calls would be two
+     * chances for the screen to be showing half of one state and half of
+     * another.
+     */
+    library(): Promise<LibraryState>;
 
     /**
      * Read one ROM by path.
@@ -140,14 +214,16 @@ export interface FcBridge {
     listSaves(): Promise<number[]>;
 
     /**
-     * Open the library folder in the Finder.
+     * Open the library folder -- or a folder inside it -- in the Finder.
      *
-     * The library empty state can say where the games go, but a path is only
-     * useful if the player can get to it. This is the one convenience the
-     * renderer is given over the filesystem, and it names a folder rather
-     * than a file: the main process decides what "the library folder" is.
+     * The empty state can say where the games go, but a path is only useful
+     * if the player can get to it, and the screenshots live in a subfolder
+     * that is otherwise invisible. This is the one convenience the renderer is
+     * given over the filesystem, and it names a folder rather than a file: the
+     * main process decides what "inside the library" means, and creates the
+     * folder if it is not there yet.
      */
-    openFolder(): Promise<boolean>;
+    openFolder(subdirectory?: string): Promise<boolean>;
 
     /**
      * Copy ROMs into the library.
@@ -165,7 +241,7 @@ export interface FcBridge {
      * Returns null if the player closed the panel, or if what arrived was not
      * a ROM.
      */
-    addGames(paths?: readonly string[]): Promise<Library | null>;
+    addGames(paths?: readonly string[]): Promise<LibraryState | null>;
 
     /**
      * The path a dropped `File` came from.
@@ -180,16 +256,16 @@ export interface FcBridge {
     filePath(file: File): string;
 
     /** Pin a game to the top of the list. Returns the library, re-read. */
-    togglePinned(path: string, pinned: boolean): Promise<Library>;
+    togglePinned(path: string, pinned: boolean): Promise<LibraryState>;
 
     /**
-     * Delete a game, file and row.
+     * Delete a game, file and row -- and its screenshots with it.
      *
      * Confirmed with a native alert first, in the main process, because this
      * is the one button in the interface that destroys something. Returns
      * null if it was declined.
      */
-    removeGame(path: string): Promise<Library | null>;
+    removeGame(path: string): Promise<LibraryState | null>;
 
     /**
      * Point the library at another folder.
@@ -198,7 +274,37 @@ export interface FcBridge {
      * folder is chosen, which is why switching libraries switches everything:
      * a library is a folder.
      */
-    chooseLibraryDirectory(): Promise<Library | null>;
+    chooseLibraryDirectory(): Promise<LibraryState | null>;
+
+    /**
+     * Write a PNG taken from the picture, and file it under a game.
+     *
+     * The bytes come from the renderer because that is where the canvas is;
+     * the file and the row are the main process's, because it owns the disk
+     * and the database. Rejects bytes that are not a PNG, and a game that is
+     * not in the library.
+     *
+     * `asCover` is the 更新封面 button: the new picture replaces whatever the
+     * game's card was showing. Without it, only the first screenshot of a game
+     * becomes the cover.
+     */
+    saveScreenshot(
+        gamePath: string,
+        bytes: Uint8Array,
+        asCover?: boolean,
+    ): Promise<LibraryState | null>;
+
+    /**
+     * Make a screenshot the cover of the game it belongs to.
+     *
+     * A cover is not a separate picture stored twice: it is a flag on one of
+     * the game's screenshots, so setting a cover and taking a screenshot are
+     * the same kind of thing and deleting the cover is not a special case.
+     */
+    setScreenshotCover(id: number): Promise<LibraryState | null>;
+
+    /** Delete a screenshot: the PNG from the library folder, and its row. */
+    removeScreenshot(id: number): Promise<LibraryState | null>;
 
     /**
      * Say which cartridge is in the slot.

@@ -34,11 +34,11 @@ pnpm run dev -- --rom "/path/to/game.nes"
 
 Started with no arguments the app opens on its **library**. The library is a
 folder — by default `~/Library/Application Support/fc-emulator/library` — that
-holds the ROMs and a SQLite database describing them. Add games from the
-interface with the **+** beside the title, or by dragging `.nes` files -- or a
-folder of them -- onto the window. Either way the file is *copied* in and the
-original is left where it was. Point the library somewhere else with
-`--library-dir` (or `--rom-dir`, its old name):
+holds the ROMs, a `screenshots/` folder, and a SQLite database describing both.
+Add games from the interface with the **+** beside the title, or by dragging
+`.nes` files — or a folder of them — onto the window. Either way the file is
+*copied* in and the original is left where it was. Point the library somewhere
+else with `--library-dir` (or `--rom-dir`, its old name):
 
 ```bash
 pnpm run dev -- --library-dir "/path/to/roms"
@@ -97,13 +97,19 @@ src/
                       touch the filesystem, and the --selftest / --keytest /
                       --audiotest / --list hooks
   main/library.ts     the library folder as a model: the SQLite schema, the
-                      scan-and-reconcile, pinning, importing, deleting, and
-                      what a dropped path amounts to. Knows nothing about
-                      Electron, so it is tested from plain Node
-                      (test/library.test.mjs)
+                      scan-and-reconcile, pinning, importing, deleting,
+                      screenshots and covers, and what a dropped path amounts
+                      to. Knows nothing about Electron, so it is tested from
+                      plain Node (test/library.test.mjs)
   preload/index.ts    the eight functions the page is allowed to call
   renderer/
     useEmulator.ts    loading the wasm, the frame loop, the clock
+    engineStatus.ts   the shape of the engine's report, and what it becomes
+                      when the cartridge comes out. No WebAssembly in it, so
+                      plain Node can test the transition
+                      (test/status.test.mjs)
+    usePanelWidth.ts  the divider between the middle column and the picture:
+                      the drag, the clamps, the keyboard, the persistence
     useFileDrop.ts    files dragged onto the window, and the highlight while
                       a drag is in progress
     input.ts          the key map, and the merging of input sources
@@ -116,7 +122,8 @@ src/
     components/
       TitleBar.tsx    the unified title bar and its toolbar buttons
       Sidebar.tsx     the function area: icons and names, stacked vertically
-      LibraryPanel.tsx  the game list, its search field and its sort control
+      LibraryPanel.tsx  the game list: cards, covers, search and sort
+      ScreenshotsPanel.tsx  every screenshot, with 设为封面 and delete
       SavesPanel.tsx  the four save slots
       SettingsPanel.tsx  a read-only report on the machine, the library, and
                       one switch
@@ -153,6 +160,17 @@ disagree, audio works in development and silently fails in the packaged app.
 in Node is in `src/preload/index.ts`; if it is not there, the page cannot do
 it. It is eight verbs long, and the one that writes — `openFolder` — is handed
 a directory the main process chose, not a path the page made up.
+
+**One object per thing the screen draws.** The library and its screenshots are
+one value (`LibraryState`) because they are revised together — a screenshot
+changes a game's cover. The engine's report is one value (`EngineStatus`) and
+`romPath` is the field that says whether a cartridge is in the slot: the title,
+the transport buttons, the placeholder, the card marked as playing and the save
+panel are all derived from it. So ejecting is a transition on that object
+rather than a set of edits scattered through the components, and it lives in
+`engineStatus.ts`, where a plain Node test can reach it. That is not tidiness:
+the bug it was written for was an eject that stopped the machine but left the
+game on screen in five different places at once.
 
 **The interface is three columns.** A function rail on the left (icons with
 their names under them, like VS Code's activity bar), the middle column the
@@ -195,12 +213,58 @@ CREATE TABLE games (
     play_count     INTEGER NOT NULL DEFAULT 0,
     pinned         INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE screenshots (
+    id         INTEGER PRIMARY KEY,
+    game_id    INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    file       TEXT    NOT NULL UNIQUE,      -- screenshots/<stamp>-<rand>.png
+    created_at INTEGER NOT NULL,
+    is_cover   INTEGER NOT NULL DEFAULT 0    -- at most one per game
+);
 ```
 
 `file` is relative, so moving the folder does not invalidate every row. The
 rows are ordered in the query by pin and play date; the panel reorders the
 name tiebreak in JavaScript, because SQLite has no ICU and `localeCompare`
 is what puts Chinese titles in pinyin order rather than by code point.
+
+**Screenshots, and why the cover is a flag.** A screenshot is a PNG in
+`screenshots/`, named `<milliseconds>-<four random bytes>.png` — opaque on
+purpose, because the directory is storage and the database is the model: a name
+that encoded the game and the date would be a second, weaker copy of rows that
+already hold both, and it would have to be rewritten every time a game was
+renamed. The association lives in `screenshots.game_id`, which is also what
+makes a rename free: the row keeps its id, so the pictures follow the game.
+
+There are two ways to take one, and the difference is what happens to the card.
+**截图** (F12) keeps the picture, and the *first* screenshot of a game also
+becomes its cover, because a game with a picture and no cover is a card showing
+a coloured rectangle for no reason. **更新封面** (⇧F12) keeps the picture *and*
+puts it on the card, replacing whatever was there — that is the `asCover`
+argument, and it is the only thing that differs between them. Both go through
+one `saveScreenshot`, so "exactly one cover per game" has one implementation:
+clear the old flag and insert the new row in a single transaction.
+
+The cover is not a second picture and not a path stored on `games`. It is
+`is_cover` on one of the game's own screenshots, and that choice does a lot of
+work: there is one copy of every picture, so setting a cover cannot leave a
+stale one behind; deleting the cover is not a special case — the row goes and
+the newest remaining picture is promoted; and `games` never changes shape,
+which is why upgrading a version 1 library is a `CREATE TABLE` rather than a
+copy of every row through a new table. Deleting a game deletes its pictures,
+from the database and from disk both, and the test for it deletes the ROM in
+the Finder rather than through the application, because that path has to work
+too.
+
+**Why the pictures go through a URL.** The renderer cannot read the filesystem,
+so a cover arrives the way every other subresource in a page does:
+`app://library/screenshots/x.png`, fetched by Chromium, cached by Chromium,
+decoded off the main thread. The alternative — bytes over IPC, turned into a
+blob URL per card — would be a round trip and a live object per thumbnail. The
+protocol handler serves exactly one directory and exactly one file type
+(`screenshots/*.png`), so it is a picture frame rather than a window into the
+disk: a ROM, the database, and anything reachable with `..` are refused, and
+the suite checks each of those.
 
 **Importing a game, and why the renderer may name a path.** Two ways in — the
 open panel, and a drop — and one implementation: both produce a list of paths,
@@ -270,6 +334,27 @@ would show.
 Where the emulator's own numbers appear — fps, cycles, PC, the audio ring —
 they are monospaced and tabular so that a readout does not jitter sideways
 twice a second.
+
+**The middle column is resizable.** A divider between it and the picture,
+dragged with the mouse or nudged with the arrow keys (Home and End for the
+limits, double click to put it back). Four things about it are worth knowing
+before changing it, and `usePanelWidth.ts` explains all four:
+
+* the drag listens on the **window**, not on the seven-pixel handle, because a
+  handle that only works while the cursor is inside it stops dead the moment
+  the hand outruns the events;
+* the width is a **number in state**, not a measurement, so the drag cannot
+  chase its own layout;
+* the column is `flex: 0 0 var(--panel-width)` — with the default shrink, a
+  window too small for the row would silently override the dragged width and
+  the divider would stop following the pointer. Below 700px the divider is
+  hidden and the column goes back to being shrinkable, so a small window still
+  gives the picture a share instead of squeezing it out;
+* the ceiling is recomputed on window resize, so shrinking the window and
+  growing it again cannot resurrect a width that no longer fits.
+
+The width is remembered in `localStorage`: it describes this screen, not the
+games, so it has no business in the library's database.
 
 ---
 
@@ -349,6 +434,16 @@ frame, merges into the same `InputManager` the keyboard uses (so a button held
 on a pad is not released by letting go of a key), has a deadzone, and lets go
 of everything when a pad is unplugged or runs out of battery.
 
+Two scripts put the flag where it has to be, because `pnpm run dev --gamepad`
+never gets there — npm and pnpm take anything before `--` for themselves, so
+the argument has to go after the script: `pnpm run dev -- --gamepad`. Both of
+these do that without anybody having to remember it:
+
+```bash
+pnpm run dev:gamepad    # the dev server, with the flag
+pnpm run gamepad        # the built application, with the flag
+```
+
 It is off because on macOS it makes the application impossible to quit.
 
 A page that so much as adds a `gamepadconnected` listener — without ever
@@ -366,6 +461,49 @@ The mapping itself is a plain function, `mapPad()`, and is tested — including
 the two things that go wrong in every gamepad implementation: the face buttons
 swapped, and a worn stick drifting the player into a wall. What cannot be
 tested here is the reading, and that is the part that misbehaves.
+
+#### When a pad does nothing
+
+Everything the gamepad path knows is logged, prefixed `gamepad:`, and the main
+process prints the renderer's console to the terminal — so the answer is in the
+output of the run, in this order:
+
+| what appears | what it means |
+|---|---|
+| `gamepad: support enabled by --gamepad` | the flag was parsed by the main process. No line means the argument never reached it — see the two scripts above |
+| `gamepad: source started, watching for a pad` | the flag reached the renderer and the source is polling |
+| `gamepad: not enabled -- start with --gamepad` | the flag did **not** reach the renderer. This is the one failure that is ours rather than macOS's |
+| `gamepad: connected "…" mapping=standard` | the browser sees the pad, and its buttons are where this expects them |
+| `gamepad: connected "…" mapping=(none)` | the browser sees the pad but has no standard layout for it; the indices in `gamepad.ts` are a guess, and the `(index N)` in the log lines below says which button actually fired |
+| `gamepad: down          A (index 0)` | a press arrived and went into the input manager. A press with no line is a press the browser never reported |
+| `gamepad: no pad after two seconds…` | the browser is reporting nothing at all, and the three likely reasons are listed in the log itself |
+
+That last one is worth repeating, because none of them are bugs in this
+repository and all three are common:
+
+1. **The window has to be focused.** The Gamepad API only exposes pads to the
+   focused document, so a pad nobody is looking at is invisible. Click the game
+   window, then press a button.
+2. **Chromium only lists a gamepad once it has been used.** A pad that is
+   plugged in and untouched sends nothing, which is indistinguishable from a
+   broken one. Press a button or move a stick on the pad itself.
+3. **macOS may be withholding the device.** System Settings → Privacy &
+   Security → **Input Monitoring**, tick Electron (or this application), then
+   quit and start again — macOS reads that list at launch.
+
+The sandbox is not a factor, and it is worth saying so because it looks like
+one: `webPreferences.sandbox` is already `false`, and the Gamepad API is a
+renderer web API rather than a Node one, so the sandbox setting does not gate
+it either way. Neither is there anything to grant from inside the process —
+Chromium asks macOS for Input Monitoring itself (`IOHIDRequestAccess`) the
+first time the page polls for gamepads, which happens every frame. If that
+prompt was answered "Don't Allow", macOS remembers and never asks again, and
+only System Settings can undo it.
+
+The same information is on screen, without the terminal: the 设置 panel has a
+手柄 group (switch, state, name, layout), and the gamepad dot at the bottom of
+the rail is lit only when a pad is actually being reported — the difference
+between "switched on" and "a pad is here" being the whole of the question.
 
 ### Keys
 

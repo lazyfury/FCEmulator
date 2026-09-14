@@ -24,9 +24,23 @@ interface SidebarProps {
     audioOk: boolean;
     /** Only shown when the application was started with --gamepad. */
     gamepadEnabled: boolean;
+    /**
+     * Whether the browser is actually reporting a pad.
+     *
+     * Separate from `gamepadEnabled`, which only says the source was allowed
+     * to run. The difference between "switched on" and "a pad is here" is the
+     * whole of the question when a pad does not work.
+     */
+    gamepadConnected: boolean;
 }
 
-export default function Sidebar({ active, onSelect, audioOk, gamepadEnabled }: SidebarProps) {
+export default function Sidebar({
+    active,
+    onSelect,
+    audioOk,
+    gamepadEnabled,
+    gamepadConnected,
+}: SidebarProps) {
     return (
         <nav className="sidebar" aria-label="功能区">
             <div className="rail">
@@ -56,7 +70,10 @@ export default function Sidebar({ active, onSelect, audioOk, gamepadEnabled }: S
                     {audioOk ? <Volume2 size={13} /> : <VolumeX size={13} />}
                 </span>
                 {gamepadEnabled && (
-                    <span className="rail-dot rail-dot-on" title="手柄受支持">
+                    <span
+                        className={gamepadConnected ? 'rail-dot rail-dot-on' : 'rail-dot'}
+                        title={gamepadConnected ? '手柄已连接' : '手柄已启用，未检测到'}
+                    >
                         <Gamepad2 size={13} />
                     </span>
                 )}

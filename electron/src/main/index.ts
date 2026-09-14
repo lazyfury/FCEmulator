@@ -24,8 +24,10 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, extname, join, normalize, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { GameLibrary, collectGames, isInside } from './library';
-import { IpcChannel, type BootRom, type Library } from '../shared/api';
+import { GameLibrary, SCREENSHOT_DIRECTORY, collectGames, isInside } from './library';
+import {
+    IpcChannel, LIBRARY_HOST, type BootRom, type LibraryState,
+} from '../shared/api';
 
 // dist-electron/main/index.js  ->  ../..          = electron/
 //                              ->  ../../..       = the repository root
@@ -241,7 +243,7 @@ const CONTENT_SECURITY_POLICY = [
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    "img-src 'self' app: data:",
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
@@ -263,6 +265,14 @@ protocol.registerSchemesAsPrivileged([
 function registerAppProtocol(): void {
     protocol.handle('app', async (request) => {
         const url = new URL(request.url);
+
+        // Two hosts, two jobs. `bundle` is the application itself; `library`
+        // is the player's own pictures, which is the only thing on disk the
+        // page is ever allowed to fetch.
+        if (url.host === LIBRARY_HOST) {
+            return serveLibraryFile(url);
+        }
+
         if (url.host !== 'bundle') {
             return new Response('not found', { status: 404 });
         }
@@ -285,6 +295,60 @@ function registerAppProtocol(): void {
         }
         headers.set('Content-Security-Policy', CONTENT_SECURITY_POLICY);
         return new Response(response.body, { status: response.status, headers });
+    });
+}
+
+/**
+ * One picture from inside the library, for an `<img>` to fetch.
+ *
+ * This is a picture frame and not a window into the disk, and what makes it
+ * one is two rules: the path must be under `screenshots/`, and it must end in
+ * `.png`. Everything else in the library -- the ROMs, the database, the save
+ * states next to them -- is unreachable from the page, which is the same
+ * promise the preload makes in the other direction.
+ *
+ * `Cross-Origin-Resource-Policy: cross-origin` rather than the document's
+ * `same-origin`: in development the page comes from Vite on localhost and the
+ * picture comes from `app://`, and under COEP a cross-origin subresource
+ * without this header is blocked outright. The resources are the player's own
+ * screenshots, served to the player's own page, and nothing else can reach
+ * this URL.
+ */
+async function serveLibraryFile(url: URL): Promise<Response> {
+    let relative: string;
+    try {
+        relative = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+    } catch {
+        // A malformed percent escape is a malformed request.
+        return new Response('bad request', { status: 400 });
+    }
+
+    if (!relative.startsWith(`${SCREENSHOT_DIRECTORY}/`)
+        || !relative.toLowerCase().endsWith('.png')) {
+        return new Response('forbidden', { status: 403 });
+    }
+
+    const root = resolve(libraryDirectory());
+    const target = resolve(join(root, relative));
+    if (!target.startsWith(root + sep)) {
+        return new Response('forbidden', { status: 403 });
+    }
+
+    let bytes: Buffer;
+    try {
+        bytes = await readFile(target);
+    } catch {
+        return new Response('not found', { status: 404 });
+    }
+
+    return new Response(bytes, {
+        headers: {
+            'Content-Type': 'image/png',
+            'Cross-Origin-Resource-Policy': 'cross-origin',
+            // A screenshot never changes once written, and its name is
+            // unique, so the browser may keep it as long as it likes.
+            'Cache-Control': 'private, max-age=31536000, immutable',
+        },
     });
 }
 
@@ -553,6 +617,44 @@ function askUser(options: MessageBoxOptions): Promise<MessageBoxReturnValue> {
         : dialog.showMessageBox(parent, options);
 }
 
+/**
+ * Everything the renderer needs to draw the library.
+ *
+ * One shape for every verb that reads or changes it. Taking a screenshot
+ * changes a game's cover and its screenshot count, deleting a game deletes its
+ * pictures, and switching libraries switches both at once -- so a verb that
+ * answered with only half of this would be a verb the screen has to follow up
+ * with a second question, and a moment where the two answers disagree.
+ */
+function libraryState(model: GameLibrary): LibraryState {
+    return {
+        library: {
+            directory: model.root,
+            database: model.databasePath,
+            games: model.scan(),
+        },
+        screenshots: model.screenshots(),
+    };
+}
+
+/**
+ * Bytes that arrived over IPC.
+ *
+ * Structured clone gives back a Uint8Array for a Uint8Array, but a different
+ * realm's Uint8Array does not satisfy `instanceof` across every Electron
+ * version, and an ArrayBuffer is what a caller is most likely to have anyway.
+ * Both are accepted rather than trusting one of them to keep working.
+ */
+function asBytes(value: unknown): Uint8Array | null {
+    if (value instanceof Uint8Array) {
+        return value;
+    }
+    if (value instanceof ArrayBuffer) {
+        return new Uint8Array(value);
+    }
+    return null;
+}
+
 function registerIpc(): void {
     ipcMain.handle(IpcChannel.GetBootRom, async (): Promise<BootRom | null> => {
         const path = options.romPath;
@@ -568,10 +670,7 @@ function registerIpc(): void {
         }
     });
 
-    ipcMain.handle(IpcChannel.ListGames, async (): Promise<Library> => {
-        const model = library();
-        return { directory: model.root, database: model.databasePath, games: model.scan() };
-    });
+    ipcMain.handle(IpcChannel.Library, async (): Promise<LibraryState> => libraryState(library()));
 
     ipcMain.handle(IpcChannel.ReadRom, async (_event, path: string): Promise<Uint8Array | null> => {
         if (typeof path !== 'string' || !isInside(libraryDirectory(), path)) {
@@ -595,12 +694,12 @@ function registerIpc(): void {
 
     ipcMain.handle(
         IpcChannel.TogglePinned,
-        async (_event, request: { path: string; pinned: boolean }): Promise<Library> => {
+        async (_event, request: { path: string; pinned: boolean }): Promise<LibraryState> => {
             const model = library();
             if (typeof request?.path === 'string' && typeof request.pinned === 'boolean') {
                 model.setPinned(request.path, request.pinned);
             }
-            return { directory: model.root, database: model.databasePath, games: model.scan() };
+            return libraryState(model);
         },
     );
 
@@ -614,7 +713,7 @@ function registerIpc(): void {
      */
     ipcMain.handle(
         IpcChannel.AddGames,
-        async (_event, dropped?: unknown): Promise<Library | null> => {
+        async (_event, dropped?: unknown): Promise<LibraryState | null> => {
             const model = library();
             const paths = Array.isArray(dropped)
                 ? dropped.filter((path): path is string => typeof path === 'string')
@@ -646,7 +745,7 @@ function registerIpc(): void {
                 model.add(sources);
             }
 
-            return { directory: model.root, database: model.databasePath, games: model.scan() };
+            return libraryState(model);
         },
     );
 
@@ -655,34 +754,43 @@ function registerIpc(): void {
      *
      * The confirmation is drawn by the main process rather than the page: this
      * is the one control that destroys something, and a renderer bug must not
-     * be able to reach it without a person clicking a system alert.
+     * be able to reach it without a person clicking a system alert. The
+     * screenshots go with it -- they were pictures of this game, and a
+     * screenshot of a game that is not in the library is a picture nobody can
+     * find again.
      */
-    ipcMain.handle(IpcChannel.RemoveGame, async (_event, path: string): Promise<Library | null> => {
-        const model = library();
-        if (typeof path !== 'string' || !isInside(model.root, path)) {
-            console.error(`refused to remove ${path}: outside the library folder`);
-            return null;
-        }
+    ipcMain.handle(
+        IpcChannel.RemoveGame,
+        async (_event, path: string): Promise<LibraryState | null> => {
+            const model = library();
+            if (typeof path !== 'string' || !isInside(model.root, path)) {
+                console.error(`refused to remove ${path}: outside the library folder`);
+                return null;
+            }
 
-        const name = basename(path);
-        const answer = await askUser({
-            type: 'warning',
-            title: '从游戏库移除',
-            message: `要把「${basename(name, extname(name))}」从游戏库删除吗？`,
-            detail: 'ROM 文件会从游戏库文件夹删除，存档保留。',
-            buttons: ['删除', '取消'],
-            defaultId: 1,
-            cancelId: 1,
-        });
-        if (answer.response !== 0) {
-            return null;
-        }
+            const name = basename(path);
+            const pictures = model.screenshots().filter((shot) => shot.gamePath === path).length;
+            const answer = await askUser({
+                type: 'warning',
+                title: '从游戏库移除',
+                message: `要把「${basename(name, extname(name))}」从游戏库删除吗？`,
+                detail: pictures === 0
+                    ? 'ROM 文件会从游戏库文件夹删除，存档保留。'
+                    : `ROM 文件会从游戏库文件夹删除，存档保留，它的 ${pictures} 张截图也会一起删除。`,
+                buttons: ['删除', '取消'],
+                defaultId: 1,
+                cancelId: 1,
+            });
+            if (answer.response !== 0) {
+                return null;
+            }
 
-        model.remove(path);
-        return { directory: model.root, database: model.databasePath, games: model.scan() };
-    });
+            model.remove(path);
+            return libraryState(model);
+        },
+    );
 
-    ipcMain.handle(IpcChannel.ChooseLibraryDirectory, async (): Promise<Library | null> => {
+    ipcMain.handle(IpcChannel.ChooseLibraryDirectory, async (): Promise<LibraryState | null> => {
         const chosen = await openPanel({
             title: '选择游戏库文件夹',
             buttonLabel: '使用',
@@ -693,13 +801,70 @@ function registerIpc(): void {
         }
 
         switchLibrary(chosen.filePaths[0]);
-        const model = library();
-        return { directory: model.root, database: model.databasePath, games: model.scan() };
+        return libraryState(library());
     });
 
     ipcMain.handle(IpcChannel.SetCartridge, async (_event, path: string | null): Promise<void> => {
         currentCartridge = typeof path === 'string' ? path : null;
     });
+
+    /**
+     * Write a screenshot taken from the picture.
+     *
+     * The bytes arrive from the renderer because the canvas is there and the
+     * file is here: the page encodes a PNG it already holds, and the main
+     * process decides where a PNG goes. It checks the signature and the game
+     * again -- see GameLibrary.saveScreenshot -- so a renderer bug cannot fill
+     * the screenshots folder with things that are not pictures, or file one
+     * against a game that does not exist.
+     */
+    ipcMain.handle(
+        IpcChannel.SaveScreenshot,
+        async (
+            _event,
+            request: { gamePath?: unknown; bytes?: unknown; asCover?: unknown },
+        ): Promise<LibraryState | null> => {
+            const model = library();
+            const bytes = asBytes(request?.bytes);
+            if (typeof request?.gamePath !== 'string' || bytes === null) {
+                console.error('refused a screenshot: no game, or no bytes');
+                return null;
+            }
+
+            const saved = model.saveScreenshot(
+                request.gamePath,
+                bytes,
+                request.asCover === true,
+            );
+            if (saved === null) {
+                console.error(`refused a screenshot for ${request.gamePath}`);
+                return null;
+            }
+            return libraryState(model);
+        },
+    );
+
+    ipcMain.handle(
+        IpcChannel.SetScreenshotCover,
+        async (_event, id: number): Promise<LibraryState | null> => {
+            const model = library();
+            if (typeof id !== 'number' || !model.setCover(id)) {
+                return null;
+            }
+            return libraryState(model);
+        },
+    );
+
+    ipcMain.handle(
+        IpcChannel.RemoveScreenshot,
+        async (_event, id: number): Promise<LibraryState | null> => {
+            const model = library();
+            if (typeof id !== 'number' || !model.removeScreenshot(id)) {
+                return null;
+            }
+            return libraryState(model);
+        },
+    );
 
     ipcMain.handle(
         IpcChannel.SaveState,
@@ -756,11 +921,24 @@ function registerIpc(): void {
         }
     });
 
-    ipcMain.handle(IpcChannel.OpenFolder, async (): Promise<boolean> => {
-        const directory = libraryDirectory();
+    ipcMain.handle(IpcChannel.OpenFolder, async (_event, subdirectory?: unknown): Promise<boolean> => {
+        const root = resolve(libraryDirectory());
+        let directory = root;
+
+        // A subfolder is allowed if it is inside the library, which is the
+        // same rule the read-only side uses. Created first, so that a folder
+        // that has not been used yet opens as an empty one rather than as an
+        // error.
+        if (typeof subdirectory === 'string' && subdirectory !== '') {
+            const candidate = resolve(join(root, subdirectory));
+            if (!candidate.startsWith(root + sep)) {
+                console.error(`refused to open ${subdirectory}: outside the library folder`);
+                return false;
+            }
+            directory = candidate;
+        }
+
         try {
-            // Created first, so that a player who has never had a library
-            // folder gets an empty one to drop games into rather than an error.
             await mkdir(directory, { recursive: true });
         } catch (error) {
             console.error(`could not create ${directory}: ${(error as Error).message}`);
@@ -1266,16 +1444,21 @@ async function runListGames(window: BrowserWindow): Promise<void> {
         return;
     }
 
-    const library = await window.webContents.executeJavaScript(
-        'window.fc.listGames()',
+    const state = await window.webContents.executeJavaScript(
+        'window.fc.library()',
     ) as {
-        directory: string;
-        database: string;
-        games: {
-            name: string; size: number; pinned: boolean;
-            playCount: number; lastPlayedAt: number;
-        }[];
+        library: {
+            directory: string;
+            database: string;
+            games: {
+                name: string; size: number; pinned: boolean;
+                playCount: number; lastPlayedAt: number; cover: string | null;
+                screenshots: number;
+            }[];
+        };
+        screenshots: { game: string; file: string; isCover: boolean }[];
     };
+    const library = state.library;
 
     console.log(`directory      : ${library.directory}`);
     console.log(`database       : ${library.database}`);
@@ -1283,11 +1466,18 @@ async function runListGames(window: BrowserWindow): Promise<void> {
 
     for (const game of library.games) {
         const when = game.lastPlayedAt === 0 ? 'never' : new Date(game.lastPlayedAt).toLocaleString();
+        const cover = game.cover === null ? '   -  ' : '  cover';
         console.log(
-            `  ${game.pinned ? '*' : ' '} ${game.name.padEnd(40)} `
+            `  ${game.pinned ? '*' : ' '} ${game.name.padEnd(36)} `
             + `${String(Math.round(game.size / 1024)).padStart(5)}K  `
-            + `${String(game.playCount).padStart(3)}x  ${when}`,
+            + `${String(game.playCount).padStart(3)}x  `
+            + `${String(game.screenshots).padStart(2)} shot${cover}  ${when}`,
         );
+    }
+
+    console.log(`screenshots    : ${state.screenshots.length}`);
+    for (const shot of state.screenshots) {
+        console.log(`  ${shot.isCover ? '*' : ' '} ${shot.file.padEnd(38)} ${shot.game}`);
     }
 
     // And that the renderer cannot read what it was not given.
@@ -1340,6 +1530,14 @@ function exitNow(code: number): void {
 void app.whenReady().then(() => {
     registerAppProtocol();
     registerIpc();
+
+    // The first line of the gamepad diagnosis, and the one that says whether
+    // there is anything to diagnose: without this the renderer's own
+    // `gamepad:` lines are the only sign, and no sign at all is ambiguous
+    // between "the flag never arrived" and "the page never started".
+    if (options.gamepad) {
+        console.log('gamepad: support enabled by --gamepad; the renderer will report what it sees');
+    }
 
     const window = createWindow();
 

@@ -74,6 +74,8 @@ export const KEY_BINDINGS: Readonly<Record<string, ButtonName>> = Object.freeze(
 export type CommandName =
     | 'pause'
     | 'reset'
+    | 'screenshot'
+    | 'screenshot-cover'
     | 'save1' | 'save2' | 'save3'
     | 'load1' | 'load2' | 'load3'
     | 'quicksave' | 'quickload';
@@ -85,6 +87,11 @@ export const KEY_COMMANDS: Readonly<Record<string, CommandName>> = Object.freeze
     KeyP: 'pause',
 
     KeyR: 'reset',
+
+    // F12 is what every emulator has used for a screenshot since DOSBox, and
+    // the screenshots section is where they end up. Nothing else on the
+    // keyboard was free: every letter is a button, a save slot, or both.
+    F12: 'screenshot',
 
     F1: 'save1',
     F2: 'save2',
@@ -122,6 +129,16 @@ export const KEY_COMMANDS_SHIFTED: Readonly<Record<string, CommandName>> = Objec
     F1: 'load1',
     F2: 'load2',
     F3: 'load3',
+
+    // Shift+F12 takes a screenshot *and* puts it on the game's card, which is
+    // the difference between keeping a picture and replacing the one people
+    // see. It is Shift rather than a third key because the pattern is already
+    // here: F1 saves and Shift+F1 loads.
+    //
+    // Shift is also Select, but only the *right* Shift is bound to it (see
+    // KEY_BINDINGS), so a left-handed Shift+F12 does not press anything on
+    // the console.
+    F12: 'screenshot-cover',
 });
 
 /**

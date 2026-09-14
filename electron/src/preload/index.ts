@@ -16,7 +16,9 @@
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import { IpcChannel, type BootRom, type FcBridge, type Library } from '../shared/api';
+import {
+    IpcChannel, type BootRom, type FcBridge, type LibraryState,
+} from '../shared/api';
 
 const bridge: FcBridge = {
     getBootRom: () => ipcRenderer.invoke(IpcChannel.GetBootRom) as Promise<BootRom | null>,
@@ -24,7 +26,7 @@ const bridge: FcBridge = {
     saveState: (slot, bytes) =>
         ipcRenderer.invoke(IpcChannel.SaveState, { slot, bytes }) as Promise<boolean>,
 
-    listGames: () => ipcRenderer.invoke(IpcChannel.ListGames) as Promise<Library>,
+    library: () => ipcRenderer.invoke(IpcChannel.Library) as Promise<LibraryState>,
 
     readRom: (path) =>
         ipcRenderer.invoke(IpcChannel.ReadRom, path) as Promise<Uint8Array | null>,
@@ -37,24 +39,36 @@ const bridge: FcBridge = {
 
     listSaves: () => ipcRenderer.invoke(IpcChannel.ListSaves) as Promise<number[]>,
 
-    openFolder: () => ipcRenderer.invoke(IpcChannel.OpenFolder) as Promise<boolean>,
+    openFolder: (subdirectory) =>
+        ipcRenderer.invoke(IpcChannel.OpenFolder, subdirectory) as Promise<boolean>,
 
     addGames: (paths) =>
-        ipcRenderer.invoke(IpcChannel.AddGames, paths) as Promise<Library | null>,
+        ipcRenderer.invoke(IpcChannel.AddGames, paths) as Promise<LibraryState | null>,
 
     filePath: (file) => webUtils.getPathForFile(file),
 
     togglePinned: (path, pinned) =>
-        ipcRenderer.invoke(IpcChannel.TogglePinned, { path, pinned }) as Promise<Library>,
+        ipcRenderer.invoke(IpcChannel.TogglePinned, { path, pinned }) as Promise<LibraryState>,
 
     removeGame: (path) =>
-        ipcRenderer.invoke(IpcChannel.RemoveGame, path) as Promise<Library | null>,
+        ipcRenderer.invoke(IpcChannel.RemoveGame, path) as Promise<LibraryState | null>,
 
     chooseLibraryDirectory: () =>
-        ipcRenderer.invoke(IpcChannel.ChooseLibraryDirectory) as Promise<Library | null>,
+        ipcRenderer.invoke(IpcChannel.ChooseLibraryDirectory) as Promise<LibraryState | null>,
 
     setCartridge: (path) =>
         ipcRenderer.invoke(IpcChannel.SetCartridge, path) as Promise<void>,
+
+    saveScreenshot: (gamePath, bytes, asCover) =>
+        ipcRenderer.invoke(
+            IpcChannel.SaveScreenshot, { gamePath, bytes, asCover },
+        ) as Promise<LibraryState | null>,
+
+    setScreenshotCover: (id) =>
+        ipcRenderer.invoke(IpcChannel.SetScreenshotCover, id) as Promise<LibraryState | null>,
+
+    removeScreenshot: (id) =>
+        ipcRenderer.invoke(IpcChannel.RemoveScreenshot, id) as Promise<LibraryState | null>,
 
     // The main process appends this through webPreferences.additionalArguments
     // when it was started with --selftest. Reading it here rather than over

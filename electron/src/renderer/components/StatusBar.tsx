@@ -11,7 +11,7 @@
 // difference between a readout and a flicker.
 // ---------------------------------------------------------------------------
 
-import type { EngineStatus } from '../useEmulator';
+import type { EngineStatus } from '../engineStatus';
 import { formatCycles, formatHex16 } from '../format';
 
 function describeAudio(status: EngineStatus): string {

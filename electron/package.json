@@ -12,10 +12,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "node --test test/*.test.mjs",
     "dev": "node scripts/dev.mjs",
+    "dev:gamepad": "node scripts/dev.mjs --gamepad",
     "start": "pnpm run build && electron .",
     "selftest": "pnpm run build && electron . --selftest 300 --dump selftest.png",
     "keytest": "pnpm run build && electron . --keytest",
-    "audiotest": "pnpm run build && electron . --audiotest 8"
+    "audiotest": "pnpm run build && electron . --audiotest 8",
+    "gamepad": "pnpm run build && electron . --gamepad"
   },
   "devDependencies": {
     "@types/node": "^26.5.1",

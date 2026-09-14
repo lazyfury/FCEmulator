@@ -253,6 +253,10 @@ kbd,
     display: flex;
     flex-direction: column;
     gap: 4px;
+    /* Seven sections at a normal window height, and a scrollbar at a short
+       one rather than a stack that walks off the bottom. */
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .rail-item {
@@ -323,12 +327,59 @@ kbd,
    --------------------------------------------------------------------------- */
 
 .panel {
-    flex: 0 1 320px;
+    /* The width is the divider's, and nothing else may change it. With the
+       default `flex-shrink: 1` here, a window too small for the row would
+       quietly shrink the column while the number behind the divider stayed
+       where the drag left it -- and the divider would stop following the
+       pointer. `0 0` means the column is exactly as wide as it says it is;
+       the picture takes what is left. */
+    flex: 0 0 var(--panel-width, 320px);
     min-width: 0;
     display: flex;
     flex-direction: column;
     background: var(--panel);
-    border-right: 1px solid var(--border);
+}
+
+/* The divider between the middle column and the picture.
+
+   Seven pixels wide and one pixel drawn, because a one-pixel target is a
+   target nobody can hit. The line is an ::after rather than a border so that
+   it can brighten and thicken on hover without the element -- the thing the
+   pointer has captured -- changing size underneath the drag. */
+.splitter {
+    position: relative;
+    flex: none;
+    width: 7px;
+    cursor: col-resize;
+    /* A drag on a touch screen must move the divider, not scroll the panel. */
+    touch-action: none;
+}
+
+.splitter::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 1px;
+    background: var(--border);
+}
+
+.splitter:hover::after,
+.splitter:focus-visible::after,
+.splitter-active::after {
+    left: 2px;
+    width: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+}
+
+.splitter:focus-visible {
+    outline: none;
+}
+
+.splitter:focus-visible::after {
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .panel-head {
@@ -524,41 +575,41 @@ kbd,
 }
 
 /* ---------------------------------------------------------------------------
-   The game list
+   The game cards
+
+   A grid, not a list, because a card has a picture in it. Two columns is what
+   fits in the middle column at its usual width; `auto-fill` widens or narrows
+   that as the window changes, and the picture keeps the console's own 256x240
+   proportions so nothing is ever stretched.
    --------------------------------------------------------------------------- */
 
-.games {
+.cards {
     list-style: none;
     margin: 0;
     padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+    gap: 10px;
+}
+
+/* A cell is the picture, the name and the controls. The controls float over
+   the picture's top right corner, outside the open button, because a button
+   inside a button is not a thing. */
+.card-cell {
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    border-radius: 10px;
 }
 
-/* A row is two controls: the game, which fills it, and the pin and delete,
-   which appear when the row is pointed at or focused. They cannot be inside
-   the game button, so the button is a child of the row instead. */
-.game-row {
+.card {
     display: flex;
-    align-items: center;
-    border-radius: var(--radius);
-}
-
-.game-row:hover,
-.game-row:focus-within {
-    background: var(--hover);
-}
-
-.game {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 6px;
-    padding: 7px 4px 7px 8px;
+    width: 100%;
+    padding: 6px;
     border: 0;
-    border-radius: var(--radius);
+    border-radius: 10px;
     background: transparent;
     color: inherit;
     font: inherit;
@@ -566,82 +617,198 @@ kbd,
     cursor: pointer;
 }
 
-.game:focus-visible {
+.card-cell:hover {
+    background: var(--hover);
+}
+
+.card:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.game-actions {
-    flex: none;
+.card-cover {
+    position: relative;
+    display: block;
+    aspect-ratio: 256 / 240;
+    overflow: hidden;
+    border-radius: 6px;
+    background: #000;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.cover-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    /* The emulator drew this one pixel at a time and the card is smaller than
+       it; smoothing it would invent detail that was never there. */
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+/* No screenshot yet: a colour derived from the name, with the name clipped
+   into it. The hue is a hash, so it is the same colour every run and never
+   the same colour as its neighbour. */
+.cover-blank {
     display: flex;
-    gap: 1px;
-    padding-right: 4px;
-    opacity: 0;
-    transition: opacity 0.1s ease;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    padding: 8px;
+    background: hsl(var(--cover-hue, 210) 42% 34%);
+    color: #fdfdfd;
+    text-align: center;
 }
 
-/* Visible when the row is pointed at, tabbed into, or pinned -- a pinned game
-   says so without being hovered. */
-.game-row:hover .game-actions,
-.game-row:focus-within .game-actions,
-.game-row.game-pinned .game-actions {
-    opacity: 1;
-}
-
-/* The cartridge in the slot, marked the way a Finder selection is: fill,
-   colour, and weight -- not one of the three on its own. */
-.game-row.game-playing {
-    background: var(--accent-soft);
-}
-
-.game-playing .game-name {
-    color: var(--accent);
+.cover-blank-name {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+    font-size: 11px;
     font-weight: 600;
+    line-height: 1.35;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 
-.game-mark {
-    flex: none;
-    width: 12px;
-    display: grid;
-    place-items: center;
-    color: var(--accent);
-    opacity: 0;
-}
-
-.game-row:hover .game-mark,
-.game-playing .game-mark {
-    opacity: 1;
-}
-
-.game-mark-icon {
-    transform: rotate(90deg);
-}
-
-.game-body {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-}
-
-.game-name {
+.card-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12.5px;
+    font-size: 12px;
+    font-weight: 500;
 }
 
-.game-meta {
+.card-meta {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     font-size: 10.5px;
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;
 }
 
-.game-when {
-    min-width: 4.5em;
+.card-when {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.card-actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 8px;
+    background: rgba(28, 28, 32, 0.72);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    opacity: 0;
+    transition: opacity 0.1s ease;
+}
+
+/* Visible when the card is pointed at or tabbed into. A pinned card keeps its
+   controls: the pin is a state, and a state should not need hovering. */
+.card-cell:hover .card-actions,
+.card-cell:focus-within .card-actions,
+.card-cell.card-pinned .card-actions {
+    opacity: 1;
+}
+
+.card-actions .icon-button {
+    width: 20px;
+    height: 20px;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.card-actions .icon-button:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+}
+
+.card-actions .icon-button[aria-pressed='true'] {
+    color: #ffd60a;
+}
+
+.card-shots {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.14);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.card-cover-flag {
+    color: #ffd60a;
+}
+
+/* The cartridge in the slot, marked the way a Finder selection is: fill,
+   colour, and weight -- not one of the three on its own. */
+.card-cell.card-playing {
+    background: var(--accent-soft);
+}
+
+.card-playing .card-name {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   Screenshots
+   --------------------------------------------------------------------------- */
+
+/* Wider cards: a screenshot is worth looking at, and the middle column is
+   normally wide enough for two. */
+.cards-shots {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.shot {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.shot-image {
+    display: block;
+    width: 100%;
+    aspect-ratio: 256 / 240;
+    object-fit: cover;
+    border-radius: 6px;
+    background: #000;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+.shot-caption {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: 10.5px;
+    color: var(--text-faint);
+}
+
+.shot-game {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.shot-when {
+    flex: none;
+    font-variant-numeric: tabular-nums;
 }
 
 .panel-foot {
@@ -1222,7 +1389,11 @@ kbd {
 .transport {
     display: flex;
     align-items: center;
-    gap: 8px;
+    /* Wraps rather than clips: seven buttons do not fit in the play column at
+       a small window size, and controls that walk off the edge are worse than
+       controls that take a second line. */
+    flex-wrap: wrap;
+    gap: 6px 8px;
     padding: 10px 12px;
     border-top: 1px solid var(--border);
     background: var(--chrome);
@@ -1285,6 +1456,38 @@ kbd {
 }
 
 /* ---------------------------------------------------------------------------
+   The toast
+   --------------------------------------------------------------------------- */
+
+/* What just happened, over the window rather than in it: "saved slot 1",
+   "added 3 games", "that was not a ROM". Shell level, because the panels come
+   and go and the feedback should not. No pointer events -- it is a message,
+   not a control. */
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 44px;
+    transform: translateX(-50%);
+    z-index: 30;
+    padding: 8px 16px;
+    border-radius: 10px;
+    background: rgba(40, 40, 43, 0.93);
+    color: #f5f5f7;
+    font-size: 12px;
+    white-space: nowrap;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+    animation: toast-in 120ms ease-out;
+}
+
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translate(-50%, 6px);
+    }
+}
+
+/* ---------------------------------------------------------------------------
    Drag and drop
    --------------------------------------------------------------------------- */
 
@@ -1340,6 +1543,20 @@ kbd {
 /* ---------------------------------------------------------------------------
    Small windows
    --------------------------------------------------------------------------- */
+
+/* Below this there is no room to be particular. The divider goes, and the
+   panel goes back to being shrinkable so that the picture keeps a share of
+   whatever is left instead of being squeezed out entirely. */
+@media (max-width: 700px) {
+    .splitter {
+        display: none;
+    }
+
+    .panel {
+        flex: 0 1 var(--panel-width, 320px);
+        border-right: 1px solid var(--border);
+    }
+}
 
 @media (max-width: 1000px) {
     .sidebar {

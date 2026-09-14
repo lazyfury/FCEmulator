@@ -33,22 +33,41 @@
 // ---------------------------------------------------------------------------
 
 import {
-    copyFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync,
+    copyFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync,
 } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { basename, extname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-import type { GameEntry } from '../shared/api';
+import type { GameEntry, Screenshot } from '../shared/api';
 
 /** The database file. Named so, and placed inside the library folder, because
  *  a library is one folder that can be moved, copied or deleted whole. */
 export const DATABASE_FILE = 'library.sqlite';
 
+/**
+ * Where screenshots are kept, relative to the library folder.
+ *
+ * A directory of its own, beside the ROMs and the database, because it is a
+ * different kind of thing: the ROMs are what the player brought, the database
+ * is what the application knows, and these are what it made. One folder still,
+ * so a library can be copied between machines with a drag.
+ */
+export const SCREENSHOT_DIRECTORY = 'screenshots';
+
 /** What this build understands. A database with a higher number was written by
  *  a newer build, and guessing at its columns would corrupt it. */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
-const SCHEMA = `
+/**
+ * Schema 1: the games, and what the database knows about them.
+ *
+ * Kept separate from the screenshots below so that upgrading a version 1
+ * library is a `CREATE TABLE`, not a copy of every row through a new table.
+ * The alternative -- one SCHEMA string and a version bump -- would be simpler
+ * to read and would throw away every pin and play count the first time it ran.
+ */
+const GAMES_SCHEMA = `
 CREATE TABLE IF NOT EXISTS games (
     id             INTEGER PRIMARY KEY,
     -- The file name relative to the library folder. Relative, not absolute,
@@ -67,8 +86,44 @@ CREATE INDEX IF NOT EXISTS games_order
     ON games (pinned DESC, last_played_at DESC, title COLLATE NOCASE);
 `;
 
+/**
+ * Schema 2: screenshots, and which of them is the cover.
+ *
+ * The cover is a flag on one of the game's screenshots rather than a
+ * `cover_id` column on `games`, and that choice does a lot of work:
+ *
+ *   * there is one picture, stored once, so setting a cover cannot leave a
+ *     stale copy of the old one behind;
+ *   * deleting the cover is not a special case -- the row goes, and the game
+ *     either has another screenshot to promote or it does not;
+ *   * `games` never changes shape, which is why this migration is additive.
+ *
+ * `file` is relative to the library folder for the same reason the games'
+ * rows are: a library that is moved is still a library.
+ *
+ * ON DELETE CASCADE so that a game that leaves takes its pictures with it, but
+ * the deletion in scan() is explicit as well, because a cascade cannot delete
+ * the files on disk and the rows must never outlive them.
+ */
+const SCREENSHOTS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS screenshots (
+    id         INTEGER PRIMARY KEY,
+    game_id    INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    file       TEXT    NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL,
+    is_cover   INTEGER NOT NULL DEFAULT 0 CHECK (is_cover IN (0, 1))
+);
+
+CREATE INDEX IF NOT EXISTS screenshots_by_game
+    ON screenshots (game_id, is_cover DESC, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS screenshots_by_date
+    ON screenshots (created_at DESC);
+`;
+
 /** A row, as SQLite hands it over: snake_case, integers for booleans. */
 interface Row {
+    id: number;
     file: string;
     title: string;
     size: number;
@@ -83,6 +138,29 @@ interface Row {
 interface DiskFile {
     size: number;
     mtime: number;
+}
+
+/** A game row with the two things that are derived from the screenshots. */
+interface GameRow {
+    file: string;
+    title: string;
+    size: number;
+    added_at: number;
+    last_played_at: number;
+    play_count: number;
+    pinned: number;
+    cover: string | null;
+    screenshots: number;
+}
+
+/** A screenshot row, and the game it belongs to. */
+interface ScreenshotRow {
+    id: number;
+    file: string;
+    created_at: number;
+    is_cover: number;
+    game_file: string;
+    game_title: string;
 }
 
 /** True when `candidate` is the root itself or something inside it. Resolved
@@ -103,6 +181,23 @@ function titleOf(file: string): string {
 
 function isRom(name: string): boolean {
     return name.toLowerCase().endsWith('.nes');
+}
+
+/** The eight bytes every PNG starts with. */
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/**
+ * Whether these bytes are a PNG.
+ *
+ * Not a decode and not a substitute for one: it is the check that stops this
+ * folder filling up with things that are not pictures, and the check that
+ * makes the `screenshots/*.png` rule the protocol handler enforces true.
+ */
+function isPng(bytes: Uint8Array): boolean {
+    if (bytes.length < PNG_SIGNATURE.length) {
+        return false;
+    }
+    return PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
 }
 
 /**
@@ -189,18 +284,31 @@ export class GameLibrary {
         const databasePath = join(absolute, DATABASE_FILE);
         const db = new DatabaseSync(databasePath);
 
+        // The cascade above is only a backstop -- scan() deletes explicitly,
+        // because a cascade cannot delete the PNGs. This makes it a backstop
+        // that actually fires rather than one SQLite ignores by default.
+        db.exec('PRAGMA foreign_keys = ON');
+
         const version = (db.prepare('PRAGMA user_version').get() as { user_version: number })
             .user_version;
 
         if (version === 0) {
-            db.exec(SCHEMA);
-            db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+            db.exec(GAMES_SCHEMA);
+            db.exec(SCREENSHOTS_SCHEMA);
+        } else if (version === 1) {
+            // A library from before screenshots existed. Adding a table is the
+            // whole migration; nothing already in it has to move.
+            db.exec(SCREENSHOTS_SCHEMA);
         } else if (version > SCHEMA_VERSION) {
             db.close();
             throw new Error(
                 `${databasePath} was written by a newer version of FC Emulator `
                 + `(schema ${version}, this build understands ${SCHEMA_VERSION})`,
             );
+        }
+
+        if (version < SCHEMA_VERSION) {
+            db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         }
 
         return new GameLibrary(absolute, databasePath, db);
@@ -246,6 +354,11 @@ export class GameLibrary {
         const appeared = [...onDisk.keys()].filter((file) => !known.has(file));
         const vanished = [...known.values()].filter((row) => !onDisk.has(row.file));
 
+        // The pictures of a game that is gone go with it. Not in the
+        // transaction -- an unlink can fail, and a file that survives a
+        // rolled-back database is better than a row pointing at nothing.
+        const orphaned = vanished.map((row) => this.#screenshotFiles(row.file));
+
         this.#transaction(() => {
             const now = Date.now();
 
@@ -255,7 +368,10 @@ export class GameLibrary {
                     (row) => row.size === stat.size && row.mtime_ms === stat.mtime,
                 );
                 if (twin >= 0) {
+                    // A rename. The row keeps its id, so every screenshot taken
+                    // of this game stays attached to it.
                     const [row] = vanished.splice(twin, 1);
+                    orphaned.splice(twin, 1);
                     reidentify.run(file, titleOf(file), stat.size, stat.mtime, row.file);
                 } else {
                     insert.run(file, titleOf(file), stat.size, stat.mtime, now);
@@ -271,9 +387,14 @@ export class GameLibrary {
             }
 
             for (const row of vanished) {
+                this.#db.prepare('DELETE FROM screenshots WHERE game_id = ?').run(row.id);
                 forget.run(row.file);
             }
         });
+
+        for (const files of orphaned) {
+            this.#unlink(files);
+        }
 
         return this.#select();
     }
@@ -343,16 +464,196 @@ export class GameLibrary {
         if (file === null) {
             return false;
         }
+
+        // The pictures first: a row that outlives its PNG is a broken
+        // thumbnail forever, whereas a PNG that outlives its row is a few
+        // kilobytes nobody will ever look at.
+        const pictures = this.#screenshotFiles(file);
+
         try {
             unlinkSync(join(this.root, file));
         } catch {
             return false;
         }
-        this.#db.prepare('DELETE FROM games WHERE file = ?').run(file);
+
+        this.#transaction(() => {
+            const id = this.#gameIdOf(file);
+            if (id !== null) {
+                this.#db.prepare('DELETE FROM screenshots WHERE game_id = ?').run(id);
+            }
+            this.#db.prepare('DELETE FROM games WHERE file = ?').run(file);
+        });
+
+        this.#unlink(pictures);
+        return true;
+    }
+
+    // -- screenshots --------------------------------------------------------
+
+    /**
+     * Every screenshot in the library, newest first.
+     *
+     * One list, not one per game: the screenshots section shows them all, and
+     * a card in the games list only needs the cover and a count, which the
+     * game query already carries. Ordered in SQL so that the screen and the
+     * database cannot disagree about what "newest" means.
+     */
+    screenshots(): Screenshot[] {
+        return this.#selectScreenshots();
+    }
+
+    /**
+     * Write a PNG and file it under a game.
+     *
+     * `asCover` is the difference between the two buttons in the transport:
+     *
+     *   false -- the first screenshot of a game becomes its cover, because a
+     *            game with a picture and no cover is a card showing a coloured
+     *            rectangle for no reason. Every one after that is just a
+     *            screenshot until somebody says otherwise.
+     *   true  -- this picture is the cover, whatever it was before. That is
+     *            the 更新封面 button: take where you are now and put it on the
+     *            card.
+     *
+     * Returns the new row, or null when the bytes are not a PNG or the game is
+     * not in this library.
+     */
+    saveScreenshot(gamePath: string, bytes: Uint8Array, asCover = false): Screenshot | null {
+        const file = this.#fileOf(gamePath);
+        if (file === null) {
+            return null;
+        }
+
+        // Checked here rather than trusted from the caller: this is the one
+        // place a file gets written, and the eight byte signature is what
+        // makes a .png a .png. Everything downstream assumes it.
+        if (!isPng(bytes)) {
+            return null;
+        }
+
+        const id = this.#gameIdOf(file);
+        if (id === null) {
+            return null;
+        }
+
+        // The name is opaque on purpose. The directory is storage, and the
+        // model is the database: a name that encoded the game and the date
+        // would be a second, weaker copy of rows that already hold both --
+        // and it would have to be rewritten every time a game was renamed.
+        const name = `${Date.now()}-${randomBytes(4).toString('hex')}.png`;
+        const relative = `${SCREENSHOT_DIRECTORY}/${name}`;
+
+        mkdirSync(this.#screenshotDirectory(), { recursive: true });
+        writeFileSync(join(this.root, relative), bytes);
+
+        const first = (this.#db.prepare(
+            'SELECT COUNT(*) AS n FROM screenshots WHERE game_id = ?',
+        ).get(id) as { n: number }).n === 0;
+
+        const cover = asCover || first;
+
+        // One transaction, because "exactly one cover per game" is the
+        // invariant and clearing the old flag and setting the new one are two
+        // writes. A failure between them would leave a game with none, or
+        // with two.
+        this.#transaction(() => {
+            if (cover) {
+                this.#db.prepare('UPDATE screenshots SET is_cover = 0 WHERE game_id = ?').run(id);
+            }
+            this.#db.prepare(
+                'INSERT INTO screenshots (game_id, file, created_at, is_cover) VALUES (?, ?, ?, ?)',
+            ).run(id, relative, Date.now(), cover ? 1 : 0);
+        });
+
+        return this.#selectScreenshots().find((shot) => shot.file === relative) ?? null;
+    }
+
+    /**
+     * Make one screenshot the cover of its game.
+     *
+     * Both halves of the change are in one transaction, because "exactly one
+     * cover per game" is the invariant and there is a moment in the middle
+     * where there would be two.
+     */
+    setCover(id: number): boolean {
+        const row = this.#db.prepare('SELECT game_id FROM screenshots WHERE id = ?')
+            .get(id) as { game_id: number } | undefined;
+        if (row === undefined) {
+            return false;
+        }
+
+        this.#transaction(() => {
+            this.#db.prepare('UPDATE screenshots SET is_cover = 0 WHERE game_id = ?')
+                .run(row.game_id);
+            this.#db.prepare('UPDATE screenshots SET is_cover = 1 WHERE id = ?').run(id);
+        });
+        return true;
+    }
+
+    /**
+     * Delete one screenshot.
+     *
+     * If it was the cover, the newest of the game's remaining pictures takes
+     * over. Leaving the game without one is the other option, and it is the
+     * worse one: the player deleted a picture, not the game's appearance.
+     */
+    removeScreenshot(id: number): boolean {
+        const row = this.#db.prepare('SELECT file, game_id, is_cover FROM screenshots WHERE id = ?')
+            .get(id) as { file: string; game_id: number; is_cover: number } | undefined;
+        if (row === undefined) {
+            return false;
+        }
+
+        this.#transaction(() => {
+            this.#db.prepare('DELETE FROM screenshots WHERE id = ?').run(id);
+            if (row.is_cover === 1) {
+                this.#db.prepare(`
+                    UPDATE screenshots SET is_cover = 1 WHERE id = (
+                        SELECT id FROM screenshots WHERE game_id = ?
+                        ORDER BY created_at DESC LIMIT 1
+                    )
+                `).run(row.game_id);
+            }
+        });
+
+        this.#unlink([row.file]);
         return true;
     }
 
     // -- internals ----------------------------------------------------------
+
+    /** The absolute path of the screenshots directory inside this library. */
+    #screenshotDirectory(): string {
+        return join(this.root, SCREENSHOT_DIRECTORY);
+    }
+
+    /** The id of the game whose file name is `file`, or null. */
+    #gameIdOf(file: string): number | null {
+        const row = this.#db.prepare('SELECT id FROM games WHERE file = ?').get(file) as
+            { id: number } | undefined;
+        return row?.id ?? null;
+    }
+
+    /** The relative paths of every screenshot belonging to a game. */
+    #screenshotFiles(gameFile: string): string[] {
+        const rows = this.#db.prepare(`
+            SELECT s.file FROM screenshots s
+            JOIN games g ON g.id = s.game_id
+            WHERE g.file = ?
+        `).all(gameFile) as unknown as { file: string }[];
+        return rows.map((row) => row.file);
+    }
+
+    /** Delete files, ignoring the ones that are already gone. */
+    #unlink(files: readonly string[]): void {
+        for (const file of files) {
+            try {
+                unlinkSync(join(this.root, file));
+            } catch {
+                // Already deleted, or never written. Neither is a problem.
+            }
+        }
+    }
 
     /** Every .nes file in the folder, and nothing else. */
     #readDirectory(): Map<string, DiskFile> {
@@ -426,11 +727,21 @@ export class GameLibrary {
     }
 
     #select(): GameEntry[] {
+        // The cover and the count are subqueries rather than a join and a
+        // GROUP BY, because a game has one cover and one count and this says
+        // exactly that. The cover is the newest flagged screenshot: `is_cover`
+        // should be unique per game, and picking one is how a bug that made it
+        // not unique stays a cosmetic problem instead of a duplicated row.
         const rows = this.#db.prepare(`
-            SELECT file, title, size, added_at, last_played_at, play_count, pinned
-            FROM games
-            ORDER BY pinned DESC, last_played_at DESC, title COLLATE NOCASE ASC
-        `).all() as unknown as Row[];
+            SELECT g.file, g.title, g.size, g.added_at, g.last_played_at,
+                   g.play_count, g.pinned,
+                   (SELECT s.file FROM screenshots s
+                     WHERE s.game_id = g.id AND s.is_cover = 1
+                     ORDER BY s.created_at DESC LIMIT 1) AS cover,
+                   (SELECT COUNT(*) FROM screenshots s WHERE s.game_id = g.id) AS screenshots
+            FROM games g
+            ORDER BY g.pinned DESC, g.last_played_at DESC, g.title COLLATE NOCASE ASC
+        `).all() as unknown as GameRow[];
 
         return rows.map((row) => ({
             path: join(this.root, row.file),
@@ -440,8 +751,30 @@ export class GameLibrary {
             playCount: row.play_count,
             addedAt: row.added_at,
             lastPlayedAt: row.last_played_at,
+            cover: row.cover,
+            screenshots: row.screenshots,
         }));
     }
+
+    #selectScreenshots(): Screenshot[] {
+        const rows = this.#db.prepare(`
+            SELECT s.id, s.file, s.created_at, s.is_cover,
+                   g.file AS game_file, g.title AS game_title
+            FROM screenshots s
+            JOIN games g ON g.id = s.game_id
+            ORDER BY s.created_at DESC, s.id DESC
+        `).all() as unknown as ScreenshotRow[];
+
+        return rows.map((row) => ({
+            id: row.id,
+            gamePath: join(this.root, row.game_file),
+            game: row.game_title,
+            file: row.file,
+            createdAt: row.created_at,
+            isCover: row.is_cover === 1,
+        }));
+    }
+
 
     /** All of it or none of it. A reconcile that failed halfway would leave
      *  the model describing a folder that never existed. */

@@ -61,6 +61,24 @@ export interface PadState {
 }
 
 /**
+ * What the browser says about the pad, for the status line and the log.
+ *
+ * `mapping` is the one that matters when a pad "does not work": `'standard'`
+ * means the browser recognised the device and arranged the buttons the way the
+ * spec says, which is what the indices above assume. An empty string means it
+ * did not, and every button below is a guess.
+ */
+export interface PadReport {
+    connected: boolean;
+    /** The browser's name for it. Empty when there is nothing connected. */
+    id: string;
+    mapping: string;
+}
+
+/** Nothing plugged in, which is where every session starts. */
+export const NO_PAD: PadReport = { connected: false, id: '', mapping: '' };
+
+/**
  * Which of the console's eight switches a pad has down.
  *
  * Pulled out of the polling and the manager so that it can be tested. Reading
@@ -95,10 +113,29 @@ export function mapPad(pad: PadState): Record<ButtonName, boolean> {
     };
 }
 
+/**
+ * How long to keep quiet before saying that nothing has turned up.
+ *
+ * Two seconds of polling at 60Hz. Chromium only reports a pad once it has been
+ * used -- a pad that is plugged in and untouched sends nothing, which looks
+ * exactly like a pad that does not work -- so the message that says so is worth
+ * more than the silence it replaces.
+ */
+const QUIET_POLLS = 120;
+
+/** Everything this class logs goes through here, so a reader can grep for
+ *  one word and see the whole story. */
+function say(...parts: unknown[]): void {
+    console.log('gamepad:', ...parts);
+}
+
 export class GamepadSource {
     readonly #manager: InputManager;
-    #hadPad = false;
-    #warnedAboutMapping = false;
+    #report: PadReport = NO_PAD;
+    /** What we last told the manager, so a change can be logged once. */
+    readonly #held = new Set<string>();
+    #polls = 0;
+    #saidNothing = false;
 
     constructor(manager: InputManager) {
         this.#manager = manager;
@@ -110,8 +147,14 @@ export class GamepadSource {
         window.addEventListener('gamepaddisconnected', this.#onDisconnected);
     }
 
+    /** What the browser last said, for the status line. */
+    get report(): PadReport {
+        return this.#report;
+    }
+
     /** Call once per animation frame. */
     poll(): void {
+        this.#polls += 1;
         const pads = navigator.getGamepads();
 
         // Player one is the first pad that is actually there. The console has
@@ -127,16 +170,23 @@ export class GamepadSource {
 
         if (pad === null) {
             // Nothing connected. If something was, its buttons have to be let
-            // go -- see the note about batteries above -- and if nothing was,
-            // there is nothing to do.
-            if (this.#hadPad) {
+            // go -- a pad that runs out of battery mid jump must not leave the
+            // jump button held forever, because there is nobody left to
+            // release it.
+            if (this.#report.connected) {
+                say(`disconnected  ${this.#report.id}`);
                 this.#manager.releaseAll('gamepad');
-                this.#hadPad = false;
+                this.#held.clear();
+                this.#report = NO_PAD;
             }
+            this.#sayNothingYet();
             return;
         }
 
-        this.#hadPad = true;
+        if (!this.#report.connected || this.#report.id !== pad.id) {
+            this.#describe(pad);
+        }
+
         this.#apply(pad);
     }
 
@@ -144,7 +194,8 @@ export class GamepadSource {
         window.removeEventListener('gamepadconnected', this.#onConnected);
         window.removeEventListener('gamepaddisconnected', this.#onDisconnected);
         this.#manager.releaseAll('gamepad');
-        this.#hadPad = false;
+        this.#held.clear();
+        this.#report = NO_PAD;
     }
 
     readonly #onConnected = (): void => {
@@ -153,21 +204,62 @@ export class GamepadSource {
 
     readonly #onDisconnected = (): void => {
         this.#manager.releaseAll('gamepad');
-        this.#hadPad = false;
+        this.#held.clear();
+        this.#report = NO_PAD;
     };
 
-    #apply(pad: Gamepad): void {
-        if (!this.#warnedAboutMapping && pad.mapping !== 'standard') {
-            // Once, not once a frame.
-            console.warn(
-                `gamepad "${pad.id}" is not in the standard mapping; `
-                + 'its buttons may not be where this expects them',
-            );
-            this.#warnedAboutMapping = true;
+    /**
+     * One line explaining what the browser handed over, once per pad.
+     *
+     * This is the line to look at when a pad does nothing: if it never
+     * appears, the browser is not reporting a pad at all and nothing below
+     * this point is even being reached.
+     */
+    #describe(pad: Gamepad): void {
+        this.#report = { connected: true, id: pad.id, mapping: pad.mapping };
+        say(
+            `connected     "${pad.id}"`,
+            `mapping=${pad.mapping === '' ? '(none)' : pad.mapping}`,
+            `buttons=${pad.buttons.length}`,
+            `axes=${pad.axes.length}`,
+        );
+        if (pad.mapping !== 'standard') {
+            say('              not the standard mapping: the button indices are a guess');
         }
+    }
 
+    /** The one-off note that two seconds have gone by with nothing there. */
+    #sayNothingYet(): void {
+        if (this.#saidNothing || this.#polls < QUIET_POLLS) {
+            return;
+        }
+        this.#saidNothing = true;
+        say('no pad after two seconds. In the order worth checking:');
+        say('  1. the window has to be focused. The Gamepad API only exposes pads to');
+        say('     the focused document, so a pad nobody is looking at is invisible --');
+        say('     click the game window, then press a button.');
+        say('  2. Chromium only lists a gamepad once it has been used. Press a button');
+        say('     or move a stick on the pad itself.');
+        say('  3. macOS may be withholding the device. System Settings → Privacy &');
+        say('     Security → Input Monitoring, tick Electron (or this application),');
+        say('     then quit and start it again -- macOS reads that list at launch.');
+    }
+
+    #apply(pad: Gamepad): void {
         const wanted = mapPad(pad);
         for (const [button, on] of Object.entries(wanted)) {
+            // The index as well as the name: if the mapping was not standard,
+            // the name is this build's guess and the index is the fact.
+            const index = PAD_INDICES[button as ButtonName];
+            const was = this.#held.has(button);
+            if (on !== was) {
+                if (on) {
+                    this.#held.add(button);
+                } else {
+                    this.#held.delete(button);
+                }
+                say(`${on ? 'down' : 'up  '}          ${button} (index ${index})`);
+            }
             this.#manager.set(button as ButtonName, on, 'gamepad');
         }
     }

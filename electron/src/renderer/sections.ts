@@ -7,9 +7,10 @@
 // built yet rather than a layout decision.
 // ---------------------------------------------------------------------------
 
-import { History, Info, Library, Pin, Save, Settings2, type LucideIcon } from 'lucide-react';
+import { Camera, History, Info, Library, Pin, Save, Settings2, type LucideIcon } from 'lucide-react';
 
-export type SectionId = 'library' | 'pinned' | 'recent' | 'saves' | 'settings' | 'about';
+export type SectionId =
+    | 'library' | 'pinned' | 'recent' | 'screenshots' | 'saves' | 'settings' | 'about';
 
 export interface Section {
     id: SectionId;
@@ -25,6 +26,7 @@ export const SECTIONS: readonly Section[] = [
     { id: 'library', label: '游戏库', title: '游戏库', icon: Library },
     { id: 'pinned', label: '置顶', title: '置顶游戏', icon: Pin },
     { id: 'recent', label: '最近', title: '最近游玩', icon: History },
+    { id: 'screenshots', label: '截图', title: '截图收藏', icon: Camera },
     { id: 'saves', label: '存档', title: '存档', icon: Save },
     { id: 'settings', label: '设置', title: '设置', icon: Settings2 },
     { id: 'about', label: '关于', title: '关于', icon: Info },

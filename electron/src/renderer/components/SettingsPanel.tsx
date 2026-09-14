@@ -17,7 +17,7 @@ import * as Switch from '@radix-ui/react-switch';
 import { FolderCog } from 'lucide-react';
 
 import type { Library } from '../../shared/api';
-import type { EngineStatus } from '../useEmulator';
+import type { EngineStatus } from '../engineStatus';
 import type { PixelScale } from '../usePixelScale';
 import { formatCycles, formatHex16 } from '../format';
 
@@ -27,9 +27,11 @@ interface SettingsPanelProps {
     scanlines: boolean;
     onScanlines: (on: boolean) => void;
     gamepadEnabled: boolean;
-    /** The library, for the folder and the row count. Null until the first
-     *  read comes back. */
-    library: Library | null;
+    /** The library, for the folder and the row counts. */
+    library: Library;
+    /** How many pictures are in it, which lives outside the library's own
+     *  type because it is a separate list. */
+    screenshots: number;
     onChooseDirectory: () => void;
 }
 
@@ -79,9 +81,10 @@ export default function SettingsPanel({
     onScanlines,
     gamepadEnabled,
     library,
+    screenshots,
     onChooseDirectory,
 }: SettingsPanelProps) {
-    const pinned = library?.games.filter((game) => game.pinned).length ?? 0;
+    const pinned = library.games.filter((game) => game.pinned).length;
 
     return (
         <section className="panel" aria-label="设置">
@@ -96,10 +99,11 @@ export default function SettingsPanel({
                 <Group title="游戏库">
                     <Rows
                         rows={[
-                            ['目录', library?.directory ?? '—'],
-                            ['数据库', library === null ? '—' : 'library.sqlite'],
-                            ['游戏', library === null ? '—' : `${library.games.length} 个`],
-                            ['置顶', library === null ? '—' : `${pinned} 个`],
+                            ['目录', library.directory === '' ? '—' : library.directory],
+                            ['数据库', library.database === '' ? '—' : 'library.sqlite'],
+                            ['游戏', `${library.games.length} 个`],
+                            ['置顶', `${pinned} 个`],
+                            ['截图', `${screenshots} 张`],
                         ]}
                     />
                     <div className="panel-actions">
@@ -109,8 +113,9 @@ export default function SettingsPanel({
                         </button>
                     </div>
                     <p className="prose">
-                        游戏库是一个文件夹：ROM、它们的元数据（<code>library.sqlite</code>）
-                        都在里面。换一个文件夹就是换一个游戏库。
+                        游戏库是一个文件夹：ROM、截图
+                        （<code>screenshots/</code>）、它们的元数据
+                        （<code>library.sqlite</code>）都在里面。换一个文件夹就是换一个游戏库。
                     </p>
                 </Group>
 
@@ -166,10 +171,33 @@ export default function SettingsPanel({
                             ['Select', 'Tab / 右 Shift'],
                             ['暂停', 'Esc / P'],
                             ['重置', 'R'],
+                            ['截图', 'F12'],
+                            ['截图并设为封面', '⇧F12'],
                             ['倒带', '按住 Backspace'],
-                            ['手柄', gamepadEnabled ? '已启用' : '未启用（--gamepad）'],
                         ]}
                     />
+                </Group>
+
+                <Group title="手柄">
+                    <Rows
+                        rows={[
+                            ['开关', gamepadEnabled ? '已启用（--gamepad）' : '未启用（需要 --gamepad）'],
+                            ['状态', !gamepadEnabled
+                                ? '—'
+                                : (status.gamepad.connected ? '已连接' : '未检测到')],
+                            ['名称', status.gamepad.id === '' ? '—' : status.gamepad.id],
+                            ['布局', status.gamepad.mapping === ''
+                                ? (status.gamepad.connected ? '未知（按键位置是猜测）' : '—')
+                                : status.gamepad.mapping],
+                        ]}
+                    />
+                    {gamepadEnabled && !status.gamepad.connected && (
+                        <p className="prose">
+                            手柄要用过一次才会出现在浏览器里：先按一下它上面的键。
+                            如果按了还是没有，可能是 macOS 没把设备交给本应用：
+                            系统设置 → 隐私与安全性 → 输入监控，勾上本应用后重新启动。
+                        </p>
+                    )}
                 </Group>
             </div>
         </section>

@@ -33,8 +33,9 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Button, Emulator } from '@wasm';
 
 import { AudioOutput } from './audio/output';
-import { attachKeyboard, InputManager, type ButtonName, type CommandName } from './input';
-import { GamepadSource } from './gamepad';
+import { INITIAL_STATUS, unloaded, type EngineStatus } from './engineStatus';
+import { GamepadSource, NO_PAD, type PadReport } from './gamepad';
+import { attachKeyboard, InputManager, type CommandName } from './input';
 import { Rewind } from './rewind';
 
 /** 60.0988 frames per second, the console's real rate. */
@@ -54,69 +55,6 @@ const MAX_CATCHUP_FRAMES = 4;
  *  update a text field is waste, and it shows up as jitter. */
 const STATUS_INTERVAL_MS = 250;
 
-export type EngineState = 'loading' | 'running' | 'halted' | 'error';
-
-/** What the audio ring is doing, for the status line. */
-export interface AudioStatus {
-    /** 'running', 'suspended', 'closed', or 'unavailable'. */
-    state: string;
-    /** Samples waiting in the ring. */
-    fill: number;
-    /** Where the fill is being held, by the rate control. */
-    targetFill: number;
-    /** Times the audio thread ran out. */
-    underruns: number;
-    /** Samples the ring had no room for. Should stay at zero. */
-    dropped: number;
-}
-
-export interface EngineStatus {
-    state: EngineState;
-    /** Emulated frames per second, averaged over the last status window. */
-    fps: number;
-    frameCount: number;
-    totalCycles: number;
-    cpuPc: number;
-    romSummary: string;
-    romPath: string | null;
-    /** Highest APU sample in the last window. 0.000 means silence. */
-    audioPeak: number;
-    /** Which switches are down right now, for the status line. */
-    held: ButtonName[];
-    /** True while the frame loop is held still. */
-    paused: boolean;
-    /** True while the player is holding the rewind key. */
-    rewinding: boolean;
-    /** How far back the machine can be wound, or null if it cannot be. */
-    rewind: { depth: number; seconds: number; bytes: number } | null;
-    /** A short lived note about the last thing the player asked for, such as
-     *  "saved slot 1". Null most of the time. */
-    message: string | null;
-    /** Null until the audio pipeline exists, and if it could not be built. */
-    audio: AudioStatus | null;
-    audioError: string | null;
-    error: string | null;
-}
-
-const INITIAL: EngineStatus = {
-    state: 'loading',
-    fps: 0,
-    frameCount: 0,
-    totalCycles: 0,
-    cpuPc: 0,
-    romSummary: '',
-    romPath: null,
-    audioPeak: 0,
-    held: [],
-    paused: false,
-    rewinding: false,
-    rewind: null,
-    message: null,
-    audio: null,
-    audioError: null,
-    error: null,
-};
-
 export interface EmulatorHandle {
     status: EngineStatus;
     /** Load a game by path. False if it could not be read or is not a ROM. */
@@ -124,7 +62,8 @@ export interface EmulatorHandle {
     /** Take the cartridge out and stop running. */
     unload(): void;
     /**
-     * The same commands the keyboard sends: pause, reset, save and load.
+     * The same commands the keyboard sends: pause, reset, screenshot, save
+     * and load.
      *
      * The toolbar buttons are not a second implementation of any of them --
      * they go through the one command handler, so a button and F1 cannot
@@ -133,8 +72,33 @@ export interface EmulatorHandle {
     command(command: CommandName): void;
 }
 
-export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): EmulatorHandle {
-    const [status, setStatus] = useState<EngineStatus>(INITIAL);
+/** Things the loop has to report to somebody else. */
+export interface EmulatorHandlers {
+    /**
+     * A PNG of the picture, when the player takes a screenshot.
+     *
+     * `asCover` is true for Shift+F12 and the 更新封面 button: the picture is
+     * not only kept, it becomes the one on the game's card.
+     *
+     * Handed up as bytes rather than written here, because the canvas is in
+     * this process and the disk is in the other one.
+     */
+    onScreenshot?: (png: Uint8Array, asCover: boolean) => void;
+}
+
+export function useEmulator(
+    canvasRef: RefObject<HTMLCanvasElement | null>,
+    handlers: EmulatorHandlers = {},
+): EmulatorHandle {
+    const [status, setStatus] = useState<EngineStatus>(INITIAL_STATUS);
+
+    // Kept in a ref so that the effect below can be set up once. A caller
+    // passing a new object every render -- which is what an inline object does
+    // -- would otherwise tear down and rebuild the whole machine.
+    const outward = useRef(handlers);
+    useEffect(() => {
+        outward.current = handlers;
+    });
 
     // The two things a caller can ask for, held in a ref so that the functions
     // handed out never change identity. A component that put them in a
@@ -159,7 +123,7 @@ export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): Emu
         // not have to blend the whole screen every frame.
         const context = canvas.getContext('2d', { alpha: false });
         if (context === null) {
-            setStatus({ ...INITIAL, state: 'error', error: 'the canvas has no 2d context' });
+            setStatus({ ...INITIAL_STATUS, state: 'error', error: 'the canvas has no 2d context' });
             return;
         }
 
@@ -169,6 +133,9 @@ export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): Emu
         let detachKeyboard: (() => void) | null = null;
         let commandHandler: ((command: CommandName) => void) | null = null;
         let gamepad: GamepadSource | null = null;
+        // The pad report the screen is currently showing, so that a poll that
+        // says the same thing as the last one costs no render.
+        let seenPad: PadReport = NO_PAD;
         let rewind: Rewind | null = null;
         // The flash message's timeout lives out here because the cleanup has
         // to be able to cancel it.
@@ -177,7 +144,7 @@ export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): Emu
         let audioError: string | null = null;
 
         const fail = (error: string): void => {
-            setStatus({ ...INITIAL, state: 'error', error });
+            setStatus({ ...INITIAL_STATUS, state: 'error', error });
         };
 
         const start = async (): Promise<void> => {
@@ -238,8 +205,16 @@ export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): Emu
             // Switched off unless asked for, and the reason is not caution --
             // see FcBridge.gamepadEnabled. Merely listening for a gamepad
             // makes this application impossible to quit on macOS.
+            //
+            // Both branches say so in the log, because the two ways this can
+            // be silent look identical from the outside: a source that was
+            // never started and a source that started and found nothing both
+            // produce no `gamepad:` lines at all.
             if (window.fc.gamepadEnabled) {
                 gamepad = new GamepadSource(manager);
+                console.log('gamepad: source started, watching for a pad');
+            } else {
+                console.log('gamepad: not enabled -- start with --gamepad to switch it on');
             }
 
             // Audio. This can fail -- SharedArrayBuffer needs the page to be
@@ -366,6 +341,19 @@ export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): Emu
                 // looking at it once per animation frame is the whole
                 // protocol.
                 gamepad?.poll();
+
+                // If the browser's answer changed, say so on the screen as
+                // well as in the log. This is here rather than with the rest
+                // of the status because it has to work with no cartridge in
+                // the slot -- which is exactly when somebody is trying to find
+                // out whether their pad is being seen at all.
+                const pad = gamepad?.report ?? NO_PAD;
+                if (pad.connected !== seenPad.connected
+                    || pad.id !== seenPad.id
+                    || pad.mapping !== seenPad.mapping) {
+                    seenPad = pad;
+                    setStatus((s) => ({ ...s, gamepad: pad }));
+                }
 
                 // Rewinding: one snapshot per animation frame. A snapshot is
                 // everyFrames frames apart, so this walks backwards at about
@@ -496,11 +484,29 @@ export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): Emu
                 loaded = true;
                 paused = false;
                 nextFrameTime = performance.now() / 1000;
+
+                // A cartridge that halted the machine took the frame loop with
+                // it -- see the `runFrame` failure above, which cancels the
+                // animation frame -- so putting a new one in has to start the
+                // loop again. Without this the game loads, the title appears,
+                // and nothing runs.
+                //
+                // Not in self test mode: there the loop is deliberately never
+                // started, so that N frames is exactly N frames.
+                if (animationFrame === 0 && !window.fc.selftestOnly) {
+                    animationFrame = requestAnimationFrame(tick);
+                }
+
                 setStatus((s) => ({
                     ...s,
                     state: 'running',
                     paused: false,
                     message: null,
+                    // And the previous cartridge's halt, if that is what
+                    // stopped the loop. Loading a game is not a way to keep
+                    // reading "the emulator met an opcode it does not
+                    // implement" for the rest of the session.
+                    error: null,
                     romPath: path,
                     romSummary: engine.romSummary,
                 }));
@@ -534,7 +540,12 @@ export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): Emu
                 audio?.clear();
                 // No cartridge, no save slots. The next game will name its own.
                 void window.fc.setCartridge(null);
-                setStatus((s) => ({ ...s, paused: false, message: null, held: [] }));
+
+                // And no cartridge on screen either. `romPath` is what says a
+                // cartridge is in the slot, and half the interface is derived
+                // from it -- see unloaded() in engineStatus.ts, where the whole
+                // transition lives so that it can be tested without a window.
+                setStatus(unloaded);
             };
 
             actions.current = { loadRom, unload, command: (c) => commandHandler?.(c) };
@@ -575,6 +586,28 @@ export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): Emu
                 flash(`loaded slot ${slot}`);
             };
 
+            /**
+             * Hand the picture on screen to the caller as a PNG.
+             *
+             * The canvas is read rather than the framebuffer, because the
+             * canvas is the thing the player is looking at, and because
+             * Chromium's encoder is right there. It is 256x240 -- the backing
+             * store -- not whatever size it is drawn at: the scaling is a CSS
+             * decision and a screenshot is a picture of the console's output,
+             * not of this window.
+             */
+            const capture = (asCover: boolean): void => {
+                canvas.toBlob((blob) => {
+                    if (blob === null) {
+                        flash('could not encode the picture');
+                        return;
+                    }
+                    void blob.arrayBuffer().then((buffer) => {
+                        outward.current.onScreenshot?.(new Uint8Array(buffer), asCover);
+                    });
+                }, 'image/png');
+            };
+
             commandHandler = (command: CommandName): void => {
                 switch (command) {
                 case 'pause':
@@ -594,6 +627,12 @@ export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): Emu
                     rewind?.reset();
                     flash('reset');
                     break;
+                case 'screenshot':
+                    capture(false);
+                    break;
+                case 'screenshot-cover':
+                    capture(true);
+                    break;
                 case 'save1': case 'save2': case 'save3':
                     void saveTo(Number(command.slice(4)));
                     break;
@@ -611,7 +650,7 @@ export function useEmulator(canvasRef: RefObject<HTMLCanvasElement | null>): Emu
 
             // Ready, with no cartridge in the slot. applyRom() above fills in
             // the game's details when one arrives.
-            setStatus({ ...INITIAL, state: 'running', audioError });
+            setStatus({ ...INITIAL_STATUS, state: 'running', audioError });
 
             // The hook `pnpm run selftest` drives, through
             // webContents.executeJavaScript. Nothing in the game uses it.

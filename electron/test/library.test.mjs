@@ -15,8 +15,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, unlinkSync, utimesSync,
-    writeFileSync,
+    existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync,
+    utimesSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -372,6 +372,284 @@ test('dropped games can be imported, folder and all', () => {
         library.close();
 
         rmSync(folder, { recursive: true, force: true });
+    } finally {
+        box.cleanup();
+    }
+});
+
+// -- screenshots --------------------------------------------------------------
+
+/** The first eight bytes of a PNG, which is as much of one as the library
+ *  checks. A real picture would be kinder to look at and no better a test. */
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
+
+test('a screenshot is written into the library and filed under its game', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        const shot = library.saveScreenshot(path, PNG);
+        assert.ok(shot !== null);
+        assert.equal(shot.game, 'Mario');
+        assert.equal(shot.gamePath, path);
+        assert.ok(shot.file.startsWith('screenshots/'), shot.file);
+        assert.ok(existsSync(join(box.root, shot.file)), 'the PNG was not written');
+        assert.equal(readFileSync(join(box.root, shot.file)).length, PNG.length);
+
+        assert.deepEqual(library.screenshots().map((s) => s.id), [shot.id]);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('the first screenshot becomes the cover, and the second does not', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        const first = library.saveScreenshot(path, PNG);
+        const second = library.saveScreenshot(path, Buffer.concat([PNG, Buffer.from('x')]));
+
+        assert.equal(first.isCover, true);
+        assert.equal(second.isCover, false);
+
+        const [game] = library.scan();
+        assert.equal(game.screenshots, 2);
+        assert.equal(game.cover, first.file);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('setting a cover moves the flag and leaves exactly one', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        library.saveScreenshot(path, PNG);
+        const second = library.saveScreenshot(path, PNG);
+        assert.equal(library.setCover(second.id), true);
+
+        const shots = library.screenshots();
+        assert.equal(shots.filter((shot) => shot.isCover).length, 1);
+        assert.equal(shots.find((shot) => shot.isCover).id, second.id);
+        assert.equal(library.scan()[0].cover, second.file);
+
+        // A cover for a screenshot that does not exist is not an error, it is
+        // a no.
+        assert.equal(library.setCover(9999), false);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('deleting a screenshot deletes its file', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        const shot = library.saveScreenshot(path, PNG);
+        const file = join(box.root, shot.file);
+        assert.ok(existsSync(file));
+
+        assert.equal(library.removeScreenshot(shot.id), true);
+        assert.equal(existsSync(file), false);
+        assert.deepEqual(library.screenshots(), []);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('deleting the cover promotes the newest picture left', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        const first = library.saveScreenshot(path, PNG);
+        const second = library.saveScreenshot(path, PNG);
+        assert.equal(first.isCover, true);
+
+        library.removeScreenshot(first.id);
+        const shots = library.screenshots();
+        assert.equal(shots.length, 1);
+        assert.equal(shots[0].isCover, true);
+        assert.equal(shots[0].id, second.id);
+        assert.equal(library.scan()[0].cover, second.file);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('deleting a game takes its screenshots with it', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+        const shot = library.saveScreenshot(path, PNG);
+        const file = join(box.root, shot.file);
+
+        assert.equal(library.remove(path), true);
+        assert.equal(existsSync(file), false, 'the PNG outlived its game');
+        assert.deepEqual(library.screenshots(), []);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('deleting a game from the Finder takes its screenshots too', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+        const shot = library.saveScreenshot(path, PNG);
+
+        // Not through the application: somebody tidying up in the Finder.
+        unlinkSync(path);
+        assert.deepEqual(library.scan(), []);
+        assert.deepEqual(library.screenshots(), []);
+        assert.equal(existsSync(join(box.root, shot.file)), false);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('a renamed game keeps its screenshots', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+        const shot = library.saveScreenshot(path, PNG);
+
+        renameSync(path, join(box.root, 'Super Mario.nes'));
+        library.scan();
+
+        const shots = library.screenshots();
+        assert.equal(shots.length, 1);
+        assert.equal(shots[0].game, 'Super Mario');
+        assert.equal(shots[0].id, shot.id);
+        assert.equal(library.scan()[0].cover, shot.file);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('the library refuses bytes that are not a PNG, and files outside itself', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        assert.equal(library.saveScreenshot(path, Buffer.from('not a picture')), null);
+        assert.equal(library.saveScreenshot(box.outside('Elsewhere.nes'), PNG), null);
+        assert.deepEqual(library.screenshots(), []);
+
+        // And nothing was left behind in the library folder either.
+        assert.deepEqual(readdirSync(box.root).sort(), ['Mario.nes', DATABASE_FILE]);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('a version 1 library upgrades without losing anything', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+
+        // A library from before screenshots existed: the games table, and no
+        // screenshots table at all.
+        const db = new DatabaseSync(join(box.root, DATABASE_FILE));
+        db.exec(`
+            CREATE TABLE games (
+                id INTEGER PRIMARY KEY, file TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+                size INTEGER NOT NULL, mtime_ms INTEGER NOT NULL, added_at INTEGER NOT NULL,
+                last_played_at INTEGER NOT NULL DEFAULT 0,
+                play_count INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0
+            )
+        `);
+        db.prepare(
+            'INSERT INTO games (file, title, size, mtime_ms, added_at, play_count, pinned) '
+            + 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ).run('Mario.nes', 'Mario', 3, 1, 1, 7, 1);
+        db.exec('PRAGMA user_version = 1');
+        db.close();
+
+        const library = GameLibrary.open(box.root);
+        const [game] = library.scan();
+        // The pin and the play count are the point: a migration that recreated
+        // the table would have lost both.
+        assert.equal(game.pinned, true);
+        assert.equal(game.playCount, 7);
+        assert.equal(game.cover, null);
+
+        const shot = library.saveScreenshot(path, PNG);
+        assert.ok(shot !== null);
+        assert.equal(shot.isCover, true);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('saving as a cover replaces the one that was there', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        const first = library.saveScreenshot(path, PNG);
+        const second = library.saveScreenshot(path, PNG, true);
+
+        // Not the first-screenshot rule: the explicit request, which has to
+        // clear the old flag and set the new one without a moment in between
+        // where the game has two covers.
+        assert.equal(first.isCover, true);
+        assert.equal(second.isCover, true);
+
+        const shots = library.screenshots();
+        assert.equal(shots.filter((shot) => shot.isCover).length, 1);
+        assert.equal(shots.find((shot) => shot.isCover).id, second.id);
+        assert.equal(library.scan()[0].cover, second.file);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('saving as a cover works when there was none', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        const shot = library.saveScreenshot(path, PNG, true);
+        assert.equal(shot.isCover, true);
+        assert.equal(library.scan()[0].cover, shot.file);
+        library.close();
     } finally {
         box.cleanup();
     }
