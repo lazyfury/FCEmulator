@@ -54,14 +54,14 @@ import { useEmulator } from './useEmulator';
 import { useFileDrop } from './useFileDrop';
 import { usePanelWidth } from './usePanelWidth';
 import { usePixelScale } from './usePixelScale';
+import { bootLog } from '../shared/boot';
+
 import type { CSSProperties } from 'react';
-import type { LibraryState } from '../shared/api';
+import type { LibraryState, Preferences } from '../shared/api';
 
 /** The four save slots, in the order the keyboard numbers them. */
 const SAVE_COMMANDS: readonly CommandName[] = ['quicksave', 'save1', 'save2', 'save3'];
 const LOAD_COMMANDS: readonly CommandName[] = ['quickload', 'load1', 'load2', 'load3'];
-
-const SCANLINE_KEY = 'fc.scanlines';
 
 /** Before the first read comes back: no games, no pictures, no folder. */
 const NOTHING_YET: LibraryState = {
@@ -79,7 +79,10 @@ export default function App() {
     const [query, setQuery] = useState('');
     const [sort, setSort] = useState<SortKey>('recent');
     const [saves, setSaves] = useState<number[]>([]);
-    const [scanlines, setScanlines] = useState(() => window.localStorage.getItem(SCANLINE_KEY) === '1');
+    // Off until the saved preference arrives, a fraction of a second later
+    // and invisibly. The value lives in the main process; see the preferences
+    // effect below for why it is not in localStorage any more.
+    const [scanlines, setScanlines] = useState(false);
     const [notice, setNotice] = useState<string | null>(null);
 
     // How wide the middle column is. The divider between it and the picture is
@@ -143,8 +146,17 @@ export default function App() {
 
     const refreshLibrary = useCallback(async (): Promise<void> => {
         setLoading(true);
+        const started = Date.now();
+        bootLog('renderer', 'library: reading');
         try {
-            setState(await window.fc.library());
+            const next = await window.fc.library();
+            bootLog(
+                'renderer',
+                'library: loaded',
+                `${next.library.games.length} games, ${next.screenshots.length} shots, `
+                + `${Date.now() - started}ms`,
+            );
+            setState(next);
         } finally {
             setLoading(false);
         }
@@ -159,8 +171,56 @@ export default function App() {
     }, []);
 
     useEffect(() => {
+        bootLog('renderer', 'App mounted');
         void refreshLibrary();
     }, [refreshLibrary]);
+
+    // The saved window preferences, read once over the bridge.
+    //
+    // These used to be `localStorage`, read in the renderer. The first
+    // synchronous DOM Storage access in Electron blocks the renderer while its
+    // storage service starts -- 3.7 seconds on the machine this was measured
+    // on, which was the whole of the application's start up. The main process
+    // keeps them in config.json now and answers in about two milliseconds, off
+    // the critical path. See ReadPreferences in src/main/index.ts.
+    useEffect(() => {
+        let cancelled = false;
+        void window.fc.preferences()
+            .then((preferences: Preferences) => {
+                if (cancelled) {
+                    return;
+                }
+                bootLog(
+                    'renderer',
+                    'preferences loaded',
+                    `scanlines=${preferences.scanlines} `
+                    + `panelWidth=${preferences.panelWidth ?? 'default'}`,
+                );
+                if (preferences.scanlines) {
+                    setScanlines(true);
+                }
+            })
+            .catch((error: unknown) => {
+                bootLog('renderer', 'preferences FAILED', String(error));
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    /** Turn the overlay on or off, and remember it. */
+    const changeScanlines = useCallback((on: boolean): void => {
+        setScanlines(on);
+        void window.fc.setPreference('scanlines', on);
+    }, []);
+
+    // The commit, as opposed to the render above: layout effects run after
+    // React has written the DOM and before the browser paints it, so this
+    // bracket around them is the time the first screen actually took to
+    // build.
+    useLayoutEffect(() => {
+        bootLog('renderer', 'App first commit (DOM written)');
+    }, []);
 
     // The slot list is per cartridge, so it is re-read whenever the cartridge
     // changes and whenever the panel that shows it is opened.
@@ -169,10 +229,6 @@ export default function App() {
             void refreshSaves();
         }
     }, [section, status.romPath, refreshSaves]);
-
-    useLayoutEffect(() => {
-        window.localStorage.setItem(SCANLINE_KEY, scanlines ? '1' : '0');
-    }, [scanlines]);
 
     const play = useCallback(
         async (path: string): Promise<void> => {
@@ -358,7 +414,7 @@ export default function App() {
                     status={status}
                     picture={picture}
                     scanlines={scanlines}
-                    onScanlines={setScanlines}
+                    onScanlines={changeScanlines}
                     gamepadEnabled={window.fc.gamepadEnabled}
                     gamepadNative={window.fc.gamepadNative}
                     library={library}

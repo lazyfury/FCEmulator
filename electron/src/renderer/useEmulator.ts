@@ -33,6 +33,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Button, Emulator } from '@wasm';
 
 import { AudioOutput } from './audio/output';
+import { bootLog } from '../shared/boot';
 import { INITIAL_STATUS, unloaded, type EngineStatus } from './engineStatus';
 import { GamepadSource, NativeGamepadSource, NO_PAD, type GamepadInput, type PadReport } from './gamepad';
 import { attachKeyboard, InputManager, type ButtonName, type CommandName } from './input';
@@ -118,6 +119,7 @@ export function useEmulator(
         if (canvas === null) {
             return;
         }
+        bootLog('renderer', 'emulator effect start');
 
         // alpha:false because every pixel is opaque and the compositor should
         // not have to blend the whole screen every frame.
@@ -205,6 +207,8 @@ export function useEmulator(
         };
 
         const start = async (): Promise<void> => {
+            bootLog('renderer', 'machine build begin');
+            const buildStarted = Date.now();
             setStatus((s) => ({ ...s, state: 'loading' }));
 
             // Where fc_core.mjs lives depends on whether this page came from
@@ -212,16 +216,27 @@ export function useEmulator(
             // instead of hardcoding. `@vite-ignore` stops Vite trying to
             // bundle a path it cannot resolve at build time.
             const moduleUrl = new URL('fc_core.mjs', document.baseURI).href;
+            bootLog('renderer', 'import fc_core.mjs begin', moduleUrl);
+            const importStarted = Date.now();
             const factory = (await import(/* @vite-ignore */ moduleUrl)) as {
                 default: () => Promise<unknown>;
             };
+            bootLog('renderer', 'import fc_core.mjs done', `${Date.now() - importStarted}ms`);
 
+            // Instantiating the module is where the .wasm is compiled and the
+            // linear memory is set aside, and it is usually the single largest
+            // cost in a cold start -- so it gets its own line rather than being
+            // folded into "machine build".
+            const wasmStarted = Date.now();
             const wasm = await factory.default();
+            bootLog('renderer', 'instantiate wasm', `${Date.now() - wasmStarted}ms`);
             if (disposed) {
                 return;
             }
 
+            const createStarted = Date.now();
             emulator = await Emulator.create({ module: wasm as never });
+            bootLog('renderer', 'Emulator.create', `${Date.now() - createStarted}ms`);
             const engine = emulator;
             if (disposed) {
                 engine.destroy();
@@ -243,12 +258,23 @@ export function useEmulator(
             // cross origin isolated -- and when it does the game still runs,
             // silently. Reporting that in the status line is better than
             // throwing away a working picture because the speaker was busy.
+            const audioStarted = Date.now();
             try {
                 audio = await AudioOutput.create();
                 audio.resume().catch(() => undefined);
+                bootLog(
+                    'renderer',
+                    'AudioOutput.create',
+                    `${Date.now() - audioStarted}ms state=${audio.state}`,
+                );
             } catch (error) {
                 audioError = error instanceof Error ? error.message : String(error);
                 audio = null;
+                bootLog(
+                    'renderer',
+                    'AudioOutput.create FAILED',
+                    `${Date.now() - audioStarted}ms  ${audioError}`,
+                );
             }
             if (disposed) {
                 void audio?.close();
@@ -263,6 +289,7 @@ export function useEmulator(
 
             // 256x240 RGBA, allocated once and rewritten every frame.
             const image = context.createImageData(engine.width, engine.height);
+            let firstBlitLogged = false;
 
             // And the framebuffer view, taken once. This is only safe because
             // the wasm heap never grows (see wasm/CMakeLists.txt): if it could,
@@ -289,6 +316,10 @@ export function useEmulator(
                     destination[out + 3] = 255;
                 }
                 context.putImageData(image, 0, 0);
+                if (!firstBlitLogged) {
+                    firstBlitLogged = true;
+                    bootLog('renderer', 'first frame on screen', `${Date.now() - buildStarted}ms`);
+                }
             };
 
             /**
@@ -677,6 +708,11 @@ export function useEmulator(
             // Ready, with no cartridge in the slot. applyRom() above fills in
             // the game's details when one arrives.
             setStatus({ ...INITIAL_STATUS, state: 'running', audioError });
+            bootLog(
+                'renderer',
+                'machine ready',
+                `${Date.now() - buildStarted}ms total (no cartridge loaded)`,
+            );
 
             // The hook `pnpm run selftest` drives, through
             // webContents.executeJavaScript. Nothing in the game uses it.
@@ -869,7 +905,15 @@ export function useEmulator(
             // A game named on the command line loads straight away; without
             // one the application sits on the library screen until the player
             // picks something.
+            const bootRomStarted = Date.now();
             const boot = await window.fc.getBootRom();
+            bootLog(
+                'renderer',
+                'getBootRom',
+                boot === null
+                    ? `${Date.now() - bootRomStarted}ms, no --rom`
+                    : `${Date.now() - bootRomStarted}ms, ${boot.path}`,
+            );
             if (boot !== null && !disposed) {
                 if (!applyRom(boot.bytes, boot.path)) {
                     loaded = false;

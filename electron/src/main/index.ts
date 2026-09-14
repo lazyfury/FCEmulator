@@ -28,8 +28,20 @@ import { NativeGamepad, EMPTY_READING, gamepadBinaryPath } from './gamepad';
 import { GameLibrary, SCREENSHOT_DIRECTORY, collectGames, isInside } from './library';
 import {
     IpcChannel, LIBRARY_HOST, type BootRom, type GamepadReading, type LibraryState,
+    type Preferences,
 } from '../shared/api';
+import { bootLog, bootOrigin, setBootOrigin } from '../shared/boot';
 
+// The very first line of the timeline. Everything logged below is measured
+// from whatever scripts/dev.mjs put in FC_BOOT_T0, so this number is "how long
+// after the dev script started did Electron's main process begin executing" --
+// the gap that contains the TypeScript compile and the Vite server coming up.
+setBootOrigin(Number(process.env.FC_BOOT_T0 ?? 0));
+bootLog(
+    'main',
+    'module loaded',
+    `pid=${process.pid} electron=${process.versions.electron} chrome=${process.versions.chrome}`,
+);
 // dist-electron/main/index.js  ->  ../..          = electron/
 //                              ->  ../../..       = the repository root
 const ELECTRON_ROOT = resolve(__dirname, '..', '..');
@@ -196,6 +208,13 @@ function parseArguments(argv: string[]): Options {
 }
 
 const options = parseArguments(process.argv);
+bootLog(
+    'main',
+    'arguments parsed',
+    `rom=${options.romPath ?? '(none)'} eager=${options.selftestFrames > 0
+        || options.keytest || options.audioTestSeconds > 0 || options.layoutTest
+        || options.romPath !== null}`,
+);
 
 // ---------------------------------------------------------------------------
 // Which gamepad path this run uses
@@ -226,6 +245,7 @@ const options = parseArguments(process.argv);
 const GAMEPAD_BINARY = gamepadBinaryPath(
     app.isPackaged ? process.resourcesPath : ELECTRON_ROOT,
 );
+bootLog('main', 'paths resolved', `packaged=${app.isPackaged} userData=${app.getPath('userData')}`);
 
 /**
  * A run whose input must be exactly what the test scripts.
@@ -447,6 +467,7 @@ async function serveLibraryFile(url: URL): Promise<Response> {
 // ---------------------------------------------------------------------------
 
 function createWindow(): BrowserWindow {
+    bootLog('main', 'createWindow begin');
     const window = new BrowserWindow({
         width: 1180,
         height: 240 * 3 + 132,
@@ -486,6 +507,7 @@ function createWindow(): BrowserWindow {
 
             // Tell the preload what mode it is in. See FcBridge.
             additionalArguments: [
+                `--fc-boot-t0=${bootOrigin()}`,
                 ...(options.selftestFrames > 0 ? ['--fc-selftest'] : []),
                 ...(EAGER_MACHINE ? ['--fc-eager'] : []),
                 ...(GAMEPAD_ENABLED ? ['--fc-gamepad'] : []),
@@ -495,11 +517,36 @@ function createWindow(): BrowserWindow {
     });
 
     const devServer = process.env.VITE_DEV_SERVER_URL;
+    bootLog(
+        'main',
+        devServer ? 'loadURL (dev server)' : 'loadURL (app://)',
+        devServer ?? 'app://bundle/index.html',
+    );
     if (devServer) {
         void window.loadURL(devServer);
     } else {
         void window.loadURL('app://bundle/index.html');
     }
+
+    // The window's whole life, as events. These are the only signal the main
+    // process gets about the renderer's progress, and they are what separates
+    // "Electron is slow" from "the page is slow": `did-start-loading` to
+    // `dom-ready` is Chromium fetching and parsing; `dom-ready` to
+    // `did-finish-load` is the page's own scripts running.
+    window.webContents.on('did-start-loading', () => bootLog('main', 'did-start-loading'));
+    window.webContents.on('dom-ready', () => bootLog('main', 'dom-ready (html parsed)'));
+    window.webContents.on('did-finish-load', () => bootLog('main', 'did-finish-load'));
+    window.once('ready-to-show', () => bootLog('main', 'window ready-to-show (first paint)'));
+    window.webContents.on('did-fail-load', (_event, code, description, url) => {
+        bootLog('main', 'did-fail-load', `${code} ${description} ${url}`);
+    });
+    window.webContents.on('preload-error', (_event, path, error) => {
+        bootLog('main', 'preload-error', `${path}: ${error.message}`);
+    });
+    window.webContents.on('render-process-gone', (_event, details) => {
+        bootLog('main', 'render-process-gone', `${details.reason} (exit ${details.exitCode})`);
+    });
+    window.webContents.on('unresponsive', () => bootLog('main', 'renderer unresponsive'));
 
     // Anything the page logs comes out here. Without it, an exception in the
     // renderer is invisible from the terminal: executeJavaScript reports only
@@ -519,6 +566,7 @@ function createWindow(): BrowserWindow {
         }
     });
 
+    bootLog('main', 'createWindow end');
     return window;
 }
 
@@ -569,6 +617,10 @@ function libraryDirectory(): string {
  */
 interface Config {
     libraryRoot?: string;
+    /** Scanline overlay on the picture. Absent means off. */
+    scanlines?: boolean;
+    /** Middle column width in CSS pixels. Absent means it was never chosen. */
+    panelWidth?: number;
 }
 
 /** Cached, because this is asked for on every IPC call and reading a file to
@@ -899,6 +951,48 @@ function registerIpc(): void {
     ipcMain.handle(IpcChannel.SetCartridge, async (_event, path: string | null): Promise<void> => {
         currentCartridge = typeof path === 'string' ? path : null;
     });
+
+    /**
+     * The window preferences.
+     *
+     * These are small enough to live in config.json next to the library root,
+     * which is where they should have been all along. They were in the
+     * renderer's localStorage, and the first synchronous access to that -- in
+     * Electron -- blocks the renderer until the storage service answers, which
+     * on this machine is 3.7 seconds. Reading a JSON file that is already in
+     * the page cache costs microseconds and never blocks the first frame.
+     */
+    ipcMain.handle(IpcChannel.ReadPreferences, async (): Promise<Preferences> => {
+        const config = readConfig();
+        return {
+            scanlines: config.scanlines === true,
+            panelWidth: typeof config.panelWidth === 'number'
+                && Number.isFinite(config.panelWidth)
+                ? config.panelWidth
+                : null,
+        };
+    });
+
+    ipcMain.handle(
+        IpcChannel.WritePreference,
+        async (
+            _event,
+            request: { name?: unknown; value?: unknown },
+        ): Promise<void> => {
+            // Checked here rather than trusted: the renderer is the only
+            // caller today, but a preference file that a renderer bug can fill
+            // with nonsense is a start up that fails tomorrow.
+            const name = request?.name;
+            const value = request?.value;
+            if (name === 'scanlines' && typeof value === 'boolean') {
+                writeConfig({ ...readConfig(), scanlines: value });
+            } else if (name === 'panelWidth' && typeof value === 'number' && Number.isFinite(value)) {
+                writeConfig({ ...readConfig(), panelWidth: Math.round(value) });
+            } else {
+                console.error(`refused a preference change: ${String(name)}=${String(value)}`);
+            }
+        },
+    );
 
     /**
      * The native gamepad helper's current reading.
@@ -1642,8 +1736,10 @@ function exitNow(code: number): void {
 // ---------------------------------------------------------------------------
 
 void app.whenReady().then(() => {
+    bootLog('main', 'app ready');
     registerAppProtocol();
     registerIpc();
+    bootLog('main', 'protocol + ipc registered');
 
     // The first line of the gamepad diagnosis, and the one that says whether
     // there is anything to diagnose: without this the renderer's own
@@ -1676,6 +1772,17 @@ void app.whenReady().then(() => {
     } else if (!NATIVE_GAMEPAD_AVAILABLE) {
         console.log('gamepad: no native helper; run pnpm run build:native to enable it');
     }
+
+    bootLog(
+        'main',
+        'gamepad decided',
+        USE_NATIVE_GAMEPAD ? `native ${GAMEPAD_BINARY}`
+            : SCRIPTED_RUN ? 'off (scripted run)'
+                : options.noGamepad ? 'off (--no-gamepad)'
+                    : options.gamepad
+                        ? (options.browserGamepad ? 'browser (--browser-gamepad)' : 'browser (--gamepad)')
+                        : 'off (no native helper built)',
+    );
 
     const window = createWindow();
 
@@ -1727,11 +1834,14 @@ void app.whenReady().then(() => {
             createWindow();
         }
     });
+
+    bootLog('main', 'app ready handler finished -- window created, waiting on the renderer');
 });
 
 app.on('window-all-closed', () => {
     // On macOS a window closing normally leaves the app running, but this app
     // is one window and nothing else, so quitting is the less surprising
     // behaviour even there. See exitNow() for why this is not app.quit().
+    bootLog('main', 'window-all-closed');
     exitNow(0);
 });

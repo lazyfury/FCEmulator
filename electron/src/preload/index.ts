@@ -17,8 +17,30 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 
 import {
-    IpcChannel, type BootRom, type FcBridge, type GamepadReading, type LibraryState,
+    IpcChannel,
+    type BootRom, type FcBridge, type GamepadReading, type LibraryState, type Preferences,
 } from '../shared/api';
+import { bootLog, setBootOrigin } from '../shared/boot';
+
+/**
+ * The shared start up clock, as the main process passed it down.
+ *
+ * `additionalArguments` is the established way this application tells the
+ * preload what kind of run it is in, so the origin rides along with --fc-eager
+ * and the rest. The environment is a fallback for a main process that was
+ * started before the argument existed, and a missing value is normal: the
+ * packaged application has no dev script and therefore no shared origin.
+ */
+function bootTimestamp(): number {
+    const prefixed = process.argv.find((argument) => argument.startsWith('--fc-boot-t0='));
+    if (prefixed !== undefined) {
+        return Number(prefixed.slice('--fc-boot-t0='.length));
+    }
+    return Number(process.env.FC_BOOT_T0 ?? 0);
+}
+
+setBootOrigin(bootTimestamp());
+bootLog('preload', 'script started');
 
 /**
  * The renderer's one gamepad listener, held here rather than in the page.
@@ -68,6 +90,12 @@ const bridge: FcBridge = {
     setCartridge: (path) =>
         ipcRenderer.invoke(IpcChannel.SetCartridge, path) as Promise<void>,
 
+    preferences: () =>
+        ipcRenderer.invoke(IpcChannel.ReadPreferences) as Promise<Preferences>,
+
+    setPreference: (name, value) =>
+        ipcRenderer.invoke(IpcChannel.WritePreference, { name, value }) as Promise<void>,
+
     saveScreenshot: (gamePath, bytes, asCover) =>
         ipcRenderer.invoke(
             IpcChannel.SaveScreenshot, { gamePath, bytes, asCover },
@@ -83,6 +111,7 @@ const bridge: FcBridge = {
     // when it was started with --selftest. Reading it here rather than over
     // IPC keeps the renderer from having to wait for an answer before it can
     // decide whether to start running frames.
+    bootT0: bootTimestamp(),
     selftestOnly: process.argv.includes('--fc-selftest'),
     eager: process.argv.includes('--fc-eager'),
     gamepadEnabled: process.argv.includes('--fc-gamepad'),
@@ -108,3 +137,4 @@ const bridge: FcBridge = {
 };
 
 contextBridge.exposeInMainWorld('fc', bridge);
+bootLog('preload', 'bridge exposed', `bootT0=${bridge.bootT0}`);

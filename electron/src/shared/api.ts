@@ -60,6 +60,12 @@ export const IpcChannel = {
     /** Delete a screenshot: its file, and its row. */
     RemoveScreenshot: 'fc:remove-screenshot',
 
+    /** The window preferences: scanline overlay, middle column width. */
+    ReadPreferences: 'fc:read-preferences',
+
+    /** Change one window preference, and remember it. */
+    WritePreference: 'fc:write-preference',
+
     /** The native gamepad helper's current reading, asked for on start up. */
     GetGamepadState: 'fc:get-gamepad-state',
 
@@ -188,7 +194,33 @@ export function libraryAssetUrl(file: string): string {
     return `app://${LIBRARY_HOST}/${file.split('/').map(encodeURIComponent).join('/')}`;
 }
 
-/** A ROM the main process read off disk, on its way to the renderer. */
+/**
+ * The preferences that belong to this window rather than to the library.
+ *
+ * They used to live in the renderer's `localStorage`, which turned out to be a
+ * start up hazard: the first synchronous DOM Storage access blocks the
+ * renderer for seconds while Electron's storage service starts -- measured at
+ * 3.7 seconds, which was the whole of the application's start up time. They
+ * are ordinary settings, so they live in the same config file the library root
+ * does (see src/main/index.ts) and reach the page over ordinary asynchronous
+ * IPC, which answers in about two milliseconds.
+ */
+export interface Preferences {
+    /** Whether the scanline overlay is drawn over the picture. */
+    scanlines: boolean;
+    /** Middle column width in CSS pixels, or null when it has never been set. */
+    panelWidth: number | null;
+}
+
+/** Which preference a write is about. */
+export type PreferenceName = 'scanlines' | 'panelWidth';
+
+/** The value of a preference. The name says which type it has to be. */
+export type PreferenceValue = boolean | number;
+
+/**
+ * A ROM the main process read off disk, on its way to the renderer.
+ */
 export interface BootRom {
     /** Where it came from, for the window title. */
     path: string;
@@ -351,6 +383,24 @@ export interface FcBridge {
     removeScreenshot(id: number): Promise<LibraryState | null>;
 
     /**
+     * The window preferences: scanlines and the middle column width.
+     *
+     * Read once on start up. Unlike the library these are small and local, so
+     * there is nothing to stream and nothing to keep in sync -- the page asks
+     * for them, draws with them, and writes them back when they change.
+     */
+    preferences(): Promise<Preferences>;
+
+    /**
+     * Remember one preference.
+     *
+     * Fire and forget from the page's point of view: the screen has already
+     * changed by the time this is called, and the disk is the main process's
+     * business. A failure to write is logged there, not thrown here.
+     */
+    setPreference(name: PreferenceName, value: PreferenceValue): Promise<void>;
+
+    /**
      * Say which cartridge is in the slot.
      *
      * Save states are filed per cartridge, and the main process owns those
@@ -359,6 +409,20 @@ export interface FcBridge {
      * library. This is how it is told instead.
      */
     setCartridge(path: string | null): Promise<void>;
+
+    /**
+     * When this run's start up began, in epoch milliseconds.
+     *
+     * The renderer is a separate process from the dev script and the main
+     * process, so its `Date.now()` origin is not theirs. This is the shared
+     * origin, handed down the chain, and it is what lets a boot trace print
+     * the renderer's first paint on the same clock as the TypeScript compile
+     * that happened several seconds before it. Zero when nobody set one -- the
+     * packaged application, or the renderer opened on its own -- and the
+     * renderer then falls back to its own origin, which is still correct, just
+     * not comparable. See src/shared/boot.ts.
+     */
+    readonly bootT0: number;
 
     /**
      * True when the app was started with --selftest.

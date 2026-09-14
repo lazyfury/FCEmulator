@@ -37,8 +37,11 @@
 //    `role="separator"` with a tab stop, arrow keys, and Home/End.
 //
 // The width is remembered between runs. It is a preference about the window,
-// which is the kind of thing that belongs in `localStorage` rather than in the
-// library's database -- it describes this screen, not the games.
+// not about the games, so it lives in the main process's config file rather
+// than in the library's database. It is not in the renderer's localStorage
+// any more: the first synchronous DOM Storage access blocks a renderer for
+// seconds while Electron's storage service starts, which was the whole of the
+// application's start up time. See ReadPreferences in src/main/index.ts.
 // ---------------------------------------------------------------------------
 
 import {
@@ -46,6 +49,8 @@ import {
     type KeyboardEvent as ReactKeyboardEvent,
     type PointerEvent as ReactPointerEvent,
 } from 'react';
+
+import type { Preferences } from '../shared/api';
 
 /** Where the divider starts, and where a double click puts it back. */
 const DEFAULT_WIDTH = 320;
@@ -57,8 +62,6 @@ const MAX_WIDTH = 720;
 
 /** One arrow key press. Small enough to be a nudge, large enough to see. */
 const STEP = 16;
-
-const STORAGE_KEY = 'fc.panelWidth';
 
 /**
  * The widest the panel may be in this window.
@@ -72,11 +75,6 @@ function ceiling(): number {
 
 function clamp(width: number): number {
     return Math.min(Math.max(Math.round(width), MIN_WIDTH), ceiling());
-}
-
-function remember(): number {
-    const stored = Number(window.localStorage.getItem(STORAGE_KEY));
-    return Number.isFinite(stored) && stored > 0 ? clamp(stored) : DEFAULT_WIDTH;
 }
 
 export interface PanelWidth {
@@ -100,12 +98,52 @@ export interface PanelWidth {
 }
 
 export function usePanelWidth(): PanelWidth {
-    const [width, setWidth] = useState<number>(remember);
+    const [width, setWidth] = useState<number>(DEFAULT_WIDTH);
     const [dragging, setDragging] = useState(false);
+    // Whether the stored value has been read yet. Until it has, the write
+    // effect below must stay quiet or it would store the default on the way
+    // past.
+    const [restored, setRestored] = useState(false);
+
+    // The saved width, from the main process.
+    //
+    // This was a synchronous `localStorage` read once, and the first one in a
+    // renderer blocks until Electron's storage service answers -- measured at
+    // 3.7 seconds, which was the whole of the application's start up. The main
+    // process keeps it in config.json now (see ReadPreferences in
+    // src/main/index.ts) and answers in about two milliseconds, so the panel
+    // is drawn at its default for a frame and then nudges to where the player
+    // left it.
+    useEffect(() => {
+        let cancelled = false;
+        void window.fc.preferences()
+            .then((preferences: Preferences) => {
+                if (cancelled) {
+                    return;
+                }
+                if (preferences.panelWidth !== null) {
+                    setWidth(clamp(preferences.panelWidth));
+                }
+                setRestored(true);
+            })
+            .catch(() => {
+                // A preference that cannot be read is not worth failing start
+                // up over. The default is a perfectly good width.
+                if (!cancelled) {
+                    setRestored(true);
+                }
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     useEffect(() => {
-        window.localStorage.setItem(STORAGE_KEY, String(width));
-    }, [width]);
+        if (!restored) {
+            return;
+        }
+        void window.fc.setPreference('panelWidth', width);
+    }, [width, restored]);
 
     // Shrinking the window must not leave the panel wider than the ceiling:
     // flexbox would shrink it on screen while the number stayed behind, so the
