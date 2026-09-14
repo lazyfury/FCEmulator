@@ -40,6 +40,11 @@ interface FcWasmModule {
     _fc_wasm_screen_width(): number;
     _fc_wasm_screen_height(): number;
     _fc_wasm_sample_rate(): number;
+
+    _fc_peek(machine: number, address: number): number;
+    _fc_poke(machine: number, address: number, value: number): void;
+    _fc_set_cheats(machine: number, data: number, count: number): void;
+    _fc_cheat_count(machine: number): number;
 }
 
 /** wasm/emulator.mjs, reached through the `@wasm` alias in vite.config.ts. */
@@ -74,6 +79,17 @@ declare module '@wasm' {
 
         setButton(button: number, pressed: boolean, port?: number): void;
         releaseAllButtons(): void;
+
+        /** Read one byte of console or cartridge RAM, without a bus cycle. */
+        peek(address: number): number;
+        /** Write one byte into the CPU's address space, now. */
+        poke(address: number, value: number): void;
+        /**
+         * Replace the cheat list. Each entry is written back to its address at
+         * the start of every frame when `freeze` is set.
+         */
+        setCheats(cheats: { address: number; value: number; freeze: boolean; enabled: boolean }[]): void;
+        readonly cheatCount: number;
 
         /** Serialize the machine, or null if there is nothing to save. */
         saveState(): Uint8Array | null;

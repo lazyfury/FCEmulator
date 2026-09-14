@@ -142,6 +142,10 @@ bool Machine::run_instructions(int count)
 
 bool Machine::run_frame()
 {
+    // Put the cheats back before the frame the game is about to run. Once a
+    // frame and not once an instruction: see cheats.hpp for the trade.
+    cheats_.apply(bus_);
+
     const int target = ppu_.frame_count() + 1;
 
     // A frame is about 29780 CPU cycles, so a few tens of thousands of

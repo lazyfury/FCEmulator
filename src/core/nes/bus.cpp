@@ -51,6 +51,26 @@ u8 NesBus::read(u16 address)
     return value;
 }
 
+u8 NesBus::peek(u16 address) const
+{
+    switch (region_of(address)) {
+    case Region::Ram:
+        return ram_.read(address);
+    case Region::Cartridge:
+        // Cartridge RAM, not cartridge ROM. Reading a ROM byte through the
+        // mapper can bank switch on some boards, and a peek is a question,
+        // not a bus cycle.
+        if (address >= 0x6000 && cartridge_ != nullptr) {
+            return cartridge_->read(address);
+        }
+        return 0;
+    default:
+        // A PPU register read has side effects; measuring must not change
+        // what is being measured.
+        return 0;
+    }
+}
+
 u8 NesBus::decode_read(u16 address)
 {
     switch (region_of(address)) {

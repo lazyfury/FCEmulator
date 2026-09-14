@@ -221,6 +221,42 @@ uint64_t fc_total_cycles(const fc_machine* machine);
 /* The CPU's program counter, for a status line. */
 uint16_t fc_cpu_pc(const fc_machine* machine);
 
+/* -- debugging and cheats ------------------------------------------------- */
+
+/* Read one byte of the CPU's address space without changing the machine.
+ *
+ * Console RAM and cartridge RAM only; 0 for everything else. `fc_peek` is not
+ * a bus cycle: reading a PPU register has side effects (reading $2002 clears
+ * the vblank flag), and reading a ROM byte can bank-switch on a few mappers,
+ * so neither is safe for a debugger or a cheat search. RAM and only RAM is
+ * what those actually need. */
+uint8_t fc_peek(fc_machine* machine, uint16_t address);
+
+/* Write one byte into the CPU's address space, now.
+ *
+ * The write goes through the bus, so it decodes the same way a CPU write
+ * would: $075A and $0F5A are the same byte, and a cheat written against one
+ * of them has to land on the other. */
+void fc_poke(fc_machine* machine, uint16_t address, uint8_t value);
+
+/* Replace the whole cheat list.
+ *
+ * `data` is `count` entries of four bytes each, little endian:
+ *
+ *     [0] address low   [1] address high   [2] value   [3] flags
+ *
+ * flags bit 0 = freeze (rewrite it at the start of every frame),
+ * flags bit 1 = enabled. Anything else in the flags byte is ignored, and a
+ * null pointer with a count of zero is how the list is emptied.
+ *
+ * One call with the whole list rather than add/remove/set verbs: the list is
+ * the front end's, it is tiny, and a state that can be half-updated is a state
+ * that can be wrong. */
+void fc_set_cheats(fc_machine* machine, const uint8_t* data, int count);
+
+/* How many cheats the core is holding. */
+int fc_cheat_count(const fc_machine* machine);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

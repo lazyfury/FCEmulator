@@ -620,6 +620,42 @@ the keyboard is set to one player or two.
 | F5, F6 | quick save, quick load (slot 0) |
 | Backspace (hold) | rewind |
 
+### Cheats
+
+A cheat here is a byte, at an address, put back. That is the whole mechanism,
+and it is deliberately the whole mechanism: the emulator does not know what
+lives are, and a version that did would be a table of games and addresses -- a
+database, not an emulator. The 金手指 panel is where the player supplies the
+address.
+
+Two behaviours, and one of them is almost always what is wanted:
+
+- **锁定 (freeze)** writes the value at the start of every frame. Games rewrite
+their own counters, so a value written once is a value the game undoes a
+moment later.
+- **写入一次 (the ⚡ button)** writes it once, now.
+
+**Finding the address is done by eye, with the emulator's help.** Every row
+has a 当前值 readout that refreshes four times a second. Watch it, lose a life,
+watch it change; that row is lives. `$075A` is where Super Mario Bros keeps
+them. This is why `peek` exists as well as `poke`: an automatic cheat search
+(scan, diff, narrow down) is the next layer on top of exactly this panel.
+
+**Where it lives, layer by layer.** `CheatSet` in `src/core/nes/cheats.hpp` is
+the list and the one operation that matters, applied by `Machine::run_frame`.
+It writes **through the Bus**, not into the RAM array, so address decoding is
+the same one the CPU sees: `$075A` and `$0F5A` are one byte, and a cheat
+written against either has to land on the other. `fc_peek`/`fc_poke`/
+`fc_set_cheats`/`fc_cheat_count` in `src/ffi/emulator_api.h` are the C surface;
+`Emulator.peek/poke/setCheats` in `wasm/emulator.mjs` is the JavaScript one.
+`peek` deliberately is **not** a bus cycle -- reading `$2002` clears the vblank
+flag -- so it answers from RAM and returns 0 for a register.
+
+The cheats are saved per cartridge, keyed by the ROM's path, in the same
+`config.json` the library root and the input settings are in. They are not
+written into a save state: a cheat describes what the player asked for, and a
+state loaded from disk should not silently switch somebody's cheats on or off.
+
 ### How the save states are checked
 
 Three layers again, and the first one is the only one that matters.

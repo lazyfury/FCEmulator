@@ -18,7 +18,7 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 
 import {
     IpcChannel,
-    type BootRom, type FcBridge, type GamepadReading, type InputSettings,
+    type BootRom, type Cheat, type FcBridge, type GamepadReading, type InputSettings,
     type LibraryState, type Preferences,
 } from '../shared/api';
 import { bootLog, setBootOrigin } from '../shared/boot';
@@ -99,6 +99,12 @@ const bridge: FcBridge = {
 
     saveInputSettings: (settings: InputSettings) =>
         ipcRenderer.invoke(IpcChannel.WriteInputSettings, settings) as Promise<void>,
+
+    readCheats: (romPath) =>
+        ipcRenderer.invoke(IpcChannel.ReadCheats, romPath) as Promise<Cheat[]>,
+
+    writeCheats: (romPath, cheats) =>
+        ipcRenderer.invoke(IpcChannel.WriteCheats, { romPath, cheats }) as Promise<void>,
 
     saveScreenshot: (gamePath, bytes, asCover) =>
         ipcRenderer.invoke(

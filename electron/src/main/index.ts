@@ -27,9 +27,9 @@ import { pathToFileURL } from 'node:url';
 import { NativeGamepad, EMPTY_READING, gamepadBinaryPath } from './gamepad';
 import { GameLibrary, SCREENSHOT_DIRECTORY, collectGames, isInside } from './library';
 import {
-    IpcChannel, LIBRARY_HOST, type BootRom, type GamepadButtonName, type GamepadReading,
-    type InputSettings, type KeyBinding, type LibraryState, type Preferences,
-    DEFAULT_INPUT_SETTINGS,
+    IpcChannel, LIBRARY_HOST, type BootRom, type Cheat, type GamepadButtonName,
+    type GamepadReading, type InputSettings, type KeyBinding, type LibraryState,
+    type Preferences, DEFAULT_INPUT_SETTINGS,
 } from '../shared/api';
 import { bootLog, bootOrigin, setBootOrigin } from '../shared/boot';
 
@@ -152,7 +152,13 @@ function parseArguments(argv: string[]): Options {
             break;
         }
         case '--rom':
-            options.romPath = argv[i + 1] ?? null;
+            // Resolved against the working directory at start up, so that the
+            // path the renderer sees is the same one every time it is asked
+            // about. Save states are filed by file name and are indifferent,
+            // but cheats are keyed by the whole path, and "../tests/data/x.nes"
+            // and an absolute path to the same file would be two entries with
+            // different bytes in them.
+            options.romPath = argv[i + 1] !== undefined ? resolve(argv[i + 1]) : null;
             i += 1;
             break;
         case '--dump':
@@ -624,6 +630,46 @@ interface Config {
     panelWidth?: number;
     /** Keyboard mode, key bindings and pad assignments. */
     input?: InputSettings;
+    /** Cheats, keyed by the cartridge's path. */
+    cheats?: Record<string, Cheat[]>;
+}
+
+/**
+ * A cheat list, with anything unrecognised dropped.
+ *
+ * Read defensively for the same reason `normaliseInput` is: the config file
+ * is a text file a person can edit, and a bad address should cost that one
+ * entry rather than the application starting.
+ */
+function normaliseCheats(raw: unknown): Cheat[] {
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+
+    const cheats: Cheat[] = [];
+    for (const entry of raw) {
+        if (entry === null || typeof entry !== 'object') {
+            continue;
+        }
+        const cheat = entry as Partial<Cheat>;
+        // An address is a 16 bit CPU address and a value is one byte. A cheat
+        // that is not one of those is not a cheat, and silently truncating it
+        // would put a byte somewhere the player did not ask for.
+        if (typeof cheat.address !== 'number' || !Number.isInteger(cheat.address)
+            || cheat.address < 0 || cheat.address > 0xFFFF
+            || typeof cheat.value !== 'number' || !Number.isInteger(cheat.value)
+            || cheat.value < 0 || cheat.value > 0xFF) {
+            continue;
+        }
+        cheats.push({
+            label: typeof cheat.label === 'string' ? cheat.label.slice(0, 40) : '',
+            address: cheat.address,
+            value: cheat.value,
+            freeze: cheat.freeze === true,
+            enabled: cheat.enabled !== false,
+        });
+    }
+    return cheats;
 }
 
 /** The eight switch names, for validating a binding that came over IPC. */
@@ -1032,6 +1078,46 @@ function registerIpc(): void {
     ipcMain.handle(IpcChannel.WriteInputSettings, async (_event, settings: unknown): Promise<void> => {
         writeConfig({ ...readConfig(), input: normaliseInput(settings) });
     });
+
+    /**
+     * The cheats saved for one cartridge.
+     *
+     * Keyed by the ROM's path, which is the same handle save states are filed
+     * under: a cheat addresses one game's RAM, so it is meaningless for any
+     * other cartridge.
+     */
+    ipcMain.handle(IpcChannel.ReadCheats, async (_event, romPath: unknown): Promise<Cheat[]> => {
+        if (typeof romPath !== 'string') {
+            return [];
+        }
+        return normaliseCheats(readConfig().cheats?.[romPath]);
+    });
+
+    ipcMain.handle(
+        IpcChannel.WriteCheats,
+        async (
+            _event,
+            request: { romPath?: unknown; cheats?: unknown },
+        ): Promise<void> => {
+            const romPath = request?.romPath;
+            if (typeof romPath !== 'string' || romPath === '') {
+                console.error('refused a cheat list: no cartridge');
+                return;
+            }
+
+            const cheats = normaliseCheats(request?.cheats);
+            const all = { ...(readConfig().cheats ?? {}) };
+            if (cheats.length === 0) {
+                // An empty list is a deletion, not an entry. A config file
+                // that grew a key per cartridge ever played would be a config
+                // file nobody could read.
+                delete all[romPath];
+            } else {
+                all[romPath] = cheats;
+            }
+            writeConfig({ ...readConfig(), cheats: all });
+        },
+    );
 
     ipcMain.handle(
         IpcChannel.WritePreference,

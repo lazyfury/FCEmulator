@@ -81,6 +81,8 @@ TEST(CApi, EveryFunctionSurvivesANullHandle)
     EXPECT_EQ(fc_samples_pending(nullptr), 0u);
     EXPECT_EQ(fc_total_cycles(nullptr), 0u);
     EXPECT_EQ(fc_cpu_pc(nullptr), 0u);
+    EXPECT_EQ(fc_peek(nullptr, 0x075A), 0u);
+    EXPECT_EQ(fc_cheat_count(nullptr), 0);
     EXPECT_STREQ(fc_last_error(nullptr), "");
     EXPECT_STREQ(fc_rom_summary(nullptr), "");
 
@@ -88,6 +90,52 @@ TEST(CApi, EveryFunctionSurvivesANullHandle)
     fc_clear_samples(nullptr);
     fc_set_button(nullptr, FC_BUTTON_A, true, 0);
     fc_release_all_buttons(nullptr);
+    fc_poke(nullptr, 0x075A, 1);
+    fc_set_cheats(nullptr, nullptr, 0);
+}
+
+// ===========================================================================
+// Cheats and peeking
+// ===========================================================================
+
+TEST(CApi, PokeWritesRamAndPeekReadsItBack)
+{
+    Machine m;
+    fc_poke(m.handle, 0x075A, 0x63);
+    EXPECT_EQ(fc_peek(m.handle, 0x075A), 0x63);
+    // Console RAM is mirrored every 2KB; the address decoding is the bus's
+    // job, and a poke has to go through it for this to hold.
+    EXPECT_EQ(fc_peek(m.handle, 0x0F5A), 0x63);
+}
+
+TEST(CApi, PeekIsZeroForRegistersAndEmptyForAnEmptyList)
+{
+    Machine m;
+    // Not a bus cycle: reading a PPU register has side effects, so a peek
+    // answers nothing rather than changing the machine.
+    EXPECT_EQ(fc_peek(m.handle, 0x2002), 0u);
+    EXPECT_EQ(fc_cheat_count(m.handle), 0);
+}
+
+TEST(CApi, TheCheatBufferIsFourBytesPerEntry)
+{
+    Machine m;
+
+    // $075A = 99, freeze + enabled. $075B = 1, enabled but not frozen.
+    const uint8_t data[] = {
+        0x5A, 0x07, 99, 0x03,
+        0x5B, 0x07, 1, 0x02,
+    };
+    fc_set_cheats(m.handle, data, 2);
+    EXPECT_EQ(fc_cheat_count(m.handle), 2);
+
+    // A freeze is written when a frame runs, not when the list is set.
+    EXPECT_EQ(fc_peek(m.handle, 0x075A), 0u);
+    // ... which needs a cartridge to run a frame, so the count is what is
+    // checked here and the writing is checked in test_cheats.cpp.
+
+    fc_set_cheats(m.handle, nullptr, 0);
+    EXPECT_EQ(fc_cheat_count(m.handle), 0);
 }
 
 // ===========================================================================

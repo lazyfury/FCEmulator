@@ -63,6 +63,12 @@ export const IpcChannel = {
     /** Rewrite the input settings: keyboard mode, bindings, pad assignment. */
     WriteInputSettings: 'fc:write-input-settings',
 
+    /** The cheats saved for one cartridge. */
+    ReadCheats: 'fc:read-cheats',
+
+    /** Replace the cheats saved for one cartridge. */
+    WriteCheats: 'fc:write-cheats',
+
     /** The window preferences: scanline overlay, middle column width. */
     ReadPreferences: 'fc:read-preferences',
 
@@ -225,6 +231,24 @@ export const DEFAULT_INPUT_SETTINGS: InputSettings = {
     bindings: null,
     padPorts: [],
 };
+
+/**
+ * One cheat: a byte, at an address, put back when the game overwrites it.
+ *
+ * The address is in the CPU's own 16 bit space -- console RAM lives at
+ * $0000-$07FF, and `address` is one of those -- which is the same space a Game
+ * Genie code names and the same one the debugger shows. `label` is for the
+ * list on screen and nothing else; the machine never sees it.
+ */
+export interface Cheat {
+    label: string;
+    address: number;
+    value: number;
+    /** Rewrite it at the start of every frame, rather than only once. */
+    freeze: boolean;
+    /** Remembered but switched off. */
+    enabled: boolean;
+}
 
 /** The host the `app://` protocol serves library files under. */
 export const LIBRARY_HOST = 'library';
@@ -462,6 +486,12 @@ export interface FcBridge {
      * where the file holds half of one configuration and half of another.
      */
     saveInputSettings(settings: InputSettings): Promise<void>;
+
+    /** The cheats saved for one cartridge, or an empty list. */
+    readCheats(romPath: string): Promise<Cheat[]>;
+
+    /** Replace the cheats saved for one cartridge. */
+    writeCheats(romPath: string, cheats: Cheat[]): Promise<void>;
 
     /**
      * Say which cartridge is in the slot.

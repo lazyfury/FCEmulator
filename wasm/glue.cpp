@@ -27,7 +27,7 @@ extern "C" {
 /// Bumped whenever the meaning of anything below changes.
 int fc_wasm_abi(void)
 {
-    return 1;
+    return 2;
 }
 
 /// The screen size, so the wrapper never hardcodes 256x240 in two places.

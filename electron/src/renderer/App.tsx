@@ -39,6 +39,7 @@ import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import AboutPanel from './components/AboutPanel';
+import CheatsPanel from './components/CheatsPanel';
 import LibraryPanel, { type SortKey } from './components/LibraryPanel';
 import PlayPanel from './components/PlayPanel';
 import SavesPanel from './components/SavesPanel';
@@ -58,7 +59,7 @@ import { usePixelScale } from './usePixelScale';
 import { bootLog } from '../shared/boot';
 
 import type { CSSProperties } from 'react';
-import { DEFAULT_INPUT_SETTINGS, type InputSettings, type LibraryState, type Preferences } from '../shared/api';
+import { DEFAULT_INPUT_SETTINGS, type Cheat, type InputSettings, type LibraryState, type Preferences } from '../shared/api';
 
 /** The four save slots, in the order the keyboard numbers them. */
 const SAVE_COMMANDS: readonly CommandName[] = ['quicksave', 'save1', 'save2', 'save3'];
@@ -92,6 +93,7 @@ export default function App() {
     // effect below for why it is not in localStorage any more.
     const [scanlines, setScanlines] = useState(false);
     const [input, setInput] = useState<InputSettings>(DEFAULT_INPUT_SETTINGS);
+    const [cheats, setCheats] = useState<Cheat[]>([]);
     const [notice, setNotice] = useState<string | null>(null);
 
     // How wide the middle column is. The divider between it and the picture is
@@ -142,8 +144,9 @@ export default function App() {
         flash(asCover ? '已更新封面' : '已保存截图');
     }, [flash]);
 
-    const { status, loadRom, unload, command } = useEmulator(canvasRef, {
+    const { status, loadRom, unload, command, poke, peek } = useEmulator(canvasRef, {
         input,
+        cheats,
         onScreenshot: (png, asCover) => void saveScreenshot(png, asCover),
     });
 
@@ -237,6 +240,40 @@ export default function App() {
         setInput(next);
         void window.fc.saveInputSettings(next);
     }, []);
+
+    // Cheats belong to one cartridge, so they are read when the cartridge
+    // changes and written back under its path. Loading one game while another
+    // game's cheats are on screen would put bytes into the wrong RAM, so the
+    // list is emptied the moment the slot is.
+    useEffect(() => {
+        const path = status.romPath;
+        if (path === null) {
+            setCheats([]);
+            return undefined;
+        }
+        let cancelled = false;
+        void window.fc.readCheats(path)
+            .then((list: Cheat[]) => {
+                if (!cancelled) {
+                    setCheats(list);
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setCheats([]);
+                }
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [status.romPath]);
+
+    const changeCheats = useCallback((next: Cheat[]): void => {
+        setCheats(next);
+        if (status.romPath !== null) {
+            void window.fc.writeCheats(status.romPath, next);
+        }
+    }, [status.romPath]);
 
     // The commit, as opposed to the render above: layout effects run after
     // React has written the DOM and before the browser paints it, so this
@@ -430,6 +467,16 @@ export default function App() {
                     onSave={saveTo}
                     onLoad={loadFrom}
                     onEject={eject}
+                />
+            );
+        case 'cheats':
+            return (
+                <CheatsPanel
+                    game={title}
+                    cheats={cheats}
+                    onCheats={changeCheats}
+                    peek={peek}
+                    poke={poke}
                 />
             );
         case 'settings':

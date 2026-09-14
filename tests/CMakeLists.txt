@@ -30,6 +30,7 @@ add_executable(fc_tests
     test_cycles.cpp
     test_nes_bus.cpp
     test_cartridge.cpp
+    test_cheats.cpp
     test_real_rom.cpp
     test_ppu.cpp
     test_controller.cpp

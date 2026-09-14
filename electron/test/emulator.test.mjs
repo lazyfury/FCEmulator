@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { Emulator } from '../../wasm/emulator.mjs';
+import { Emulator, EXPECTED_ABI } from '../../wasm/emulator.mjs';
 import createFcCore from '../../wasm/dist/fc_core.mjs';
 
 // A symlink into a real ROM folder. Nothing is committed there, so this whole
@@ -64,7 +64,7 @@ test('a counter can be compared and divided like a number', { skip: !hasRom }, a
 test('the ABI the wrapper expects is the ABI the module speaks', { skip: !hasRom }, async () => {
     // A stale fc_core.wasm must not load quietly. See wasm/glue.cpp.
     const module = await createFcCore();
-    assert.equal(module._fc_wasm_abi(), 1);
+    assert.equal(module._fc_wasm_abi(), EXPECTED_ABI);
     assert.equal(module._fc_wasm_screen_width(), 256);
     assert.equal(module._fc_wasm_screen_height(), 240);
     assert.equal(module._fc_wasm_sample_rate(), 44100);
@@ -125,6 +125,79 @@ test('the mapper says whether it saves its bank registers', { skip: !hasRom }, a
     try {
         // Super Mario Bros is NROM, which is one of the mappers that does.
         assert.equal(typeof machine.mapperSavesState, 'boolean');
+    } finally {
+        machine.destroy();
+    }
+});
+
+// -- cheats and peek --------------------------------------------------------
+//
+// The whole chain, one layer above test_cheats.cpp: console RAM, the C bus it
+// goes through, the four-byte packing `setCheats` writes, and the mirroring
+// that falls out of the address decoder. `$075A` is where Super Mario Bros
+// keeps the number of lives.
+
+test('a poke lands in console RAM, and its mirrors agree', { skip: !hasRom }, async () => {
+    const machine = await bootedEmulator();
+    try {
+        machine.poke(0x075A, 0x63);
+        assert.equal(machine.peek(0x075A), 0x63);
+        assert.equal(machine.peek(0x0F5A), 0x63);
+        assert.equal(machine.peek(0x175A), 0x63);
+    } finally {
+        machine.destroy();
+    }
+});
+
+test('peek answers nothing for a register', { skip: !hasRom }, async () => {
+    const machine = await bootedEmulator();
+    try {
+        // Reading $2002 through the bus clears the vblank flag; a peek must
+        // be a question that does not change the answer.
+        assert.equal(machine.peek(0x2002), 0);
+    } finally {
+        machine.destroy();
+    }
+});
+
+test('a frozen cheat is put back at the start of every frame', { skip: !hasRom }, async () => {
+    const machine = await bootedEmulator();
+    try {
+        machine.setCheats([{ address: 0x075A, value: 0x63, freeze: true, enabled: true }]);
+        assert.equal(machine.cheatCount, 1);
+
+        for (let frame = 0; frame < 5; frame += 1) {
+            machine.runFrame();
+        }
+
+        assert.equal(machine.peek(0x075A), 0x63);
+    } finally {
+        machine.destroy();
+    }
+});
+
+test('a cheat that is switched off is remembered but not written', { skip: !hasRom }, async () => {
+    const machine = await bootedEmulator();
+    try {
+        machine.poke(0x075A, 0x02);
+        machine.setCheats([{ address: 0x075A, value: 0x63, freeze: true, enabled: false }]);
+        assert.equal(machine.cheatCount, 1);
+
+        machine.runFrame();
+
+        assert.notEqual(machine.peek(0x075A), 0x63);
+    } finally {
+        machine.destroy();
+    }
+});
+
+test('an empty cheat list empties the core', { skip: !hasRom }, async () => {
+    const machine = await bootedEmulator();
+    try {
+        machine.setCheats([{ address: 0x075A, value: 0x63, freeze: true, enabled: true }]);
+        assert.equal(machine.cheatCount, 1);
+        machine.setCheats([]);
+        assert.equal(machine.cheatCount, 0);
     } finally {
         machine.destroy();
     }

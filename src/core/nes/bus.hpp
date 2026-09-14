@@ -49,6 +49,20 @@ public:
     void write(u16 address, u8 value) override;
     int take_stall_cycles() override;
 
+    /**
+     * Read one byte without changing the machine.
+     *
+     * `read` is not safe to call from a debugger or a cheat search: reading
+     * $2002 clears the vblank flag and reading $2007 advances VRAM, so asking
+     * a question would change the answer. This answers the same question the
+     * CPU's RAM would and nothing else -- console RAM and cartridge RAM --
+     * and returns 0 for everything else rather than touching a register.
+     *
+     * Reading a ROM byte is deliberately not here either: a few mappers bank
+     * switch as a side effect of being read, and a peek must not do that.
+     */
+    [[nodiscard]] u8 peek(u16 address) const;
+
     // -- the chips -----------------------------------------------------------
 
     [[nodiscard]] Ram& ram() noexcept { return ram_; }

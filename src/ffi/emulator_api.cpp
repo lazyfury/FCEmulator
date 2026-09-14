@@ -429,4 +429,55 @@ uint16_t fc_cpu_pc(const fc_machine* machine)
     return machine->machine.cpu().registers().pc;
 }
 
+// ---------------------------------------------------------------------------
+// Debugging and cheats
+// ---------------------------------------------------------------------------
+
+uint8_t fc_peek(fc_machine* machine, uint16_t address)
+{
+    if (machine == nullptr) {
+        return 0;
+    }
+    return machine->machine.bus().peek(address);
+}
+
+void fc_poke(fc_machine* machine, uint16_t address, uint8_t value)
+{
+    if (machine == nullptr) {
+        return;
+    }
+    machine->machine.bus().write(address, value);
+}
+
+void fc_set_cheats(fc_machine* machine, const uint8_t* data, int count)
+{
+    if (machine == nullptr) {
+        return;
+    }
+
+    std::vector<fc::nes::Cheat> cheats;
+    if (data != nullptr && count > 0) {
+        cheats.reserve(static_cast<std::size_t>(count));
+        for (int i = 0; i < count; ++i) {
+            const uint8_t* entry = data + static_cast<std::size_t>(i) * 4;
+            cheats.push_back(fc::nes::Cheat{
+                static_cast<uint16_t>(entry[0] | (entry[1] << 8)),
+                entry[2],
+                (entry[3] & 0x01u) != 0u,
+                (entry[3] & 0x02u) != 0u,
+            });
+        }
+    }
+
+    machine->machine.cheats().set(cheats);
+}
+
+int fc_cheat_count(const fc_machine* machine)
+{
+    if (machine == nullptr) {
+        return 0;
+    }
+    return static_cast<int>(machine->machine.cheats().size());
+}
+
 } // extern "C"

@@ -58,6 +58,10 @@ set(FC_WASM_EXPORTS
     _fc_release_all_buttons
     _fc_total_cycles
     _fc_cpu_pc
+    _fc_peek
+    _fc_poke
+    _fc_set_cheats
+    _fc_cheat_count
     _fc_save_state
     _fc_save_state_into
     _fc_state_size

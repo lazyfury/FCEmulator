@@ -43,6 +43,7 @@
 #include "core/nes/bus.hpp"
 #include "core/nes/apu.hpp"
 #include "core/nes/cartridge.hpp"
+#include "core/nes/cheats.hpp"
 #include "core/nes/controller.hpp"
 #include "core/nes/ppu.hpp"
 #include "core/types.hpp"
@@ -130,6 +131,10 @@ public:
     [[nodiscard]] Cartridge* cartridge() noexcept { return cartridge_.get(); }
     [[nodiscard]] const Cartridge* cartridge() const noexcept { return cartridge_.get(); }
 
+    /// The cheat list. Applied at the start of every frame; see cheats.hpp.
+    [[nodiscard]] CheatSet& cheats() noexcept { return cheats_; }
+    [[nodiscard]] const CheatSet& cheats() const noexcept { return cheats_; }
+
     [[nodiscard]] const Framebuffer& framebuffer() const noexcept
     {
         return ppu_.framebuffer();
@@ -173,6 +178,7 @@ private:
     Apu apu_;
     NesBus bus_;
     Cpu cpu_;
+    CheatSet cheats_;
 
     /// A vblank NMI seen on the previous step, held for one instruction so a
     /// $2002 polling loop can read the flag first. See Machine::step_one().

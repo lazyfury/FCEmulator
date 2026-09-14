@@ -34,7 +34,7 @@ import { Button, Emulator } from '@wasm';
 
 import { AudioOutput } from './audio/output';
 import { bootLog } from '../shared/boot';
-import { DEFAULT_INPUT_SETTINGS, type InputSettings } from '../shared/api';
+import { DEFAULT_INPUT_SETTINGS, type Cheat, type InputSettings } from '../shared/api';
 import { resolveBindings, padPort } from './bindings';
 import { INITIAL_STATUS, unloaded, type EngineStatus } from './engineStatus';
 import {
@@ -76,10 +76,22 @@ export interface EmulatorHandle {
      * disagree about what "save" means.
      */
     command(command: CommandName): void;
+    /** Write one byte into the console's memory, now. */
+    poke(address: number, value: number): void;
+    /** Read one byte of console or cartridge RAM, or null with no machine. */
+    peek(address: number): number | null;
 }
 
 /** Things the loop has to report to somebody else. */
 export interface EmulatorHandlers {
+    /**
+     * The cheats in force for the cartridge in the slot.
+     *
+     * Read from a ref rather than captured, for the same reason the input
+     * settings are: the machine is built once and the list may change an hour
+     * later, and rebuilding it to change a byte would power the console off.
+     */
+    cheats?: Cheat[];
     /**
      * The input settings in force: keyboard mode, bindings, pad assignments.
      *
@@ -121,10 +133,16 @@ export function useEmulator(
         loadRom: (path: string) => Promise<boolean>;
         unload: () => void;
         command: (command: CommandName) => void;
+        poke: (address: number, value: number) => void;
+        peek: (address: number) => number | null;
+        applyCheats: () => void;
     }>({
         loadRom: async () => false,
         unload: () => undefined,
         command: () => undefined,
+        poke: () => undefined,
+        peek: () => null,
+        applyCheats: () => undefined,
     });
 
     useEffect(() => {
@@ -301,6 +319,15 @@ export function useEmulator(
                 emulator = null;
                 return;
             }
+
+            // The cheat list and the debugging window belong to the machine,
+            // so they are wired the moment there is one. `applyCheats` reads
+            // the list from the ref, so a change made while the library is on
+            // screen is picked up by the first game loaded.
+            actions.current.poke = (address, value) => engine.poke(address, value);
+            actions.current.peek = (address) => (disposed ? null : engine.peek(address));
+            actions.current.applyCheats = () => engine.setCheats(outward.current.cheats ?? []);
+            actions.current.applyCheats();
 
             // A machine with no cartridge in it yet. The library screen runs
             // over the top of this, and a game is loaded when the player picks
@@ -566,6 +593,12 @@ export function useEmulator(
                 // be compared against theirs cycle for cycle.
                 engine.reset();
 
+                // The cheats for this cartridge. The list is read from the ref
+                // at load time, so a game loaded from the library gets the
+                // list the screen is showing for it -- and a list that arrives
+                // a moment later is applied by the effect below.
+                engine.setCheats(outward.current.cheats ?? []);
+
                 manager.releaseEverything();
                 engine.releaseAllButtons();
                 audio?.clear();
@@ -646,7 +679,7 @@ export function useEmulator(
                 setStatus(unloaded);
             };
 
-            actions.current = { loadRom, unload, command: (c) => commandHandler?.(c) };
+            actions.current = { ...actions.current, loadRom, unload, command: (c) => commandHandler?.(c) };
 
             /** A short note in the status line, gone again in two seconds. */
             const flash = (text: string): void => {
@@ -1007,6 +1040,7 @@ export function useEmulator(
             // something to command.
             setStatus({ ...INITIAL_STATUS, state: 'running' });
             actions.current = {
+                ...actions.current,
                 loadRom: async (path: string) => {
                     await startOnce();
                     return actions.current.loadRom(path);
@@ -1041,10 +1075,19 @@ export function useEmulator(
         };
     }, [canvasRef]);
 
+    // Push a changed cheat list into the machine. Reading a file and changing a
+    // cheat are both asynchronous, and the machine exists by the time either
+    // lands, so one effect is enough for both.
+    useEffect(() => {
+        actions.current.applyCheats();
+    }, [handlers.cheats]);
+
     return {
         status,
         loadRom: (path: string) => actions.current.loadRom(path),
         unload: () => actions.current.unload(),
         command: (command: CommandName) => actions.current.command(command),
+        poke: (address: number, value: number) => actions.current.poke(address, value),
+        peek: (address: number) => actions.current.peek(address),
     };
 }

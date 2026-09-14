@@ -57,8 +57,10 @@ export const Button = Object.freeze({
 /// The ABI the JavaScript below expects. src/wasm/glue.cpp returns this, and
 /// the check in `create` is what stops a stale fc_core.wasm from being paired
 /// with a newer wrapper. Without it the mismatch shows up as a garbled picture
-/// rather than as an error.
-const EXPECTED_ABI = 1;
+/// rather than as an error. Exported so the test can compare the two rather
+/// than hardcode the number in a third place.
+const EXPECTED_ABI = 2;
+export { EXPECTED_ABI };
 
 /**
  * A block of the emulator's own memory, holding save states.
@@ -343,6 +345,66 @@ export class Emulator {
     releaseAllButtons() {
         this.#assertAlive();
         this.#api._fc_release_all_buttons(this.#handle);
+    }
+
+    // -- cheats and debugging -----------------------------------------------
+
+    /**
+     * Read one byte of the CPU's address space without changing the machine.
+     *
+     * Console RAM and cartridge RAM; 0 elsewhere. Meant for a cheat search and
+     * for showing a value in the panel, so it deliberately does not go through
+     * the bus: reading a PPU register has side effects.
+     */
+    peek(address) {
+        this.#assertAlive();
+        return this.#api._fc_peek(this.#handle, address & 0xFFFF);
+    }
+
+    /** Write one byte into the CPU's address space, now. */
+    poke(address, value) {
+        this.#assertAlive();
+        this.#api._fc_poke(this.#handle, address & 0xFFFF, value & 0xFF);
+    }
+
+    /**
+     * Replace the cheat list.
+     *
+     * `cheats` is an array of objects shaped `{ address, value, freeze,
+     * enabled }`. They are packed into the four-bytes-per-entry form the C
+     * side reads, which is the one place the layout is written down on this
+     * side of the boundary; `fc_set_cheats` in src/ffi/emulator_api.h is the
+     * other.
+     */
+    setCheats(cheats = []) {
+        this.#assertAlive();
+
+        // At least one byte, so that an empty list still has a valid pointer
+        // to pass: `_malloc(0)` may hand back 0, which reads as "no list"
+        // rather than "an empty list" -- the same thing here, but only by
+        // accident.
+        const bytes = new Uint8Array(Math.max(cheats.length * 4, 1));
+        cheats.forEach((cheat, position) => {
+            const at = position * 4;
+            bytes[at] = cheat.address & 0xFF;
+            bytes[at + 1] = (cheat.address >> 8) & 0xFF;
+            bytes[at + 2] = cheat.value & 0xFF;
+            bytes[at + 3] = (cheat.freeze ? 0x01 : 0) | (cheat.enabled ? 0x02 : 0);
+        });
+
+        const pointer = this.#api._malloc(bytes.length);
+        try {
+            this.#api.HEAPU8.set(bytes, pointer);
+            this.#api._fc_set_cheats(this.#handle, pointer, cheats.length);
+        } finally {
+            this.#api._free(pointer);
+        }
+    }
+
+    /** How many cheats the core is holding. */
+    get cheatCount() {
+        this.#assertAlive();
+        return this.#api._fc_cheat_count(this.#handle);
     }
 
     // -- save states --------------------------------------------------------
