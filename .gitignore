@@ -16,7 +16,7 @@ cmake-build-*/
 .idea/
 *.swp
 
-# Apple / Xcode (future frontend)
+# Apple / Xcode
 *.xcuserstate
 xcuserdata/
 DerivedData/
@@ -25,8 +25,10 @@ DerivedData/
 *.nes
 tests/data/
 
-# Frontend build output
-frontend/build/
+# Demo output: PPM pictures and WAV files the teaching demos write. Generated
+# by `./build/demo_ppu`, `./build/demo_input` and `./build/demo_apu`; the README
+# tells you to run those before looking at them.
+frames/
 
 # Emscripten SDK. Installed by wasm/build.sh's instructions; about 1.4GB, and
 # it is a toolchain, not a source file.

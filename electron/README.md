@@ -1,11 +1,7 @@
 # FC Emulator — Electron front end
 
-One of two front ends. The other, `../frontend/`, is Swift + Metal and is
-untouched by anything in here. Both sit on the same C interface
-(`../src/ffi/emulator_api.h`), and that interface is the reason there can be
-two of them.
-
-The emulator itself is not in this directory and is not written in JavaScript.
+The front end. It sits on the C interface (`../src/ffi/emulator_api.h`);
+the emulator itself is not in this directory and is not written in JavaScript.
 It is `../src/core`, compiled to WebAssembly by `../wasm/build.sh`.
 
 ---

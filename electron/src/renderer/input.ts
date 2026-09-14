@@ -22,8 +22,9 @@
 // `code` names the physical key; `key` names the character it would produce.
 // The front end is deciding where a key *is*, not what it says, so a player on
 // an AZERTY keyboard keeps Z and X under the same two fingers as everybody
-// else. This is the same reason the Swift front end binds macOS virtual key
-// codes rather than characters.
+// else. This is the same reason a native front end binds virtual key codes
+// rather than characters: it is the position that is being mapped, not the
+// letter.
 // ---------------------------------------------------------------------------
 
 import type { GamepadButtonName } from '../shared/api';

@@ -14,10 +14,9 @@
 // uninterruptible wait until somebody sends SIGKILL.
 //
 // A separate process has none of that problem. It can be killed. And because
-// the framework it uses is the same one the Swift front end already uses for
-// real pads (frontend/Sources/Input.swift), there is exactly one description
-// of "how a pad maps onto the console's eight switches" per language, not one
-// per front end.
+// it goes through the same GameController framework the retired Swift front
+// end used for real pads, there is exactly one description of "how a pad maps
+// onto the console's eight switches" on this side of the pipe.
 //
 // Read-only, standard output only. The protocol is documented in README.md.
 // ---------------------------------------------------------------------------

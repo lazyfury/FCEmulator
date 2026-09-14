@@ -323,7 +323,7 @@ void set_button(Controller::Button button, bool pressed, int index = 0) noexcept
 | 自动化测试（TAS） | 脚本输入 + 逐帧控制 |
 | 真实前端 | 键盘事件映射到同一个调用 |
 
-**Phase 7 接 Swift/Metal 前端时，键盘处理只需要调用这一个函数。**
+**Phase 7 接 Electron 前端时，键盘处理只需要调用这一个函数。**
 Core 不需要任何改动——这是"Core 不依赖 UI"这条规则换来的。
 
 > 甚至可以说：**一个能回放录像的模拟器，和一个人在对局中操作的模拟器，

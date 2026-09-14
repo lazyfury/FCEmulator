@@ -32,7 +32,7 @@
 - [x] 11 个教学 demo；15 个测试文件
 - [x] `docs/` 十七章
 - [x] `src/ffi/emulator_api.h` **纯 C 接口**
-- [x] `frontend/` **Swift + Metal + CoreAudio 前端**，含可验证的无头模式
+- [x] `electron/` **Electron + TypeScript 前端**（WebAssembly 里跑 Core，canvas 出画面，Web Audio 出声），含可验证的无头模式
 
 **现在能运行真实的 NES ROM 并画出画面了：**
 
@@ -77,17 +77,22 @@ afplay frames/game_audio.wav
 **而且可以在窗口里玩了：**
 
 ```bash
-./frontend/build.sh
-open frontend/build/FCEmulator.app --args /path/to/game.nes
+./wasm/build.sh                 # 把 Core 编译成 WebAssembly
+cd electron && pnpm install
+pnpm run dev                    # 开发窗口；或者 pnpm start 跑生产构建
 ```
 
 ```
-CPU  / Bus / Cartridge / PPU / APU / Controller   <- Core, 无需 UI
+CPU  / Bus / Cartridge / PPU / APU / Controller   <- Core (C++)
                      |
               src/ffi/emulator_api.h              <- 纯 C 边界
                      |
-      AppKit + Metal + CoreAudio (Swift)          <- 前端
+              wasm/ (Emscripten)                  <- 同一份 Core 编译成 WebAssembly
+                     |
+   Electron (TypeScript, canvas + Web Audio)      <- 前端
 ```
+
+游戏从内置游戏库选，或者直接把 `.nes` 拖进窗口。详见 [electron/README.md](electron/README.md)。
 
 **项目完成。** 从二进制到屏幕上的像素，全链路打通。
 
@@ -127,8 +132,8 @@ ctest --test-dir build --output-on-failure
 ./build/demo_apu          # 五个声道的波形 -> game_audio.wav
 
 # 前端
-./frontend/build.sh
-./frontend/build/FCEmulator.app/Contents/MacOS/FCEmulator <rom> --headless 700 --start --dump f.ppm
+./wasm/build.sh
+cd electron && pnpm install && pnpm start
 ```
 
 用真实 ROM 跑测试（默认会查找 `tests/data/*.nes`）：
@@ -161,9 +166,11 @@ FCEmulator/
 │   │   ├── cpu/           寄存器、opcode 表、反汇编、寻址、表驱动派发
 │   │   └── nes/           地址译码、卡带、PPU、APU、手柄、Machine
 │   └── ffi/            纯 C 接口（前端唯一需要链接的东西）
-├── frontend/           Swift + Metal + CoreAudio 前端
-│   ├── Sources/
-│   └── build.sh
+├── wasm/               同一份 Core 编译成 WebAssembly 的脚本与绑定
+├── electron/           Electron + TypeScript 前端
+│   ├── src/            主进程 / preload / 渲染进程
+│   ├── native/         原生手柄助手（Swift + GameController）
+│   └── test/           前端的 Node 测试
 ├── tools/               教学 demo 与命令行工具
 └── tests/               单元测试
 ```
@@ -180,7 +187,7 @@ FCEmulator/
 
 ## 设计原则
 
-1. **核心与 UI 分离** — `src/core` 是纯 C++，不知道 Metal 存在
+1. **核心与 UI 分离** — `src/core` 是纯 C++，不知道窗口、Metal 或 Electron 存在
 2. **禁止 CPU 直接访问 PPU** — 一切经过 Bus
 3. **一切核心模块必须有测试**
 4. **每个阶段先理解，再实现**
@@ -201,12 +208,12 @@ Phase 3   Cartridge / Mapper   [done]
 Phase 4   PPU                  [done]
 Phase 5   Controller           [done]
 Phase 6   APU                  [done]
-Phase 7   macOS Metal 前端      [done] <-- 全部完成
+Phase 7   macOS 前端 (Electron)   [done] <-- 全部完成
 Phase 1   6502 CPU
 Phase 2   NES Bus
 Phase 3   Cartridge / Mapper
 Phase 4   PPU
 Phase 5   Controller
 Phase 6   APU
-Phase 7   macOS Metal 渲染
+Phase 7   macOS 前端 (Electron)
 ```

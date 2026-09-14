@@ -65,8 +65,8 @@ left to release it.
 
 ## The mapping
 
-The same mapping the Swift front end uses (`frontend/Sources/Input.swift`), so
-the console behaves the same whichever front end is running:
+The console's mapping, and the same one the renderer's browser `GamepadSource`
+applies, so a pad behaves the same on either path:
 
 | NES switch | GameController input |
 |---|---|

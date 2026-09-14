@@ -369,4 +369,4 @@ afplay frames/game_audio.wav
 ---
 
 **上一章：** [controllers.md](controllers.md)
-**下一阶段：** Phase 7 — macOS Metal 前端
+**下一阶段：** Phase 7 — macOS 前端（Electron）

@@ -15,8 +15,8 @@
 // A display, on the other hand, refreshes at exactly 60.000Hz, and the only
 // event a web page gets is requestAnimationFrame, which fires once per
 // refresh. So the renderer cannot run "one frame per animation frame" -- that
-// is the subtle bug the Swift front end shipped with, and it makes the game
-// run 0.16% slow.
+// is the subtle bug the earlier frame-per-refresh loops shipped with, and it
+// makes the game run 0.16% slow.
 //
 // What works instead is an accumulator. Keep the time the next emulated frame
 // is *due*, and on every animation frame run however many frames have come

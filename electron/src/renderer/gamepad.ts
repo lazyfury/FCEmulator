@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Gamepads, through the browser's Gamepad API.
 //
-// The JavaScript twin of frontend/Sources/Input.swift's GamepadInput, and the
-// second source the InputManager was built for in M3. It reports into the same
+// The second source the InputManager was built for, and the browser path's
+// twin of the native helper's mapping. It reports into the same
 // manager as the keyboard, so a button held on a pad is not released by
 // letting go of a key.
 //
@@ -39,7 +39,7 @@ import type { GamepadReading } from '../shared/api';
 import type { ButtonName, InputManager } from './input';
 
 /** How far the stick has to move before it counts as a direction. The same
- *  0.5 the Swift front end uses, for the same reason: a worn stick drifts, and
+ *  0.5 the native helper uses, for the same reason: a worn stick drifts, and
  *  a deadzone is cheaper than a new controller. */
 const DEADZONE = 0.5;
 

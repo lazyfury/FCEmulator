@@ -17,7 +17,7 @@
                      |
               Emulator API
                      |
-                 Swift/Metal
+            Electron / Canvas
                      |
                   Screen
 ```
@@ -27,7 +27,7 @@
 | 文档 | 内容 |
 |------|------|
 | [bus.md](bus.md) | 为什么需要 Bus、Device 接口、依赖方向、测试替身 |
-| [frontend.md](frontend.md) | C 接口、Metal 渲染、音频环形缓冲、主循环 |
+| [frontend.md](frontend.md) | C 接口、Canvas 渲染、音频环形缓冲、主循环 |
 
 ### 当前实际结构
 
@@ -82,8 +82,9 @@ CPU 只知道"我要往地址 `$2006` 写一个字节"。
 
 ### 规则 2：Core 不得依赖 UI
 
-`src/core/` 里的代码不能 `#include <Metal/Metal.h>`，不能出现 `NSWindow`。
-Core 只产出一个 `256×240` 的 RGB framebuffer，谁来显示它由 `src/frontend/` 决定。
+`src/core/` 里的代码不能 `#include <Metal/Metal.h>`，不能出现 `NSWindow`、
+`document`。Core 只产出一个 `256×240` 的 RGB framebuffer，谁来显示它由
+`electron/`（或 `tools/fc_headless`）决定。
 
 **收益：** Core 可以在命令行、测试、无头环境下运行。
 
@@ -98,7 +99,7 @@ CPU 读 $0000  ->  Bus 判断：<$2000?       -> RAM
 ## 完整的依赖方向
 
 ```
-   frontend/ (Swift)          UI 层
+   electron/ (TypeScript)     UI 层
         |
    src/ffi/emulator_api.h     C 接口 —— 唯一的边界
         |

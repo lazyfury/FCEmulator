@@ -25,12 +25,13 @@
 //       pad that disappears must say so, or the jump button stays held
 //       forever: there is nobody left to release it.
 //
-// The mapping is deliberately the same one the Swift front end uses
-// (frontend/Sources/Input.swift). A stick duplicates the d-pad because most
-// people reach for the stick; the deadzone is 0.5 because a worn stick drifts
-// and a drifting stick walks the player into a wall. A is the right hand face
-// button, which is index 0 on a modern pad -- the one with the letter A printed
-// on it.
+// The mapping is the console's, not the framework's, and it is deliberately
+// the same eight switches the renderer's browser GamepadSource produces, so a
+// pad behaves the same on either path. A stick duplicates the d-pad because
+// most people reach for the stick; the deadzone is 0.5 because a worn stick
+// drifts and a drifting stick walks the player into a wall. A is the right hand
+// face button, which is index 0 on a modern pad -- the one with the letter A
+// printed on it.
 //
 // stdin is a signal, not input: when the parent closes it, this exits. That is
 // what stops a killed Electron from leaving an orphan process behind.

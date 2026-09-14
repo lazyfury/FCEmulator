@@ -130,7 +130,7 @@ Frontend
 
 ## macOS Frontend
 
-技术：`Swift` `SwiftUI/AppKit` `Metal`
+技术：`TypeScript` `Electron` `WebAssembly` `Canvas` `Web Audio`
 
 负责：Window / Input / Rendering / Audio output
 
@@ -139,8 +139,9 @@ Frontend
 ```
                     macOS
                       |
+                Electron 窗口
                       |
-                    Metal
+          Canvas (2D) / Web Audio
                       |
                 Emulator API
                       |
@@ -154,6 +155,10 @@ Frontend
 |  Controller                               |
 +-------------------------------------------+
 ```
+
+同一份 Core 也编译成 WebAssembly（`wasm/`），跑在 Electron 的渲染进程里。
+原生手柄助手（`electron/native/gamepad`，Swift + GameController）是唯一的
+非 TypeScript 部件，它只负责读手柄。
 
 ---
 
@@ -221,10 +226,10 @@ RAM / PPU / APU / Controller / Cartridge
 
 实现 Pulse / Triangle / Noise
 
-## Phase 7 — macOS Renderer
+## Phase 7 — macOS Frontend
 
 ```
-Framebuffer → Metal Texture → Display
+Framebuffer → WebAssembly 线性内存 → Canvas → GPU → 屏幕
 ```
 
 ---
@@ -387,10 +392,13 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 - `src/core/nes/apu.{hpp,cpp}` 五个声道、包络、长度/线性计数器、扫频、帧序列器、非线性混音、DMC
 - `src/core/nes/ram_cartridge.hpp` 卡带槽占位（测试用）
 - `src/ffi/emulator_api.h` 纯 C 接口（22 个测试）
-- `frontend/` Swift + Metal + CoreAudio 前端，含可验证的无头模式
-- `frontend/Sources/Input.swift` 键盘与手柄汇入同一个 `InputManager`；
-  真实手柄走 GameController 框架（`GCExtendedGamepad` / `GCMicroGamepad`），
-  自动识别已连接的手柄，并处理游戏中插拔
+- `electron/` Electron + TypeScript 前端：Core 编译成 WebAssembly 在渲染进程里跑，
+  canvas 出画面，Web Audio 出声，SQLite 游戏库，含可验证的无头模式
+- `electron/src/renderer/{input,gamepad}.ts` 键盘与手柄汇入同一个 `InputManager`
+  （两个 source 各自记状态、取 OR，互不覆盖）；浏览器手柄走 Gamepad API，
+  原生手柄走 `electron/native/gamepad`（Swift + GameController，
+  `GCExtendedGamepad` / `GCMicroGamepad`），自动识别已连接的手柄并处理插拔
+- `wasm/` 同一份 Core 的 Emscripten 构建与 JS 绑定
 - 11 个教学 demo；15 个测试文件
 
 已修复：屏幕乱码 / 地面"空洞" / HUD 填充成一片 "0"
@@ -713,7 +721,7 @@ PPU sprite overflow bug         真机的那个著名 bug 没有复现
 
 ## macOS
 
-- [x] Metal renderer
+- [x] Electron renderer（canvas）
 
 ## Tools
 
