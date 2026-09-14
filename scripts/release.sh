@@ -278,7 +278,11 @@ else
         echo '   xattr -dr com.apple.quarantine "/Applications/FC Emulator.app"'
         echo '   ```'
         echo
-        echo "Apple Silicon（$ARCH），未做代码签名与公证。"
+        # ${ARCH} with braces, not $ARCH: bash 3.2's parser swallows the
+        # first byte of the full-width parenthesis and goes looking for a
+        # variable called "ARCH\xef", which is the unbound variable it then
+        # complains about.
+        echo "Apple Silicon（${ARCH}），未做代码签名与公证。"
         echo
         echo "## 自上一个版本以来的变化"
         echo
