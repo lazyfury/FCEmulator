@@ -1,0 +1,324 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# Cut a release from this machine, without GitHub Actions.
+#
+#   ./scripts/release.sh --dry-run      build and package, then stop: no
+#                                       commit, no push, no upload
+#   ./scripts/release.sh 0.2.0          bump, build, tag, push, upload
+#   ./scripts/release.sh                release whatever electron/package.json
+#                                       already says
+#   ./scripts/release.sh --draft        open the release as a draft; publish it
+#                                       by hand once the dmg has been tried
+#   ./scripts/release.sh --skip-build   reuse the .dmg/.zip already sitting in
+#                                       electron/release (a retry after the
+#                                       upload failed, say)
+#
+# What it does, in order, stopping at the first failure:
+#
+#   1. checks the ground: gh installed and logged in, on the release branch,
+#      work tree clean, and the tag free -- or already naming this exact commit,
+#      which is a half-finished release being resumed
+#   2. writes the version into electron/package.json
+#   3. ./wasm/build.sh                 the C++ core, as WebAssembly
+#      pnpm run build                  main process, renderer, gamepad helper
+#   4. electron-builder                .dmg and .zip into electron/release/
+#      shasum                           SHA256SUMS.txt beside them
+#   5. commit the version, tag it v<version>, push both
+#   6. gh release create               notes from the commits since the last
+#                                      tag, every artifact attached
+#
+# `--dry-run` does 1 through 4 for real -- the point is to find out whether the
+# packaging works -- and then stops. It writes the version to package.json so
+# the file names are right, and puts it back on the way out, so it cannot leave
+# the tree dirty.
+#
+# There is no signing here, on purpose: the dmg is ad-hoc and Gatekeeper will
+# quarantine it. The release notes tell the player to run `xattr` once, and the
+# README says the same. If that ever changes, it changes in `build.mac.identity`
+# in electron/package.json, not in this script.
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ELECTRON="$ROOT/electron"
+PKG="$ELECTRON/package.json"
+OUT="$ELECTRON/release"
+BRANCH="main"
+ARCH="arm64"
+
+VERSION=""
+DRAFT=0
+PRERELEASE=0
+DRY_RUN=0
+SKIP_WASM=0
+SKIP_BUILD=0
+ALLOW_DIRTY=0
+NOTES_FILE=""
+
+PKG_BACKUP=""
+NOTES=""
+
+cleanup() {
+    if [ -n "$PKG_BACKUP" ] && [ -f "$PKG_BACKUP" ]; then
+        cp "$PKG_BACKUP" "$PKG"
+        rm -f "$PKG_BACKUP"
+    fi
+    if [ -n "$NOTES" ] && [ -f "$NOTES" ]; then
+        rm -f "$NOTES"
+    fi
+    return 0
+}
+trap cleanup EXIT
+
+usage() {
+    awk 'NR > 1 && /^set -euo/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"
+    exit "${1:-0}"
+}
+
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+note() { printf '    %s\n' "$*"; }
+
+write_version() {
+    PKG="$PKG" VERSION="$VERSION" node -e '
+        const fs = require("fs");
+        const file = process.env.PKG;
+        const json = JSON.parse(fs.readFileSync(file, "utf8"));
+        json.version = process.env.VERSION;
+        fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
+    '
+}
+
+# --- arguments -------------------------------------------------------------
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)        usage 0 ;;
+        --draft)          DRAFT=1 ;;
+        --prerelease)     PRERELEASE=1 ;;
+        --dry-run)        DRY_RUN=1 ;;
+        --skip-wasm)      SKIP_WASM=1 ;;
+        --skip-build)     SKIP_BUILD=1; SKIP_WASM=1 ;;
+        --allow-dirty)    ALLOW_DIRTY=1 ;;
+        --arch)           ARCH="${2:-}"; [ -n "$ARCH" ] || die "--arch needs a value"; shift ;;
+        --branch)         BRANCH="${2:-}"; [ -n "$BRANCH" ] || die "--branch needs a value"; shift ;;
+        --notes)          NOTES_FILE="${2:-}"; [ -n "$NOTES_FILE" ] || die "--notes needs a file"; shift ;;
+        -*)               die "unknown option $1 (try --help)" ;;
+        *)                [ -z "$VERSION" ] || die "version given twice"; VERSION="$1" ;;
+    esac
+    shift
+done
+
+[ -f "$PKG" ] || die "not a checkout of this project: $PKG is missing"
+
+# --- preflight -------------------------------------------------------------
+step "Checking the ground"
+
+for tool in git node pnpm gh shasum; do
+    command -v "$tool" >/dev/null 2>&1 || die "$tool is not on PATH"
+done
+gh auth status >/dev/null 2>&1 || die "gh is not logged in; run: gh auth login"
+
+CURRENT_BRANCH="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+[ "$CURRENT_BRANCH" = "$BRANCH" ] || die "on '$CURRENT_BRANCH', expected '$BRANCH' (--branch to change)"
+
+if [ "$DRY_RUN" = 0 ]; then
+    if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
+        if [ "$ALLOW_DIRTY" = 1 ]; then
+            note "work tree is dirty, --allow-dirty given"
+        else
+            git -C "$ROOT" status --short >&2
+            die "work tree is dirty; commit or stash first (--allow-dirty to override)"
+        fi
+    fi
+fi
+
+CURRENT_VERSION="$(node -p "require('$PKG').version")"
+[ -n "$VERSION" ] || VERSION="$CURRENT_VERSION"
+# Keep the version a version: electron-builder reads it and the tag is built
+# from it, so a stray "v" or space ends up in a file name.
+VERSION="${VERSION#v}"
+printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+' \
+    || die "version '$VERSION' is not x.y.z"
+
+TAG="v$VERSION"
+TITLE="FC Emulator $VERSION"
+
+# Three states, and the difference between them is what makes a retry possible:
+# nothing tagged yet (the normal run), the tag already on this commit (an
+# earlier run died before or during the upload), and the tag somewhere else
+# (a version that was already released). Only the middle one is resumed.
+TAG_AT_HEAD=0
+if git -C "$ROOT" rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+    if [ "$(git -C "$ROOT" rev-parse "$TAG^{commit}")" = "$(git -C "$ROOT" rev-parse HEAD)" ]; then
+        TAG_AT_HEAD=1
+        note "$TAG already names HEAD; resuming that release"
+    else
+        die "tag $TAG already exists, and not at HEAD; pick another version"
+    fi
+fi
+if [ "$TAG_AT_HEAD" = 0 ] && git -C "$ROOT" ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+    die "tag $TAG already exists on origin; pick another version"
+fi
+
+RELEASE_EXISTS=0
+if gh release view "$TAG" >/dev/null 2>&1; then
+    [ "$TAG_AT_HEAD" = 1 ] || die "release $TAG already exists; delete it or pick another version"
+    RELEASE_EXISTS=1
+    note "release $TAG exists; its assets will be replaced"
+fi
+
+note "version : $CURRENT_VERSION -> $VERSION"
+note "tag     : $TAG"
+note "target  : $ARCH"
+[ "$DRAFT" = 1 ]      && note "draft   : yes"
+[ "$PRERELEASE" = 1 ] && note "pre     : yes"
+[ "$DRY_RUN" = 1 ]    && note "dry run : build and package only, nothing published"
+
+# --- version ---------------------------------------------------------------
+step "Writing the version into electron/package.json"
+if [ "$VERSION" = "$CURRENT_VERSION" ]; then
+    note "already $VERSION"
+else
+    if [ "$DRY_RUN" = 1 ]; then
+        # electron-builder reads the version from package.json and puts it in
+        # every file name, so a dry run has to write it too. It gets put back
+        # by the EXIT trap, because a dry run may not change the checkout.
+        PKG_BACKUP="$(mktemp -t fc-pkg-backup)"
+        cp "$PKG" "$PKG_BACKUP"
+        note "[dry] $CURRENT_VERSION -> $VERSION (put back at the end)"
+    else
+        note "$CURRENT_VERSION -> $VERSION"
+    fi
+    write_version
+fi
+
+# --- build -----------------------------------------------------------------
+if [ "$SKIP_BUILD" = 1 ]; then
+    step "Build: skipped (--skip-build)"
+    note "$OUT must already hold the artifacts for $VERSION"
+else
+    step "Building the core as WebAssembly"
+    if [ "$SKIP_WASM" = 1 ]; then
+        note "skipped (--skip-wasm); wasm/dist must already be current"
+    else
+        "$ROOT/wasm/build.sh"
+    fi
+
+    step "Building the front end"
+    ( cd "$ELECTRON" && pnpm install --frozen-lockfile && pnpm run build )
+
+    step "Packaging (.dmg and .zip)"
+    ( cd "$ELECTRON" && pnpm exec electron-builder --mac dmg zip "--$ARCH" )
+fi
+
+# --- artifacts -------------------------------------------------------------
+step "Collecting artifacts"
+
+[ -d "$OUT" ] || die "no $OUT; a build should have made it"
+
+ASSETS=()
+while IFS= read -r f; do
+    ASSETS+=("$f")
+done < <(find "$OUT" -maxdepth 1 -name "FC Emulator-$VERSION-*" \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' \) | sort -u)
+[ "${#ASSETS[@]}" -gt 0 ] || die "no artifacts for $VERSION in $OUT"
+
+: > "$OUT/SHA256SUMS.txt"
+for f in "${ASSETS[@]}"; do
+    ( cd "$OUT" && shasum -a 256 "$(basename "$f")" ) >> "$OUT/SHA256SUMS.txt"
+done
+ASSETS+=("$OUT/SHA256SUMS.txt")
+
+for f in ${ASSETS[@]+"${ASSETS[@]}"}; do
+    printf '    %s  (%s)\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+done
+
+if [ "$DRY_RUN" = 1 ]; then
+    step "Dry run: stopping before git"
+    note "would commit the version, tag $TAG, push $BRANCH and the tag"
+    note "would run: gh release create $TAG ... ${#ASSETS[@]} assets"
+    exit 0
+fi
+
+# --- git -------------------------------------------------------------------
+step "Committing and tagging"
+if [ "$TAG_AT_HEAD" = 1 ]; then
+    note "$TAG is already at HEAD; nothing to commit or tag"
+else
+    git -C "$ROOT" add "$PKG"
+    if git -C "$ROOT" diff --cached --quiet; then
+        note "nothing to commit; $VERSION was already the version"
+    else
+        git -C "$ROOT" commit -m "chore: release $TAG"
+    fi
+    git -C "$ROOT" tag -a "$TAG" -m "$TITLE"
+
+    note "pushing $BRANCH and $TAG"
+    git -C "$ROOT" push origin "$BRANCH"
+    git -C "$ROOT" push origin "$TAG"
+fi
+
+# --- notes -----------------------------------------------------------------
+step "Writing the release notes"
+NOTES="$(mktemp -t fc-release-notes)"
+
+if [ -n "$NOTES_FILE" ]; then
+    [ -f "$NOTES_FILE" ] || die "no notes file at $NOTES_FILE"
+    cat "$NOTES_FILE" > "$NOTES"
+else
+    PREV="$(git -C "$ROOT" describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
+    {
+        echo "## 安装"
+        echo
+        echo "1. 下载下面的 \`FC Emulator-$VERSION-$ARCH.dmg\`"
+        echo "2. 把 **FC Emulator** 拖进「应用程序」"
+        echo "3. 首次打开若提示「已损坏，无法打开」，执行一次："
+        echo
+        echo '   ```bash'
+        echo '   xattr -dr com.apple.quarantine "/Applications/FC Emulator.app"'
+        echo '   ```'
+        echo
+        echo "Apple Silicon（$ARCH），未做代码签名与公证。"
+        echo
+        echo "## 自上一个版本以来的变化"
+        echo
+        if [ -n "$PREV" ]; then
+            echo "自 \`$PREV\` 以来："
+            echo
+            git -C "$ROOT" log --no-merges --pretty='- %s (%h)' "$PREV..$TAG"
+        else
+            echo "首个版本。"
+            echo
+            git -C "$ROOT" log --no-merges --pretty='- %s (%h)' -20 "$TAG"
+        fi
+        echo
+        echo "## 校验"
+        echo
+        echo '```bash'
+        echo 'shasum -a 256 -c SHA256SUMS.txt'
+        echo '```'
+        echo
+        echo "仓库里不包含任何 ROM；请使用你合法拥有的游戏文件。"
+    } > "$NOTES"
+fi
+note "$NOTES"
+
+# --- upload ----------------------------------------------------------------
+step "Creating the GitHub release"
+
+GH_ARGS=(--title "$TITLE" --notes-file "$NOTES")
+[ "$DRAFT" = 1 ]      && GH_ARGS+=(--draft)
+[ "$PRERELEASE" = 1 ] && GH_ARGS+=(--prerelease)
+
+if [ "$RELEASE_EXISTS" = 1 ]; then
+    note "release $TAG exists; uploading assets over it"
+    gh release upload "$TAG" "${ASSETS[@]}" --clobber
+else
+    gh release create "$TAG" "${GH_ARGS[@]}" "${ASSETS[@]}"
+fi
+
+URL="$(gh release view "$TAG" --json url -q .url)"
+printf '\n\033[1m%s\033[0m\n' "Released: $URL"
+if [ "$DRAFT" = 1 ]; then
+    echo "It is a draft: publish it from that page when the dmg checks out."
+fi
