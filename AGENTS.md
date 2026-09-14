@@ -128,7 +128,7 @@ Frontend
 
 负责：CPU / Bus / Memory / Cartridge / Mapper / PPU / APU / Controller
 
-## macOS Frontend
+## Electron 前端
 
 技术：`TypeScript` `Electron` `WebAssembly` `Canvas` `Web Audio`
 
@@ -226,7 +226,7 @@ RAM / PPU / APU / Controller / Cartridge
 
 实现 Pulse / Triangle / Noise
 
-## Phase 7 — macOS Frontend
+## Phase 7 — Electron 前端
 
 ```
 Framebuffer → WebAssembly 线性内存 → Canvas → GPU → 屏幕
@@ -396,8 +396,10 @@ Unit Test → Instruction Test → Timing Test → Integration Test
   canvas 出画面，Web Audio 出声，SQLite 游戏库，含可验证的无头模式
 - `electron/src/renderer/{input,gamepad}.ts` 键盘与手柄汇入同一个 `InputManager`
   （两个 source 各自记状态、取 OR，互不覆盖）；浏览器手柄走 Gamepad API，
-  原生手柄走 `electron/native/gamepad`（Swift + GameController，
-  `GCExtendedGamepad` / `GCMicroGamepad`），自动识别已连接的手柄并处理插拔
+  原生手柄走独立进程助手：macOS 是 `electron/native/gamepad`（Swift +
+  GameController，`GCExtendedGamepad` / `GCMicroGamepad`），Windows 是
+  `electron/native/gamepad-cpp`（C++ + XInput）；两者写同一份 JSON Lines
+  协议，自动识别已连接的手柄并处理插拔
 - `wasm/` 同一份 Core 的 Emscripten 构建与 JS 绑定
 - 11 个教学 demo；15 个测试文件
 

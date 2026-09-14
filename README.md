@@ -60,7 +60,7 @@ pnpm run dev                    # 开发窗口；pnpm start 跑生产构建
 
 ## 当前状态
 
-**Phase 7 完成** — macOS 前端
+**Phase 7 完成** — Electron 前端
 
 - [x] CMake 4.4 + C++20 + Ninja
 - [x] GoogleTest 1.18 单元测试（429 个测试全通过）
@@ -245,7 +245,8 @@ FCEmulator/
 ├── wasm/               同一份 Core 编译成 WebAssembly 的脚本与绑定
 ├── electron/           Electron + TypeScript 前端
 │   ├── src/            主进程 / preload / 渲染进程
-│   ├── native/         原生手柄助手（Swift + GameController）
+│   ├── native/         手柄助手：macOS 用 Swift + GameController（gamepad/），
+│   │                   Windows 用 C++ + XInput（gamepad-cpp/），协议一致
 │   └── test/           前端的 Node 测试
 ├── tools/               教学 demo 与命令行工具
 ├── scripts/             本地发布脚本（release.sh）
@@ -264,7 +265,7 @@ FCEmulator/
 
 ## 设计原则
 
-1. **核心与 UI 分离** — `src/core` 是纯 C++，不知道窗口、Metal 或 Electron 存在
+1. **核心与 UI 分离** — `src/core` 是纯 C++，不知道窗口、Canvas 或 Electron 存在
 2. **禁止 CPU 直接访问 PPU** — 一切经过 Bus
 3. **一切核心模块必须有测试**
 4. **每个阶段先理解，再实现**
@@ -285,12 +286,5 @@ Phase 3   Cartridge / Mapper   [done]
 Phase 4   PPU                  [done]
 Phase 5   Controller           [done]
 Phase 6   APU                  [done]
-Phase 7   macOS 前端 (Electron)   [done] <-- 全部完成
-Phase 1   6502 CPU
-Phase 2   NES Bus
-Phase 3   Cartridge / Mapper
-Phase 4   PPU
-Phase 5   Controller
-Phase 6   APU
-Phase 7   macOS 前端 (Electron)
+Phase 7   Electron 前端         [done] <-- WebAssembly + Canvas + Web Audio
 ```

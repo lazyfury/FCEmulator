@@ -1,6 +1,6 @@
 # 系统架构 architecture/
 
-> 状态：**Phase 2 和 Phase 7 已完成**（总线架构 + macOS 前端）
+> 状态：**Phase 2 和 Phase 7 已完成**（总线架构 + Electron 前端）
 
 ## 目标结构
 
