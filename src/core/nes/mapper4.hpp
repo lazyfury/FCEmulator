@@ -295,6 +295,18 @@ protected:
         return map_chr_bank(slot, chr_slot_[slot & 0x07u]);
     }
 
+    /// One byte of an 8KB PRG bank, for a subclass that maps a window itself
+    /// rather than through map_prg_bank().
+    [[nodiscard]] u8 read_prg_bank(std::size_t bank, u16 address) const
+    {
+        if (prg_.empty()) {
+            return 0;
+        }
+        const std::size_t banks = prg_.size() / 0x2000u;
+        const std::size_t b = (banks == 0u) ? 0u : bank % banks;
+        return prg_[b * 0x2000u + static_cast<std::size_t>(address & 0x1FFFu)];
+    }
+
     void write_bank_data(u8 value)
     {
         const u8 reg = static_cast<u8>(bank_select_ & 0x07u);
