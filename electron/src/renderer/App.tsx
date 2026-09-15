@@ -59,7 +59,10 @@ import { usePixelScale } from './usePixelScale';
 import { bootLog } from '../shared/boot';
 
 import type { CSSProperties } from 'react';
-import { DEFAULT_INPUT_SETTINGS, type Cheat, type InputSettings, type LibraryState, type Preferences } from '../shared/api';
+import {
+    DEFAULT_INPUT_SETTINGS, type Cheat, type CoreSelection, type InputSettings,
+    type LibraryState, type Preferences,
+} from '../shared/api';
 
 /** The four save slots, in the order the keyboard numbers them. */
 const SAVE_COMMANDS: readonly CommandName[] = ['quicksave', 'save1', 'save2', 'save3'];
@@ -93,6 +96,13 @@ export default function App() {
     // effect below for why it is not in localStorage any more.
     const [scanlines, setScanlines] = useState(false);
     const [input, setInput] = useState<InputSettings>(DEFAULT_INPUT_SETTINGS);
+    // The main process read config.json before the window existed and handed
+    // the selection down the argument chain, so this is right on the first
+    // render -- which matters for a `--rom` run, whose machine is built
+    // eagerly and must not start on the default core and then swap. See
+    // `coreSelection` on the bridge. The asynchronous preferences call below
+    // carries the same value for a change made while the app is running.
+    const [cores, setCores] = useState<CoreSelection>(window.fc.coreSelection);
     const [cheats, setCheats] = useState<Cheat[]>([]);
     const [notice, setNotice] = useState<string | null>(null);
 
@@ -144,9 +154,10 @@ export default function App() {
         flash(asCover ? '已更新封面' : '已保存截图');
     }, [flash]);
 
-    const { status, loadRom, unload, command, poke, peek } = useEmulator(canvasRef, {
+    const { status, loadRom, reload, unload, command, poke, peek } = useEmulator(canvasRef, {
         input,
         cheats,
+        cores,
         onScreenshot: (png, asCover) => void saveScreenshot(png, asCover),
     });
 
@@ -213,6 +224,7 @@ export default function App() {
                     setScanlines(true);
                 }
                 setInput(preferences.input);
+                setCores(preferences.cores);
             })
             .catch((error: unknown) => {
                 bootLog('renderer', 'preferences FAILED', String(error));
@@ -240,6 +252,36 @@ export default function App() {
         setInput(next);
         void window.fc.saveInputSettings(next);
     }, []);
+
+    /**
+     * Change which core runs a console, and remember it.
+     *
+     * The machine is not rebuilt here. It is an effect on `cores` that does
+     * it, and it has to be: `reload` reads the selection out of the handlers
+     * ref, which is only updated once this render has been committed, so a
+     * call from inside this callback would read the old choice and find
+     * nothing to do. The effect also catches the other way the selection
+     * changes -- the saved preference arriving after start up, which is a race
+     * with the machine a `--rom` run builds eagerly.
+     */
+    const changeCores = useCallback((next: CoreSelection): void => {
+        setCores(next);
+        void window.fc.saveCoreSelection(next);
+    }, []);
+
+    // Rebuild the running machine when the core choice changes.
+    //
+    // Runs on mount too, and `reload` answers that with "the core is
+    // unchanged" and does nothing. When a selection does differ from the core
+    // in use, the cartridge in the slot is loaded into a freshly built
+    // machine, without counting as a play. `reload` goes through a ref because
+    // the handle hands out a fresh function every render, and depending on it
+    // would run this effect every render rather than every choice.
+    const reloadRef = useRef(reload);
+    reloadRef.current = reload;
+    useEffect(() => {
+        void reloadRef.current();
+    }, [cores]);
 
     // Cheats belong to one cartridge, so they are read when the cartridge
     // changes and written back under its path. Loading one game while another
@@ -488,6 +530,8 @@ export default function App() {
                     onScanlines={changeScanlines}
                     input={input}
                     onInput={changeInput}
+                    cores={cores}
+                    onCores={changeCores}
                     gamepadEnabled={window.fc.gamepadEnabled}
                     gamepadNative={window.fc.gamepadNative}
                     library={library}

@@ -28,6 +28,8 @@
 |------|------|
 | [bus.md](bus.md) | 为什么需要 Bus、Device 接口、依赖方向、测试替身 |
 | [frontend.md](frontend.md) | C 接口、Canvas 渲染、音频环形缓冲、主循环 |
+| [libretro-migration.md](libretro-migration.md) | 以 libretro 为准的迁移、多核心（mGBA / Mesen）接入 |
+| [mame-integration.md](mame-integration.md) | 调研：MAME 能不能接进来、走哪条路、代价是什么（未实施） |
 
 ### 当前实际结构
 

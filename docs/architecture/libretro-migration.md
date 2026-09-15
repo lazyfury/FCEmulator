@@ -440,6 +440,46 @@ mGBA **没有**上游 wasm 构建，EmulatorJS 的预编译产物又是它自己
 **未做**：卡带电池存档（`.srm`）落盘。存档槽/倒带用的是 save state，已在；
 但 Pokémon 自己的存档需要把 `RETRO_MEMORY_SAVE_RAM` 写到磁盘并在加载时读回。
 
+### 8.5 第二个 NES 核心：Mesen，与「同机种多核心」
+
+这是第一次**同一个机种有两个核心**，也是把 §8.1 的「系统注册表」真正用起来的一次。
+
+- `wasm/mesen/build.sh`：拉 `libretro/Mesen`（旧 Mesen 1.x，C++11，自带 `platform=emscripten`
+  目标），编译成 `mesen_libretro.wasm`。与 mGBA 用同一个 `wasm/libretro.mjs` 驱动，
+  前端不知道自己在跑哪个核心。三处需要说明的改动：
+  - **内存里的卡带**：Mesen 只从 `GET_GAME_INFO_EXT` 拿内存数据，否则按路径
+    打开文件；wasm 没有文件系统，所以在 `libretro.cpp` 的回退分支里直接用
+    `retro_game_info->data/size`。
+  - **C++ 异常**：Mesen 的 loader 用 `throw`/`catch` 表达「这张卡带读不了」；
+    Emscripten 默认关异常，会把 `throw` 变成整个模块 abort。给它加
+    `-fexceptions`，链接加 `-sDISABLE_EXCEPTION_CATCHING=0`。
+  - **文件系统**：与 fc/mGBA 不同，**不能**用 `-sFILESYSTEM=0`。Mesen 用 `ifstream`
+    探 `disksys.rom` / `MesenDB.txt` / HdPacks；没有文件系统时这些探测把空流报成
+    good、`tellg()` 回 -1，Mesen 于是 `resize(0xFFFFFFFF)` 抛 `std::length_error`。
+    保留默认的 MEMFS，探测就以干净的失败告终。
+- `electron/src/shared/api.ts` 新增 `SystemId` / `CoreId` / `CoreSelection`，以及
+  两边共用的 `CORES_BY_SYSTEM`（哪个机种有哪些核心、默认是谁）。main 进程用它
+  校验写盘的选择；renderer 的 `systems.ts` 用它给出模块名与采样率。
+  **顺序即默认**：`nes: ['mesen', 'fc']`，所以 NES 默认跑 Mesen，内置 FC 核心
+  是一次点击之外的第二个选项（它带 `fc_libretro_get_ext` 自定义扩展 —— 内存
+  peek/poke、PC/周期读数，Mesen 没有这些，相关 UI 自动降级）。
+- 设置界面「模拟器核心」按机种列出核心；切换核心时 `useEmulator.reload()` 拆掉
+  当前机器、用新核心把同一张卡带重新装进去（不计游玩次数 —— 换的是硬件，不是
+  又玩了一次）。
+- `electron/verify.sh` 的比对基准是原生 `build/fc_headless`（即内置 FC 核心），
+  而 NES 默认已是 Mesen；脚本现在用一个临时的 `--user-data-dir` 把核心钉成
+  `fc`，既保证拿同一台机器比，也让开发者自己的 config.json 不影响这个测试。
+- 命令行 `--rom` 是 eager 建机器，早于异步 preferences。主进程在建窗口前已经
+  同步读过 config.json，所以把选择用 `--fc-cores=`（与 `--fc-eager` 同一条
+  `additionalArguments` 链）递给渲染进程，首帧就是对的；异步 preferences 只管
+  运行中的修改。
+- 界面上做得出来的验证：`--user-data-dir` 指向一份写着 `{"cores":{"nes":"mesen"}}`
+  的 config.json，`--selftest 120` 的画面哈希与音频样本数都与默认 fc 不同
+  （48000 Hz 对 44100 Hz），且 `error: none`；`node wasm/mesen_test.mjs <rom>`
+  独立验证 ABI/画面/声音/存档往返。FC 的 electron parity 仍逐像素逐采样一致。
+
+**未做**：Mesen 的 `RETRO_MEMORY_SAVE_RAM`（电池存档）落盘，与 mGBA 同。
+
 ---
 
 ## 9. 风险与决策点

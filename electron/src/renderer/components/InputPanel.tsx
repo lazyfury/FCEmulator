@@ -147,8 +147,10 @@ function BindingRow({ binding, onRebind }: {
     );
 }
 
-/** A small segmented control: the buttons that pick one of a few values. */
-function Segment<T extends string | number>({ value, options, onChange }: {
+/** A small segmented control: the buttons that pick one of a few values.
+ *  Exported because the settings screen uses the same control for the
+ *  emulator-core choice, and two implementations would drift. */
+export function Segment<T extends string | number>({ value, options, onChange }: {
     value: T;
     options: { value: T; label: string }[];
     onChange: (next: T) => void;

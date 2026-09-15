@@ -97,6 +97,16 @@ fi
 SCRATCH="$ELECTRON/.verify"
 rm -rf "$SCRATCH"
 
+# The reference is build/fc_headless -- the home-grown FC core -- so this run
+# must use that core too, even though Mesen is the default NES core. A
+# throwaway user data directory with the FC core pinned does that, and it also
+# means a developer's own config.json (which could name any core) cannot change
+# what this test compares. It lives outside the repository so there is nothing
+# to clean up but the directory itself.
+USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/fc-emulator-verify.XXXXXX")"
+trap 'rm -rf "$USERDATA"' EXIT
+printf '{ "cores": { "nes": "fc" } }\n' > "$USERDATA/config.json"
+
 echo "=== electron parity check: ${#ROMS[@]} ROM(s), ${#scenarios[@]} scenario(s) ==="
 echo "    native   : build/fc_headless        (the C API, no JavaScript at all)"
 echo "    electron : the application itself   (hashes the canvas pixels and the APU samples)"
@@ -152,7 +162,8 @@ for scenario in "${scenarios[@]}"; do
         # the native helper can keep the process tree alive after the window
         # closes -- which is exactly what a script capturing stdout must not
         # be left waiting on.
-        output="$(cd "$ELECTRON" && pnpm exec electron . --rom "$path" --selftest "$frames" \
+        output="$(cd "$ELECTRON" && pnpm exec electron --user-data-dir="$USERDATA" . \
+            --rom "$path" --selftest "$frames" \
             --script "$script" --snapshots "$snapshots" --no-gamepad 2>/dev/null)"
         electron_hashes="$(printf '%s\n' "$output" | sed -n 's/^hash //p')"
         electron_audio_hash="$(printf '%s\n' "$output" | awk '/^audio [0-9a-f]+$/ { print $2 }' | head -1)"

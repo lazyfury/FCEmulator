@@ -46,3 +46,9 @@ tests/data/testroms/
 
 # mGBA source + build tree (fetched by wasm/mgba/build.sh; ~94MB)
 /build-mgba/
+
+# Mesen source + build tree (fetched by wasm/mesen/build.sh; ~100MB)
+/build-mesen/
+
+# MAME research checkout (see docs/architecture/mame-integration.md; ~150MB)
+/build-mame/

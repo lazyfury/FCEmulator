@@ -18,8 +18,8 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 
 import {
     IpcChannel,
-    type BootRom, type Cheat, type FcBridge, type GamepadReading, type InputSettings,
-    type LibraryState, type Preferences,
+    type BootRom, type Cheat, type CoreSelection, type FcBridge, type GamepadReading,
+    type InputSettings, type LibraryState, type Preferences,
 } from '../shared/api';
 import { bootLog, setBootOrigin } from '../shared/boot';
 
@@ -41,6 +41,28 @@ function bootTimestamp(): number {
 }
 
 setBootOrigin(bootTimestamp());
+
+/**
+ * The core selection the main process read from config.json before the window
+ * existed, as it passed it down. Parsed defensively: a malformed value costs
+ * the selection, not the window.
+ */
+function bootCoreSelection(): CoreSelection
+{
+    const prefixed = process.argv.find((argument) => argument.startsWith('--fc-cores='));
+    if (prefixed === undefined) {
+        return {};
+    }
+    try {
+        const parsed: unknown = JSON.parse(
+            decodeURIComponent(prefixed.slice('--fc-cores='.length)),
+        );
+        return parsed !== null && typeof parsed === 'object' ? parsed as CoreSelection : {};
+    } catch {
+        return {};
+    }
+}
+
 bootLog('preload', 'script started');
 
 /**
@@ -100,6 +122,9 @@ const bridge: FcBridge = {
     saveInputSettings: (settings: InputSettings) =>
         ipcRenderer.invoke(IpcChannel.WriteInputSettings, settings) as Promise<void>,
 
+    saveCoreSelection: (selection: CoreSelection) =>
+        ipcRenderer.invoke(IpcChannel.WriteCoreSelection, selection) as Promise<void>,
+
     readCheats: (romPath) =>
         ipcRenderer.invoke(IpcChannel.ReadCheats, romPath) as Promise<Cheat[]>,
 
@@ -122,6 +147,7 @@ const bridge: FcBridge = {
     // IPC keeps the renderer from having to wait for an answer before it can
     // decide whether to start running frames.
     bootT0: bootTimestamp(),
+    coreSelection: bootCoreSelection(),
     selftestOnly: process.argv.includes('--fc-selftest'),
     eager: process.argv.includes('--fc-eager'),
     gamepadEnabled: process.argv.includes('--fc-gamepad'),

@@ -30,6 +30,7 @@ macOS 上的 NES / FC 模拟器。**打开就能玩**：把 `.nes` 拖进窗口�
 | ✨ **金手指** | 按地址写入/锁定一个字节，实时显示当前值 —— 例如马里奥的命数就在 `$075A`，按游戏分别保存 |
 | 🖼 **画面** | 整数倍像素缩放（游戏像素永远是整数个物理像素）、扫描线滤镜、F11 全屏 |
 | 🔊 **声音** | 完整的五声道 APU，经 Web Audio 低延迟输出，掉帧与欠载都会被计数 |
+| 🧩 **可换核心** | 同一个机种可以选不同的模拟器核心。NES **默认用 [Mesen](https://github.com/libretro/Mesen)**，也可以切回项目自己的 FC 核心（带内存查看 / 金手指调试），在「设置 → 模拟器核心」里切换；换核心会把当前游戏在新硬件上重新开始 |
 | 📼 **兼容性** | 35 个 mapper（NROM、MMC1、UxROM、CNROM、MMC3、MMC2/4、VRC2/4、Namco 163、Sunsoft-4、多合一……），429 个单元测试 |
 
 ### 默认按键
@@ -52,9 +53,17 @@ macOS 上的 NES / FC 模拟器。**打开就能玩**：把 `.nes` 拖进窗口�
 brew install cmake ninja googletest
 
 ./wasm/build.sh                 # 把 C++ Core 编译成 WebAssembly
+./wasm/mgba/build.sh            # 可选：Game Boy / GBA 核心（首次会 clone 并编译，几分钟）
+./wasm/mesen/build.sh           # 可选：第二个 NES 核心（同上）
 cd electron && pnpm install
 pnpm run dev                    # 开发窗口；pnpm start 跑生产构建
 ```
+
+`wasm/mgba` 与 `wasm/mesen` 是独立的脚本而不是 `wasm/build.sh` 的一部分：
+它们是第三方项目，首次要联网 clone、编译要几分钟，产物分别落在
+`wasm/dist/mgba_libretro.*` 和 `wasm/dist/mesen_libretro.*`。
+只跑 `./wasm/build.sh` 时，NES 用内置核心，`.gba/.gb/.gbc` 与 Mesen 选项会
+因为模块不存在而加载失败 —— 想用哪个就编哪个。
 
 ---
 

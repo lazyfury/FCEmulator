@@ -92,9 +92,11 @@ export const Device = Object.freeze({ NONE: 0, JOYPAD: 1 });
 // -- environment commands, only the ones this front end answers --------------
 
 const ENV_GET_CAN_DUPE = 3;
+const ENV_GET_SYSTEM_DIRECTORY = 9;
 const ENV_SET_PIXEL_FORMAT = 10;
 const ENV_SET_INPUT_DESCRIPTORS = 11;
 const ENV_GET_LOG_INTERFACE = 27;
+const ENV_GET_SAVE_DIRECTORY = 31;
 const ENV_SET_CONTROLLER_INFO = 35;
 const ENV_SET_MEMORY_MAPS = 36 | 0x10000;   // EXPERIMENTAL
 
@@ -184,6 +186,17 @@ export async function createCoreHost(module)
     }
     const mod = module;
 
+    // A directory the core can name, even though there is no filesystem.
+    // mGBA does not ask. Mesen refuses to load a cartridge unless a system
+    // directory comes back non-NULL, and treats the empty string as "the
+    // front end never set one" and throws the first time it wants to open
+    // MesenDB.txt. The root is a directory as far as the ABI is concerned;
+    // with no filesystem every open below it fails cleanly. The bytes live for
+    // the lifetime of the host.
+    const rootDirectory = mod._malloc(2);
+    mod.HEAPU8[rootDirectory] = 0x2f;   // '/'
+    mod.HEAPU8[rootDirectory + 1] = 0;
+
     // -- what the callbacks record ------------------------------------------
 
     let pixelFormat = null;
@@ -239,6 +252,14 @@ export async function createCoreHost(module)
 
         case ENV_GET_CAN_DUPE:
             mod.HEAPU8[data] = 1;
+            return 1;
+
+        case ENV_GET_SYSTEM_DIRECTORY:
+        case ENV_GET_SAVE_DIRECTORY:
+            // The core writes a `const char*` out through the pointer it is
+            // handed. One shared root, allocated once; nothing is ever written
+            // under it, because there is no filesystem to write to.
+            mod.HEAPU32[data >> 2] = rootDirectory;
             return 1;
 
         case ENV_SET_INPUT_DESCRIPTORS:
@@ -297,14 +318,21 @@ export async function createCoreHost(module)
     }, 'iiiii');
 
     // -- registration, in the order libretro requires -----------------------
+    //
+    // The environment goes first, then retro_init, then the four callbacks.
+    // Mesen creates its Console inside retro_init, and retro_set_video_refresh
+    // stores the callback on that Console -- registering first is silently
+    // forgotten when init replaces it, and the core then runs frames nobody
+    // sees. The other cores here tolerate either order, and this is the order
+    // the ABI describes.
 
     mod._retro_set_environment(environment);
+    mod._retro_init();
     mod._retro_set_video_refresh(videoRefresh);
     mod._retro_set_audio_sample(audioSample);
     mod._retro_set_audio_sample_batch(audioSampleBatch);
     mod._retro_set_input_poll(inputPoll);
     mod._retro_set_input_state(inputState);
-    mod._retro_init();
 
     // -- a scratch struct, reused so a call allocates nothing ---------------
 
@@ -403,7 +431,18 @@ export async function createCoreHost(module)
             mod.HEAPU32[(info >> 2) + 3] = 0;
 
             mod.HEAPU8.set(bytes, data);
-            isLoaded = mod._retro_load_game(info) !== 0;
+
+            // A core that answers a cartridge it cannot parse with a C++
+            // exception rather than `false` would otherwise take the renderer
+            // down with it: wasm exceptions surface in JavaScript. Mesen
+            // catches its own, and this is the net under the ones that do not.
+            let thrownError = null;
+            try {
+                isLoaded = mod._retro_load_game(info) !== 0;
+            } catch (thrown) {
+                isLoaded = false;
+                thrownError = thrown instanceof Error ? thrown.message : String(thrown);
+            }
             if (isLoaded) {
                 frameCount = 0;
                 lastError = '';
@@ -418,7 +457,7 @@ export async function createCoreHost(module)
                 // the extension, and without it the player only sees the
                 // generic line. A core from another project has no extension
                 // and keeps the generic message.
-                lastError = 'the core did not accept this cartridge';
+                lastError = thrownError ?? 'the core did not accept this cartridge';
                 if (mod._fc_ext_last_error !== undefined) {
                     const reason = mod.UTF8ToString(mod._fc_ext_last_error());
                     if (reason) {

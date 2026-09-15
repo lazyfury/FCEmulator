@@ -36,7 +36,9 @@ import { chooseCore, sameCore, type CoreChoice } from './systems';
 
 import { AudioOutput } from './audio/output';
 import { bootLog } from '../shared/boot';
-import { DEFAULT_INPUT_SETTINGS, type Cheat, type InputSettings } from '../shared/api';
+import {
+    DEFAULT_INPUT_SETTINGS, type Cheat, type CoreSelection, type InputSettings,
+} from '../shared/api';
 import { resolveBindings, padPort } from './bindings';
 import { INITIAL_STATUS, unloaded, type EngineStatus } from './engineStatus';
 import {
@@ -66,6 +68,14 @@ export interface EmulatorHandle {
     loadRom(path: string): Promise<boolean>;
     /** Take the cartridge out and stop running. */
     unload(): void;
+    /**
+     * Power the console back on with the cartridge already in the slot.
+     *
+     * This is how a core change reaches the machine: `loadRom` would count a
+     * play, but swapping the emulator is not playing the game again. With no
+     * cartridge in the slot it does nothing.
+     */
+    reload(): void;
     /**
      * The same commands the keyboard sends: pause, reset, screenshot, save
      * and load.
@@ -100,6 +110,16 @@ export interface EmulatorHandlers {
      */
     input?: InputSettings;
     /**
+     * The core the player chose for each console.
+     *
+     * Read through the ref at load time, like the input settings, so that a
+     * change made on the settings screen is picked up by the next load -- and
+     * by `reload`, which is what a change made mid-game goes through. The
+     * machine is not rebuilt just because this object changed; the caller
+     * calls reload() when it wants that.
+     */
+    cores?: CoreSelection;
+    /**
      * A PNG of the picture, when the player takes a screenshot.
      *
      * `asCover` is true for Shift+F12 and the 更新封面 button: the picture is
@@ -130,6 +150,8 @@ export function useEmulator(
     // dependency array would otherwise reload the emulator on every render.
     const actions = useRef<{
         loadRom: (path: string) => Promise<boolean>;
+        loadInto: (path: string, countPlay: boolean) => Promise<boolean>;
+        reload: () => Promise<boolean>;
         unload: () => void;
         command: (command: CommandName) => void;
         poke: (address: number, value: number) => void;
@@ -137,6 +159,8 @@ export function useEmulator(
         applyCheats: () => void;
     }>({
         loadRom: async () => false,
+        loadInto: async () => false,
+        reload: async () => false,
         unload: () => undefined,
         command: () => undefined,
         poke: () => undefined,
@@ -298,7 +322,7 @@ export function useEmulator(
                     ? `${Date.now() - bootRomStarted}ms, no --rom`
                     : `${Date.now() - bootRomStarted}ms, ${boot.path}`,
             );
-            const core = pendingCore ?? chooseCore(boot?.path ?? '');
+            const core = pendingCore ?? chooseCore(boot?.path ?? '', outward.current.cores);
             coreInUse = core;
             bootLog('renderer', 'core', `${core.id} (${core.module}), ${core.sampleRate} Hz`);
 
@@ -353,6 +377,9 @@ export function useEmulator(
             // over the top of this, and a game is loaded when the player picks
             // one -- or straight away, if the command line named one.
             let loaded = false;
+            // The cartridge in the slot, so a rebuild can put it back. Only
+            // meaningful while `loaded` is true.
+            let loadedPath: string | null = null;
 
             // Now that there is a machine, point the input manager at it. The
             // keyboard and the pad were set up when the effect ran; they start
@@ -635,7 +662,7 @@ export function useEmulator(
              * that changing games does not leave the previous one's sound
              * queued up or its keys held down.
              */
-            const applyRom = (bytes: Uint8Array, path: string): boolean => {
+            const applyRom = (bytes: Uint8Array, path: string, countPlay = true): boolean => {
                 bootLog('renderer', 'applyRom begin', path);
                 if (!engine.loadRom(bytes)) {
                     flash(`could not load ${path}: ${engine.lastError}`);
@@ -670,6 +697,7 @@ export function useEmulator(
                 bootLog('renderer', 'applyRom rewind', rewind.available ? 'on' : 'off');
 
                 loaded = true;
+                loadedPath = path;
                 paused = false;
                 // A rewind key held while the library was on screen must not
                 // carry into the game that just started.
@@ -702,7 +730,9 @@ export function useEmulator(
                     romSummary: engine.romSummary,
                 }));
 
-                void window.fc.notePlayed(path);
+                if (countPlay) {
+                    void window.fc.notePlayed(path);
+                }
                 // And which cartridge this is, so that saving and loading know
                 // where the slots belong. The main process cannot work it out
                 // from the command line alone -- a game picked out of the
@@ -712,39 +742,71 @@ export function useEmulator(
             };
 
             /** Read the bytes and put them in the machine that is already built. */
-            const loadRomIntoMachine = async (path: string): Promise<boolean> => {
+            const loadRomIntoMachine = async (path: string, countPlay = true): Promise<boolean> => {
                 const bytes = await window.fc.readRom(path);
                 if (bytes === null) {
                     flash('could not read that game');
                     return false;
                 }
-                return applyRom(bytes, path);
+                return applyRom(bytes, path, countPlay);
             };
 
             /**
-             * Load a game, building the right machine for it first if needed.
+             * Load a game, building the machine for it first if needed.
              *
              * Every entry point goes through here -- a click in the library,
-             * the game named on the command line, a test -- rather than only
-             * the lazy path, because the machine may already exist for another
-             * console: the application started with a NES game, the player
-             * then picks a Game Boy one. Handing Game Boy bytes to a NES core
-             * is what "the core did not accept this cartridge" looks like.
+             * the game named on the command line, a test, and a core change --
+             * rather than only the lazy path, because the machine may already
+             * exist for another console or another core: the application
+             * started with a NES game on the default core, the player then
+             * picks a Game Boy one, or asks for Mesen. Handing bytes to the
+             * wrong core is what "the core did not accept this cartridge"
+             * looks like.
+             *
+             * `countPlay` is false for a reload: swapping the emulator under a
+             * running game is powering the console off and on, not playing the
+             * game again.
              */
-            const loadRom = async (path: string): Promise<boolean> => {
-                const wanted = chooseCore(path);
+            const loadInto = async (path: string, countPlay: boolean): Promise<boolean> => {
+                const wanted = chooseCore(path, outward.current.cores);
                 if (!sameCore(coreInUse, wanted)) {
                     await stopMachine();
                     await startOnce(wanted);
-                    // start() has just replaced actions.current.loadRom with a
-                    // loader for the machine it built; let that one do the work.
-                    return actions.current.loadRom(path);
+                    // start() has just replaced actions.current with the
+                    // loaders for the machine it built; let that one do the
+                    // work, rather than handing bytes to the dead engine this
+                    // closure captured.
+                    return actions.current.loadInto(path, countPlay);
                 }
-                return loadRomIntoMachine(path);
+                return loadRomIntoMachine(path, countPlay);
+            };
+
+            const loadRom = (path: string): Promise<boolean> => loadInto(path, true);
+
+            /**
+             * Put the cartridge already in the slot into a freshly built
+             * machine, on whatever core is now preferred.
+             *
+             * The player changing the core while a game is running is the one
+             * caller. With no cartridge there is nothing to restart.
+             */
+            const reload = (): Promise<boolean> => {
+                if (!loaded || loadedPath === null) {
+                    return Promise.resolve(false);
+                }
+                const wanted = chooseCore(loadedPath, outward.current.cores);
+                if (sameCore(coreInUse, wanted)) {
+                    // Nothing changed -- the caller's effect also runs on the
+                    // first render, and a power cycle nobody asked for would
+                    // be a visible stutter at start up.
+                    return Promise.resolve(false);
+                }
+                return loadInto(loadedPath, false);
             };
 
             const unload = (): void => {
                 loaded = false;
+                loadedPath = null;
                 paused = false;
                 rewinding = false;
                 rewind?.destroy();
@@ -762,7 +824,10 @@ export function useEmulator(
                 setStatus(unloaded);
             };
 
-            actions.current = { ...actions.current, loadRom, unload, command: (c) => commandHandler?.(c) };
+            actions.current = {
+                ...actions.current, loadRom, loadInto, reload, unload,
+                command: (c) => commandHandler?.(c),
+            };
 
             /** A short note in the status line, gone again in two seconds. */
             const flash = (text: string): void => {
@@ -1158,7 +1223,7 @@ export function useEmulator(
                 loadRom: async (path: string) => {
                     // The machine may not exist yet. Build the right one for
                     // this game; the loader it installs does the load itself.
-                    await startOnce(chooseCore(path));
+                    await startOnce(chooseCore(path, outward.current.cores));
                     return actions.current.loadRom(path);
                 },
                 unload: () => undefined,
@@ -1201,6 +1266,7 @@ export function useEmulator(
     return {
         status,
         loadRom: (path: string) => actions.current.loadRom(path),
+        reload: () => actions.current.reload(),
         unload: () => actions.current.unload(),
         command: (command: CommandName) => actions.current.command(command),
         poke: (address: number, value: number) => actions.current.poke(address, value),

@@ -16,8 +16,9 @@ import type { ReactNode } from 'react';
 import * as Switch from '@radix-ui/react-switch';
 import { FolderCog } from 'lucide-react';
 
-import type { InputSettings, Library } from '../../shared/api';
-import InputPanel from './InputPanel';
+import type { CoreSelection, InputSettings, Library } from '../../shared/api';
+import InputPanel, { Segment } from './InputPanel';
+import { SYSTEMS, coresFor } from '../systems';
 import type { EngineStatus } from '../engineStatus';
 import type { PixelScale } from '../usePixelScale';
 import { formatCycles, formatHex16 } from '../format';
@@ -31,6 +32,11 @@ interface SettingsPanelProps {
     input: InputSettings;
     /** Change the input settings and remember them. */
     onInput: (next: InputSettings) => void;
+    /** Which core to run each console on. Empty means the defaults. */
+    cores: CoreSelection;
+    /** Change the core for one console and remember it. Changing the core
+     *  under a running game restarts that game on the new machine. */
+    onCores: (next: CoreSelection) => void;
     gamepadEnabled: boolean;
     /** Whether that source is the native GameController helper rather than
      *  the browser's Gamepad API. The two fail differently, so the panel says
@@ -90,6 +96,8 @@ export default function SettingsPanel({
     onScanlines,
     input,
     onInput,
+    cores,
+    onCores,
     gamepadEnabled,
     gamepadNative,
     library,
@@ -103,7 +111,7 @@ export default function SettingsPanel({
             <header className="panel-head">
                 <div className="panel-title">
                     <h2>设置</h2>
-                    <span className="panel-count">画面滤镜 · 游戏库 · 输入</span>
+                    <span className="panel-count">核心 · 画面滤镜 · 游戏库 · 输入</span>
                 </div>
             </header>
 
@@ -128,6 +136,33 @@ export default function SettingsPanel({
                         游戏库是一个文件夹：ROM、截图
                         （<code>screenshots/</code>）、它们的元数据
                         （<code>library.sqlite</code>）都在里面。换一个文件夹就是换一个游戏库。
+                    </p>
+                </Group>
+
+                <Group title="模拟器核心">
+                    {SYSTEMS.map((system) => {
+                        const available = coresFor(system.id);
+                        if (available.length === 0) {
+                            return null;
+                        }
+                        const chosen = cores[system.id] ?? available[0].id;
+                        return (
+                            <div className="setting-row" key={system.id}>
+                                <span className="setting-label">{system.name}</span>
+                                <Segment
+                                    value={chosen}
+                                    options={available.map((core) => ({
+                                        value: core.id,
+                                        label: core.name,
+                                    }))}
+                                    onChange={(id) => onCores({ ...cores, [system.id]: id })}
+                                />
+                            </div>
+                        );
+                    })}
+                    <p className="prose">
+                        同一个机种可以选不同的模拟器核心。切换核心会拆掉当前机器，
+                        再用新核心把卡带重新装进去 —— 卡带没变，只是换了硬件。
                     </p>
                 </Group>
 
