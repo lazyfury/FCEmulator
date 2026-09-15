@@ -363,6 +363,12 @@ export async function createCoreHost(module)
         get sampleRate() { return av.sampleRate; },
         get frameSeconds() { return 1 / av.fps; },
 
+        /** Bytes between the starts of two rows. Not always width * 4: mGBA
+         *  renders into a 256-pixel-wide buffer and reports 240 visible
+         *  pixels with a 1024 byte pitch. Reading it as 240 * 4 shears every
+         *  row by 64 bytes, which is what diagonal stripes are. */
+        get pitch() { return video.pitch || av.baseWidth * 4; },
+
         // -- loading ----------------------------------------------------------
 
         loadRom(bytes)
@@ -451,14 +457,15 @@ export async function createCoreHost(module)
 
         /** The framebuffer as bytes, top row first, four bytes per pixel.
          *  XRGB8888 in memory is the same 0x00RRGGBB the C interface hands
-         *  over, so the renderer does not change. The length comes from the
-         *  geometry, which is known before a frame is ever drawn; the pointer
-         *  comes from the core's video callback and is only meaningful once
-         *  it has run. */
+         *  over, so the renderer does not change. The length is the pitch
+         *  times the rows, because the pitch is what the core actually wrote;
+         *  the geometry gives the visible size, which is not always the same
+         *  as the stride. */
         framebufferBytes()
         {
-            const length = av.baseWidth * av.baseHeight * 4;
-            return mod.HEAPU8.subarray(video.pointer, video.pointer + length);
+            const stride = host.pitch;
+            const rows = video.height || av.baseHeight;
+            return mod.HEAPU8.subarray(video.pointer, video.pointer + stride * rows);
         },
 
         pixel(x, y)
@@ -466,7 +473,7 @@ export async function createCoreHost(module)
             if (x < 0 || y < 0 || x >= video.width || y >= video.height) {
                 return 0;
             }
-            return mod.HEAPU32[(video.pointer >> 2) + y * video.width + x] >>> 0;
+            return mod.HEAPU32[(video.pointer >> 2) + y * (host.pitch >> 2) + x] >>> 0;
         },
 
         // -- audio ------------------------------------------------------------

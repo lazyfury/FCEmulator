@@ -218,6 +218,9 @@ interface FcTestHook {
 interface CoreHost {
     readonly width: number;
     readonly height: number;
+    /** Bytes between the starts of two rows, when it differs from width * 4.
+     *  mGBA reports 240 visible pixels with a 1024 byte pitch. */
+    readonly pitch?: number;
     readonly sampleRate: number;
 
     loadRom(bytes: Uint8Array): boolean;

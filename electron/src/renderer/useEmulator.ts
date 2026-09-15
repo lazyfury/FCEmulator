@@ -429,11 +429,20 @@ export function useEmulator(
                 // is what lets a host whose pointer arrives late still work.
                 const framebuffer = engine.framebufferBytes();
                 const destination = image.data;
-                for (let source = 0, out = 0; out < destination.length; source += 4, out += 4) {
-                    destination[out] = framebuffer[source + 2];
-                    destination[out + 1] = framebuffer[source + 1];
-                    destination[out + 2] = framebuffer[source];
-                    destination[out + 3] = 255;
+                // The rows are stepped by the core's pitch, not by width * 4.
+                // mGBA renders 240 visible pixels into a 256 pixel wide buffer
+                // and says so; treating the stride as 960 shears every row by
+                // 64 bytes, which is diagonal stripes.
+                const stride = engine.pitch ?? engine.width * 4;
+                let out = 0;
+                for (let y = 0; y < image.height; ++y) {
+                    let source = y * stride;
+                    for (let x = 0; x < image.width; ++x, source += 4, out += 4) {
+                        destination[out] = framebuffer[source + 2];
+                        destination[out + 1] = framebuffer[source + 1];
+                        destination[out + 2] = framebuffer[source];
+                        destination[out + 3] = 255;
+                    }
                 }
                 context.putImageData(image, 0, 0);
                 if (!firstBlitLogged) {
@@ -484,10 +493,18 @@ export function useEmulator(
             const hashPixels = async (): Promise<string> => {
                 const picture = engine.framebufferBytes();
                 const rgb = new Uint8Array(engine.width * engine.height * 3);
-                for (let source = 0, out = 0; out < rgb.length; source += 4, out += 3) {
-                    rgb[out] = picture[source + 2];
-                    rgb[out + 1] = picture[source + 1];
-                    rgb[out + 2] = picture[source];
+                // Same stride rule as blit: the rows are pitch apart, not
+                // width * 4 apart, or a hash of a Game Boy screen would be a
+                // hash of sheared rows.
+                const stride = engine.pitch ?? engine.width * 4;
+                let out = 0;
+                for (let y = 0; y < engine.height; ++y) {
+                    let source = y * stride;
+                    for (let x = 0; x < engine.width; ++x, source += 4, out += 3) {
+                        rgb[out] = picture[source + 2];
+                        rgb[out + 1] = picture[source + 1];
+                        rgb[out + 2] = picture[source];
+                    }
                 }
                 const digest = await crypto.subtle.digest('SHA-256', rgb);
                 return Array.from(new Uint8Array(digest))
