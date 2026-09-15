@@ -28,21 +28,23 @@
 |------|------|
 | [bus.md](bus.md) | 为什么需要 Bus、Device 接口、依赖方向、测试替身 |
 | [frontend.md](frontend.md) | C 接口、Canvas 渲染、音频环形缓冲、主循环 |
+| [libretro-migration.md](libretro-migration.md) | 以 libretro 为准的迁移、多核心（mGBA / Mesen）接入 |
+| [mame-integration.md](mame-integration.md) | 调研：MAME 能不能接进来、走哪条路、代价是什么（未实施） |
 
 ### 当前实际结构
 
 ```
                  +-----------+
-                 |   Bus     |   抽象 (src/core/bus.hpp)
+                 |   Bus     |   抽象 (packages/fc-core/src/core/bus.hpp)
                  +-----+-----+
                        ^
                        | CPU 只知道这个
                  +-----+-----+
-                 |   Cpu     |   src/core/cpu/
+                 |   Cpu     |   packages/fc-core/src/core/cpu/
                  +-----------+
 
                  +-----------+
-                 |  NesBus   |   实现 (src/core/nes/bus.hpp)
+                 |  NesBus   |   实现 (packages/fc-core/src/core/nes/bus.hpp)
                  +-----+-----+
                        |
        +---------------+---------------+
@@ -54,9 +56,9 @@
 **依赖方向已用 grep 验证：**
 
 ```bash
-$ grep -rn '#include "core/nes/' src/core/cpu/
+$ grep -rn '#include "core/nes/' packages/fc-core/src/core/cpu/
   （无）
-$ grep -rn 'nes::' src/core/cpu/
+$ grep -rn 'nes::' packages/fc-core/src/core/cpu/
   （无）
 ```
 
@@ -82,7 +84,7 @@ CPU 只知道"我要往地址 `$2006` 写一个字节"。
 
 ### 规则 2：Core 不得依赖 UI
 
-`src/core/` 里的代码不能 `#include <Metal/Metal.h>`，不能出现 `NSWindow`、
+`packages/fc-core/src/core/` 里的代码不能 `#include <Metal/Metal.h>`，不能出现 `NSWindow`、
 `document`。Core 只产出一个 `256×240` 的 RGB framebuffer，谁来显示它由
 `electron/`（或 `tools/fc_headless`）决定。
 
@@ -101,21 +103,21 @@ CPU 读 $0000  ->  Bus 判断：<$2000?       -> RAM
 ```
    electron/ (TypeScript)     UI 层
         |
-   src/ffi/emulator_api.h     C 接口 —— 唯一的边界
+   packages/fc-core/src/ffi/emulator_api.h     C 接口 —— 唯一的边界
         |
-   src/core/nes/              NES 硬件
+   packages/fc-core/src/core/nes/              NES 硬件
         |
-   src/core/cpu/              6502
+   packages/fc-core/src/core/cpu/              6502
         |
-   src/core/bit.hpp          位与字节
+   packages/fc-core/src/core/bit.hpp          位与字节
 ```
 
 **箭头只能向下。** Core 不知道窗口存在，CPU 不知道 NES 存在。
 
 ```bash
-$ grep -rn '#include "core/nes/' src/core/cpu/
+$ grep -rn '#include "core/nes/' packages/fc-core/src/core/cpu/
   （无）
-$ grep -rln 'Metal\|NSWindow' src/core/
+$ grep -rln 'Metal\|NSWindow' packages/fc-core/src/core/
   （无）
 ```
 

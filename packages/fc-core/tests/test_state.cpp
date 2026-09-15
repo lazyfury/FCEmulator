@@ -382,7 +382,7 @@ TEST_P(StateMapperCoverage, SavesItsBankRegisters)
 INSTANTIATE_TEST_SUITE_P(
     Mappers,
     StateMapperCoverage,
-    ::testing::Values(0, 1, 2, 3, 4, 7, 19, 163, 177),
+    ::testing::Values(0, 1, 2, 3, 4, 7, 19, 74, 121, 163, 165, 177, 199, 241, 245),
     [](const ::testing::TestParamInfo<int>& info) {
         return "Mapper" + std::to_string(info.param);
     });

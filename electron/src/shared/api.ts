@@ -63,6 +63,9 @@ export const IpcChannel = {
     /** Rewrite the input settings: keyboard mode, bindings, pad assignment. */
     WriteInputSettings: 'fc:write-input-settings',
 
+    /** Remember which emulator core to use for each console. */
+    WriteCoreSelection: 'fc:write-core-selection',
+
     /** The cheats saved for one cartridge. */
     ReadCheats: 'fc:read-cheats',
 
@@ -233,6 +236,46 @@ export const DEFAULT_INPUT_SETTINGS: InputSettings = {
 };
 
 /**
+ * Which console a cartridge is for.
+ *
+ * The extension decides this, and it is the unit a player thinks in: "NES" or
+ * "Game Boy". Several emulator cores can target the same console, so the core
+ * is chosen *per system* rather than per file.
+ */
+export type SystemId = 'nes' | 'gba' | 'gb';
+
+/** The emulator cores this application can run. */
+export type CoreId = 'fc' | 'mesen' | 'mgba';
+
+/**
+ * The core the player picked for each console, if they picked one.
+ *
+ * Absent means "the default", which is the first core listed for that system
+ * in CORES_BY_SYSTEM. A partial record rather than a full one so that adding a
+ * console later does not need every existing config file rewritten.
+ */
+export type CoreSelection = Partial<Record<SystemId, CoreId>>;
+
+/**
+ * The cores that target each console, the default first.
+ *
+ * Shared between the renderer -- which adds the WebAssembly module, sample
+ * rate and frame length to each entry -- and the main process, which checks a
+ * selection before writing it. It is deliberately only the IDs here: the main
+ * process has no business knowing a core's module name, and the renderer has
+ * no business inventing an ID the main process will then refuse.
+ *
+ * Mesen is first, so it is the NES default; the home-grown FC core is one
+ * click away in 设置 → 模拟器核心. The order is the order the segmented control
+ * draws, so it is also what the screen shows as chosen when nothing is saved.
+ */
+export const CORES_BY_SYSTEM: Readonly<Record<SystemId, readonly CoreId[]>> = Object.freeze({
+    nes: ['mesen', 'fc'],
+    gba: ['mgba'],
+    gb: ['mgba'],
+});
+
+/**
  * One cheat: a byte, at an address, put back when the game overwrites it.
  *
  * The address is in the CPU's own 16 bit space -- console RAM lives at
@@ -287,6 +330,8 @@ export interface Preferences {
     panelWidth: number | null;
     /** How the keyboard and the pads are wired to the two ports. */
     input: InputSettings;
+    /** Which emulator core to run each console on. Empty means the defaults. */
+    cores: CoreSelection;
 }
 
 /** Which preference a write is about. */
@@ -487,6 +532,15 @@ export interface FcBridge {
      */
     saveInputSettings(settings: InputSettings): Promise<void>;
 
+    /**
+     * Replace the whole core selection.
+     *
+     * One verb for the whole mapping, like the input settings: the choice is
+     * small, always written as a unit, and a field-at-a-time API would let the
+     * file disagree with the screen for as long as the second write took.
+     */
+    saveCoreSelection(selection: CoreSelection): Promise<void>;
+
     /** The cheats saved for one cartridge, or an empty list. */
     readCheats(romPath: string): Promise<Cheat[]>;
 
@@ -543,6 +597,18 @@ export interface FcBridge {
     readonly eager: boolean;
 
     /**
+     * The saved core selection, known before the first render.
+     *
+     * The asynchronous `preferences()` call cannot be: a `--rom` run builds
+     * the machine eagerly, and it would build it on the default core and then
+     * swap cores a moment later. The main process already read config.json
+     * before it created the window, so it hands the same selection down the
+     * argument chain the other boot flags use. `preferences()` carries it too,
+     * and that is what a change made while the app is running goes through.
+     */
+    readonly coreSelection: CoreSelection;
+
+    /**
      * Ask whether a gamepad source should be started, and which kind.
      *
      * `gamepadEnabled` says a source is running. `gamepadNative` says it is
@@ -577,3 +643,13 @@ export interface FcBridge {
     onGamepadState(callback: (reading: GamepadReading) => void): void;
     offGamepadState(): void;
 }
+
+/**
+ * The file extensions the emulator can run, and the one test for them.
+ *
+ * Shared rather than written twice: the main process filters the library by
+ * these, and the renderer picks a libretro core by them. A file the library
+ * lists but the renderer has no core for is a game that appears and then
+ * fails, which is the drift keeping one list prevents.
+ */
+export const ROM_EXTENSIONS = ['nes', 'gba', 'gb', 'gbc'] as const;

@@ -76,6 +76,60 @@ public:
     [[nodiscard]] bool has_prg_ram() const noexcept { return prg_ram_enabled_; }
     void set_prg_ram_enabled(bool enabled) noexcept { prg_ram_enabled_ = enabled; }
 
+    /// The 8KB of work RAM at $6000, as the front end sees it.
+    ///
+    /// A front end persists this as the cartridge's battery save, so the
+    /// pointer has to be the bytes the CPU actually reads and writes. On a
+    /// board that answers $6000 with its own registers instead of a RAM chip
+    /// (mapper 87, mapper 246, VRC2a) the cartridge's copy is unused, which is
+    /// what battery_backed() is careful about.
+    [[nodiscard]] std::span<u8> prg_ram() noexcept { return prg_ram_; }
+    [[nodiscard]] std::span<const u8> prg_ram() const noexcept { return prg_ram_; }
+
+    /// Whether that RAM is the game's save and should outlive the emulator.
+    ///
+    /// The battery bit lives in the iNES header (flags 6, bit 1). A cartridge
+    /// without it has RAM the game clears on power up and nobody misses; one
+    /// with it has the save file. The has_work_ram() half keeps the promise
+    /// honest: a board that does not answer $6000 with this buffer must not
+    /// hand a front end a buffer the game never wrote.
+    [[nodiscard]] bool battery_backed() const noexcept
+    {
+        return header_.has_battery && mapper_ != nullptr && mapper_->has_work_ram();
+    }
+
+    // -- Game Genie patches --------------------------------------------------
+    //
+    // A Game Genie does not modify the ROM. It sits between the cartridge and
+    // the console and rewrites the byte on the data bus, which means it acts
+    // on the CPU address ($8000-$FFFF), after the mapper has done its banking.
+    // That is why the patch lives here and not in the mapper: two different
+    // banks of the same address get the patch separately, exactly as on the
+    // real hardware.
+    //
+    // `compare` is the value the cartridge must already be returning for the
+    // patch to apply, or -1 to apply unconditionally. It is what an eight
+    // letter code carries and a six letter code does not.
+
+    /// One patch applied to PRG ROM reads.
+    struct PrgPatch {
+        u16 address = 0;
+        u8 value = 0;
+        int compare = -1;
+    };
+
+    void set_prg_patches(std::span<const PrgPatch> patches)
+    {
+        prg_patches_.assign(patches.begin(), patches.end());
+    }
+
+    void clear_prg_patches() noexcept { prg_patches_.clear(); }
+
+    [[nodiscard]] std::span<const PrgPatch> prg_patches() const noexcept
+    {
+        return prg_patches_;
+    }
+
     /// A one line summary, for tooling.
     [[nodiscard]] std::string summary() const;
 
@@ -89,6 +143,7 @@ private:
     std::vector<u8> prg_ram_ = std::vector<u8>(kPrgRamSize, 0);
     std::unique_ptr<Mapper> mapper_;
     bool prg_ram_enabled_ = true;
+    std::vector<PrgPatch> prg_patches_;
 
     friend struct fc::StateAccess;
 };

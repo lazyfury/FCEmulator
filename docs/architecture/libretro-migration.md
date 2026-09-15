@@ -1,6 +1,7 @@
 # 迁移到 libretro ABI —— 调研与计划 v2
 
-> 状态：**调研完成，未执行**。
+> 状态：**L1~L6 完成**。FC 走 libretro 化并端到端验收；mGBA 编译 + ABI 对齐 + 前端集成完成，
+> `.gba/.gb/.gbc` 可在 App 里运行。唯一未做：卡带电池存档（`.srm`）落盘。
 > v2 变更：确立 **libretro 为准**；列出**暂时隐藏**的功能；新增 **custom ABI 扩展**设计；
 > 用实验**确认了 wasm 动态加载外部核心的可行性**（结论：原生 core 不行，专用
 > wasm side module 可以，已验证）。
@@ -14,7 +15,7 @@
 1. **libretro 是权威**。所有"能不能做"以 `libretro.h` 为准；现有 `fc_*` 接口
    降级为**内部/扩展**，不再是前端与 Core 之间的主契约。
 2. **Core 不重写**。仍是 `fc_core`，但对外只暴露 libretro。新增一个薄适配层
-   `src/libretro/fc_libretro.cpp`，把 `retro_*` 翻译成 `Machine` 方法。
+   `packages/fc-libretro/src/libretro/fc_libretro.cpp`，把 `retro_*` 翻译成 `Machine` 方法。
 3. **不重要的功能先隐藏**（§4.2）：金手指面板、扫描线滤镜、封面/截图、
    原生手柄助手、PC/cycles 诊断读数。它们要么与 libretro 字符串模型不兼容，
    要么是 host 的职责，等 libretro 骨架稳定后再逐个接回。
@@ -57,11 +58,11 @@
 ## 2. 现状盘点（哪些已就绪）
 
 Core 已经满足 libretro 的三条硬性前提：无 UI 依赖、无文件 IO、无异常，且
-Native / wasm 双编译。`src/core` 分层：
+Native / wasm 双编译。`packages/fc-core/src/core` 分层：
 
 ```
-src/core/nes/  src/core/cpu/     机器本身（CPU/Bus/PPU/APU/Mapper/State）
-src/ffi/emulator_api.{h,cpp}     现有 C 接口（22 个测试）
+packages/fc-core/src/core/nes/  packages/fc-core/src/core/cpu/     机器本身（CPU/Bus/PPU/APU/Mapper/State）
+packages/fc-core/src/ffi/emulator_api.{h,cpp}     现有 C 接口（22 个测试）
 wasm/glue.cpp                    Emscripten 薄壳（只做 ABI 版本自检）
 electron/                        Electron 前端（库/输入/音频/UI）
 ```
@@ -148,7 +149,7 @@ fc_libretro.wasm         wasm  libretro core（side module）-> 自家 Electron 
 fc_core.mjs              （可选保留）旧的单体 wasm，过渡期兜底
 ```
 
-三者同源：`src/core` 不变，差异只在适配层与编译方式。
+三者同源：`packages/fc-core/src/core` 不变，差异只在适配层与编译方式。
 
 ### 5.2 前端抽象 `CoreHost`（libretro 语义）
 
@@ -184,12 +185,12 @@ interface CoreHost {
 | 阶段 | 内容 | 产出 | 估时 |
 |---|---|---|---|
 | **L0** | 调研（本文） | 文档 + wasm 实验 | ✅ |
-| **L1** | native 适配层 `fc_libretro.cpp` + `third_party/libretro/libretro.h` + CMake MODULE target；音频/视频/输入/存档转换 | RetroArch 能加载运行 | 1~2 人天 |
-| **L2** | custom 扩展符号 `fc_libretro_get_ext()`；`Cartridge::prg_ram()`、`NesBus::ram_data()`、电池标志；RAM 型金手指 | 电池存档、内存视图、custom 通道 | 2~4 人天 |
-| **L3** | Game Genie/PAR 解码 + ROM 补丁钩子 + `SET_MEMORY_MAPS` | 金手指完整、搜索可用 | 3~5 人天 |
-| **L4** | wasm：`fc_core` 编译为 SIDE_MODULE，宿主编译为 MAIN_MODULE，回调桥接；解决内存增长导致的视图失效 | 浏览器/Electron 可 `dlopen` 本 core | 4~7 人天 |
-| **L5** | Electron `CoreHost` 切到 libretro 宿主；隐藏 §4.2 功能；回归 | 前端 libretro 化 | 1 周 |
-| **L6** | mGBA 编为 wasm side module + 系统注册表 + UI 泛化 | `.gba` 可玩 | 3~7 人天 |
+| **L1** | native 适配层 `fc_libretro.cpp` + `packages/fc-libretro/third_party/libretro/libretro.h` + CMake MODULE target；音频/视频/输入/存档转换 | RetroArch 能加载运行 | ✅ 已完成 |
+| **L2** | custom 扩展符号 `fc_libretro_get_ext()`；`Cartridge::prg_ram()`、`NesBus::ram_data()`、电池标志；RAM 型金手指 | 电池存档、内存视图、custom 通道 | ✅ 已完成 |
+| **L3** | Game Genie/PAR 解码 + ROM 补丁钩子 + `SET_MEMORY_MAPS` | 金手指完整、搜索可用 | ✅ 已完成 |
+| **L4** | wasm 加载本 core：采用 **L4a —— 独立 wasm 模块 + JS libretro frontend**（`wasm/libretro.mjs`）。side module 机制对 C core 已验证可行；C++ 运行时对齐问题绕开 | 浏览器/Node 可加载本 core | ✅ 已完成 |
+| **L5** | Electron `CoreHost` 切到 libretro wasm 宿主（`wasm/libretro.mjs`）；canvas 绘制、音频、金手指、诊断全部走 CoreHost | 前端 libretro 化、零回归 | ✅ 已完成 |
+| **L6** | 接入 mGBA：自己编 wasm core、ABI 对齐、系统注册表、按扩展名路由与重建机器、库收 `.gba/.gb/.gbc`、分辨率/帧率/采样率按 core | `.gba/.gb/.gbc` 可玩 | ✅ 已完成 |
 | 备选 | native core host（B1）`native/core-host` + IPC | 可加载任意现成 `.dylib` | 1~2 周 |
 
 L1~L3 只增不改；L4 起才动 wasm/前端。
@@ -208,7 +209,7 @@ core 出口。
 ### 6.2 设计：额外导出符号 + 版本化函数指针表
 
 ```c
-/* src/libretro/fc_libretro_ext.h —— 只有自家 frontend 会读 */
+/* packages/fc-libretro/src/libretro/fc_libretro_ext.h —— 只有自家 frontend 会读 */
 #define FC_LIBRETRO_EXT_VERSION 1u
 
 typedef struct fc_libretro_ext_v1 {
@@ -322,6 +323,62 @@ callback count=3
 - 两条路都成立，**不冲突**：native 产物给 RetroArch/桌面 host；wasm 产物给
   渲染进程内 host。
 
+### 7.5 L4 实测：真实 C++ core 的运行时障碍（**需决策**）
+
+`L1~L3` 的适配层已能作为 side module 编出（单条 `emcc` 调用含全部 `fc_core`
+源文件，4 秒，172KB），且 **C 语言 core 的 `dlopen`/`dlsym`/回调/共享内存
+已在 §7.2 验证**。但把**本项目这个 C++ core** 装进 side module 时，
+`dlopen` 失败，原因不在本项目，而在 Emscripten 的 C++ 运行时模型：
+
+1. side module 会 **import** 一批 libc/libc++ 符号，而不是自带：
+   `operator new/delete`、`__cxa_throw`、`std::logic_error`、
+   `std::string::__grow_by_and_replace`、`std::to_string`、`lroundf`、
+   `vsnprintf` 等。
+2. 这些必须由 **main module 导出**。而 main 只链接自己用到的 libc++ 子集，
+   一个普通 `host.cpp` 用不到 `std::to_string` / 异常，于是导出缺失。
+3. 实测：给 core 加 `-fvisibility=hidden` 后，项目自身符号降为本地，
+   side module 的 import 从 33 个降到 **17 个纯运行时符号**；但只要 main
+   不导出它们，`dlopen` 就报 `could not load dynamic lib`（**不告诉你是哪个
+   符号**）。在 main 里手动引用这些 libc++ 特性来“拉齐”也能走，但新增一个
+   core 用到的运行时函数就会再次静默破坏加载，属于脆弱方案。
+
+**结论：Emscripten side module 对 C core（mGBA）成立；对 C++ core
+需要 main/side 的 libc++ 对齐，不宜作为本项目自身 core 的主路径。**
+
+因此 L4 有三条路线，需选一条（推荐 L4a）：
+
+| 路线 | 做法 | 适用 | 代价 |
+|---|---|---|---|
+| **L4a（推荐）** | core 编成**独立 wasm 模块**（各自一块线性内存），JS 侧实现 libretro frontend 回调（`addFunction` 传函数指针）；每个 core 一个模块 | 本项目 C++ core、mGBA（mGBA 官方也有 wasm 构建） | 每 core 各自的内存，JS 桥接；不是“dlopen 同一地址空间” |
+| **L4b** | side module + `MAIN_MODULE` 宿主，共享地址空间 `dlopen` | **C core（mGBA）**；已验证机制 | C++ 运行时对齐问题（见上） |
+| **L4c** | native host（`native/core-host`，仿 gamepad helper）加载 `.dylib` | 现成第三方 core、无需重编 | 帧/音频过 IPC；非 wasm |
+
+**建议**：L4a 落地本项目自身的 libretro wasm 产物与 JS `CoreHost`；
+L6 接 mGBA 时优先 L4a（编 mGBA wasm 模块），若坚持用官方预编译 core
+则走 L4c。L5 的 `CoreHost` 接口对 a/b/c 三者都兼容。
+
+**已决策并实现**：L4 采用 L4a。`wasm/CMakeLists.txt` 新增 `fc_libretro_wasm`
+目标，产出 `wasm/dist/fc_libretro.mjs` + `fc_libretro.wasm`；回调由
+`wasm/libretro.mjs` 用 `addFunction` 注册（environment / video / audio batch /
+input poll+state），并对外暴露与计划一致的 `CoreHost` 形状（loadGame / run /
+framebuffer / audio / memory / serialize / cheat / extension）。因为是独立模块，
+`ALLOW_MEMORY_GROWTH=0` 得以保留，typed array 视图不会失效。
+验收：`node wasm/libretro_test.mjs`（合成电池 NROM，无需真实 ROM）——
+ABI、XRGB8888、256×240、~734 stereo/帧、两端口轮询、2KB/8KB 内存视图、
+存档往返像素一致、custom 扩展版本，全部通过。
+
+**L5 已落地**：CoreHost 的默认后端是**渲染进程内的 wasm libretro 前端**
+（不是子进程）。`wasm/libretro.mjs` 同时实现 `useEmulator.ts` 一直在用的
+`Emulator` 接口，所以切换是“换模块 + 换构造器”的一行改动，游戏循环、输入、
+金手指、倒带均未变。canvas 绘制改成每帧重取 framebuffer 视图（`subarray`，O(1)）
+——libretro core 的 framebuffer 指针只有跑过一帧才有效，缓存一次会永远画空帧。
+
+音频是唯一“libretro 表达不了”的东西：ABI 只带 int16 stereo，而本项目的
+`electron/verify.sh` 逐字节比对 APU 的 float32。因此扩展新增
+`take_samples(float*, size_t)`（版本升到 **2**），把 APU 原始 float 样本交给
+自家前端；标准前端仍走 int16 回调。已验证：SMB 60 帧下，libretro 路径与原生
+`fc_headless` 的**像素哈希与音频字节完全一致**。
+
 ---
 
 ## 8. mGBA 接入（本次不执行，仅预留）
@@ -346,6 +403,82 @@ callback count=3
 - RTC：`RETRO_MEMORY_RTC`（宝可梦）。
 - 金手指：CodeBreaker/GameShark 字符串，core 自解析，前端只透传。
 - e-Reader / 多卡：`load_game_special`，可先不支持。
+
+### 8.3 wasm 路线已验证（L6 里程碑）
+
+mGBA **没有**上游 wasm 构建，EmulatorJS 的预编译产物又是它自己的
+`EJS_Runtime` 胶水（没有 `_retro_*`/`addFunction`），不能直接用。所以自己编：
+
+- `wasm/mgba/build.sh`：拉 `EmulatorJS/mgba` fork（含 libretro Makefile 的
+  `platform=emscripten` 目标）→ 改两个宏 → `emmake make` 出目标文件 → 用
+  `emcc` 自己链成导出 `retro_*` 的独立模块（与 `fc_libretro.wasm` 同形）。
+- 两处关键修改：去掉 `-DCOLOR_16_BIT`（否则 mGBA 用 RGB565，与前端和 parity
+  测试的 XRGB8888 不一致）；去掉 `-DHAVE_CRC32`（否则缺 zlib 的 `crc32`）。
+- 验证：`node wasm/mgba_test.mjs <rom>` —— 2MB GBC ROM 能加载、跑 60 帧、
+  画 160×144、出声、存/读 202KB 状态，全部通过。
+- 顺带验证了“**换 core 不改前端**”：`wasm/libretro.mjs` 不用知道它在驱动 mGBA。
+  为此加了两处容错：mGBA 的 `retro_get_system_av_info` 要 load 之后才安全
+  （FC 任何时候都行），扩展函数（peek/poke/诊断）在其他 core 上不存在要降级。
+
+**剩余（集成，非编译）**：系统注册表 + 按扩展名路由（`.nes`→fc，`.gba/.gb/.gbc`
+→mgba）、库收非 `.nes`、按 core 重建机器（现在模块在启动时加载一次）、
+分辨率/帧率/输入描述数据化、BIOS 与存档目录。估 **2~3 人天**。
+
+### 8.4 集成已完成
+
+- `electron/src/renderer/systems.ts`：扩展名 → core（`fc_libretro` / `mgba_libretro`）、
+  以及每个机种的采样率与帧长。采样率必须随 core 走：NES 44100、GBA 65536、
+  GB/GBC 131072，音频上下文按它建。
+- `useEmulator`：建机器时根据扩展名（或命令行 ROM）选 core；已装卡时若换机种，
+  先 `stopMachine()` 拆掉（帧循环、音频、倒带环）再重建。
+- 库与打开面板收 `.nes/.gba/.gb/.gbc`；帧循环用 `core.frameSeconds`（GBA 59.7275）。
+- 修了两个 mGBA 才暴露的问题：`retro_cheat_reset` 在 load 前解引用 `core`（
+  装卡前不调 core 的 cheat），以及 canvas 尺寸要在 load 后（mGBA 才能报几何）重设。
+- 实测（Pokémon Sapphire 256Mb，`--rom` 启动）：240×160、400 帧、音频 peak 0.208、
+  画面在动、倒带落回同一帧。FC 路径 parity 仍逐像素逐采样一致。
+
+**未做**：卡带电池存档（`.srm`）落盘。存档槽/倒带用的是 save state，已在；
+但 Pokémon 自己的存档需要把 `RETRO_MEMORY_SAVE_RAM` 写到磁盘并在加载时读回。
+
+### 8.5 第二个 NES 核心：Mesen，与「同机种多核心」
+
+这是第一次**同一个机种有两个核心**，也是把 §8.1 的「系统注册表」真正用起来的一次。
+
+- `wasm/mesen/build.sh`：拉 `libretro/Mesen`（旧 Mesen 1.x，C++11，自带 `platform=emscripten`
+  目标），编译成 `mesen_libretro.wasm`。与 mGBA 用同一个 `wasm/libretro.mjs` 驱动，
+  前端不知道自己在跑哪个核心。三处需要说明的改动：
+  - **内存里的卡带**：Mesen 只从 `GET_GAME_INFO_EXT` 拿内存数据，否则按路径
+    打开文件；wasm 没有文件系统，所以在 `libretro.cpp` 的回退分支里直接用
+    `retro_game_info->data/size`。
+  - **C++ 异常**：Mesen 的 loader 用 `throw`/`catch` 表达「这张卡带读不了」；
+    Emscripten 默认关异常，会把 `throw` 变成整个模块 abort。给它加
+    `-fexceptions`，链接加 `-sDISABLE_EXCEPTION_CATCHING=0`。
+  - **文件系统**：与 fc/mGBA 不同，**不能**用 `-sFILESYSTEM=0`。Mesen 用 `ifstream`
+    探 `disksys.rom` / `MesenDB.txt` / HdPacks；没有文件系统时这些探测把空流报成
+    good、`tellg()` 回 -1，Mesen 于是 `resize(0xFFFFFFFF)` 抛 `std::length_error`。
+    保留默认的 MEMFS，探测就以干净的失败告终。
+- `electron/src/shared/api.ts` 新增 `SystemId` / `CoreId` / `CoreSelection`，以及
+  两边共用的 `CORES_BY_SYSTEM`（哪个机种有哪些核心、默认是谁）。main 进程用它
+  校验写盘的选择；renderer 的 `systems.ts` 用它给出模块名与采样率。
+  **顺序即默认**：`nes: ['mesen', 'fc']`，所以 NES 默认跑 Mesen，内置 FC 核心
+  是一次点击之外的第二个选项（它带 `fc_libretro_get_ext` 自定义扩展 —— 内存
+  peek/poke、PC/周期读数，Mesen 没有这些，相关 UI 自动降级）。
+- 设置界面「模拟器核心」按机种列出核心；切换核心时 `useEmulator.reload()` 拆掉
+  当前机器、用新核心把同一张卡带重新装进去（不计游玩次数 —— 换的是硬件，不是
+  又玩了一次）。
+- `electron/verify.sh` 的比对基准是原生 `build/fc_headless`（即内置 FC 核心），
+  而 NES 默认已是 Mesen；脚本现在用一个临时的 `--user-data-dir` 把核心钉成
+  `fc`，既保证拿同一台机器比，也让开发者自己的 config.json 不影响这个测试。
+- 命令行 `--rom` 是 eager 建机器，早于异步 preferences。主进程在建窗口前已经
+  同步读过 config.json，所以把选择用 `--fc-cores=`（与 `--fc-eager` 同一条
+  `additionalArguments` 链）递给渲染进程，首帧就是对的；异步 preferences 只管
+  运行中的修改。
+- 界面上做得出来的验证：`--user-data-dir` 指向一份写着 `{"cores":{"nes":"mesen"}}`
+  的 config.json，`--selftest 120` 的画面哈希与音频样本数都与默认 fc 不同
+  （48000 Hz 对 44100 Hz），且 `error: none`；`node wasm/mesen_test.mjs <rom>`
+  独立验证 ABI/画面/声音/存档往返。FC 的 electron parity 仍逐像素逐采样一致。
+
+**未做**：Mesen 的 `RETRO_MEMORY_SAVE_RAM`（电池存档）落盘，与 mGBA 同。
 
 ---
 
@@ -399,7 +532,7 @@ callback count=3
 - 不把前端功能塞进 core（库/封面/手柄助手/滤镜/音频队列都不进）。
 - 不实现 FDS / UNIF / PAL / 多机种子系统。
 - 本次不写 mGBA 集成代码，只预留 `CoreHost`、系统注册表、custom 扩展。
-- 不删除 `src/ffi/emulator_api.h`。
+- 不删除 `packages/fc-core/src/ffi/emulator_api.h`。
 
 ---
 

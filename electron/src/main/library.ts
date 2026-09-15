@@ -179,8 +179,21 @@ function titleOf(file: string): string {
     return basename(file, extname(file));
 }
 
+/**
+ * The extensions this emulator can open.
+ *
+ * Kept in step with the renderer's core table (electron/src/renderer/systems.ts)
+ * and the shared list `main/index.ts` filters its open panel by: a file the
+ * library lists but the renderer has no core for would be a game that appears
+ * and then fails. It is written out here rather than imported because this file
+ * is executed directly by Node in the tests, where a cross-file import without
+ * an extension does not resolve.
+ */
+const ROM_EXTENSIONS = ['nes', 'gba', 'gb', 'gbc'];
+
 function isRom(name: string): boolean {
-    return name.toLowerCase().endsWith('.nes');
+    const lower = name.toLowerCase();
+    return ROM_EXTENSIONS.some((extension) => lower.endsWith(`.${extension}`));
 }
 
 /** The eight bytes every PNG starts with. */

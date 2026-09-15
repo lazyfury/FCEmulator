@@ -19,7 +19,7 @@ import { Emulator } from '../../wasm/emulator.mjs';
 import createFcCore from '../../wasm/dist/fc_core.mjs';
 import { Rewind } from '../src/renderer/rewind.ts';
 
-const ROM_PATH = fileURLToPath(new URL('../../tests/data/super-mario-bros.nes', import.meta.url));
+const ROM_PATH = fileURLToPath(new URL('../../packages/fc-core/tests/data/super-mario-bros.nes', import.meta.url));
 const hasRom = existsSync(ROM_PATH);
 
 async function booted() {

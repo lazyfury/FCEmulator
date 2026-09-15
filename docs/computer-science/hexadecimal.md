@@ -224,7 +224,7 @@ bit::to_hex(u16{0xFFFC}) // "0xFFFC"
 ---
 
 **相关实践代码：**
-- `src/core/bit.cpp` — `to_hex(u8)` / `to_hex(u16)`
-- `tests/test_bit.cpp` — `TEST(Format, HexStaysPadded)`
+- `packages/fc-core/src/core/bit.cpp` — `to_hex(u8)` / `to_hex(u16)`
+- `packages/fc-core/tests/test_bit.cpp` — `TEST(Format, HexStaysPadded)`
 
 **上一章：** [binary.md](binary.md) · **下一章：** [twos-complement.md](twos-complement.md)

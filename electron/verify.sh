@@ -50,7 +50,7 @@ if [ $# -ge 1 ] && [ -f "$1" ]; then
 else
     ROM_DIR="${1:-}"
     if [ -z "$ROM_DIR" ]; then
-        for candidate in "$ROOT/tests/data" "$HOME/Documents/FC games"; do
+        for candidate in "$ROOT/packages/fc-core/tests/data" "$HOME/Documents/FC games"; do
             if [ -n "$(find -L "$candidate" -maxdepth 1 -iname '*.nes' -type f 2>/dev/null | head -1)" ]; then
                 ROM_DIR="$candidate"
                 break
@@ -80,9 +80,11 @@ if ! command -v pnpm > /dev/null 2>&1; then
     exit 2
 fi
 
-echo "==> building the renderer"
-(cd "$ELECTRON" && pnpm run build) > /dev/null 2>&1 || {
-    echo "error: the Electron build failed; run 'pnpm run build' in electron/ to see why" >&2
+echo "==> building the renderer (pnpm run build)"
+# Shown, not silenced. The first build compiles the Swift gamepad helper, which
+# can take a minute; with its output hidden that minute looks like a hang.
+(cd "$ELECTRON" && pnpm run build) || {
+    echo "error: the Electron build failed; see the output above" >&2
     exit 2
 }
 
@@ -94,6 +96,16 @@ fi
 
 SCRATCH="$ELECTRON/.verify"
 rm -rf "$SCRATCH"
+
+# The reference is build/fc_headless -- the home-grown FC core -- so this run
+# must use that core too, even though Mesen is the default NES core. A
+# throwaway user data directory with the FC core pinned does that, and it also
+# means a developer's own config.json (which could name any core) cannot change
+# what this test compares. It lives outside the repository so there is nothing
+# to clean up but the directory itself.
+USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/fc-emulator-verify.XXXXXX")"
+trap 'rm -rf "$USERDATA"' EXIT
+printf '{ "cores": { "nes": "fc" } }\n' > "$USERDATA/config.json"
 
 echo "=== electron parity check: ${#ROMS[@]} ROM(s), ${#scenarios[@]} scenario(s) ==="
 echo "    native   : build/fc_headless        (the C API, no JavaScript at all)"
@@ -141,9 +153,18 @@ for scenario in "${scenarios[@]}"; do
         # structured clone for a number that fits in 64 hex digits.
         native_audio_hash="$(shasum -a 256 "$SCRATCH/samples.raw" | cut -d' ' -f1)"
 
+        # Say so before the app starts, so a slow launch is visibly working
+        # rather than apparently stuck.
+        printf '    %-40s native ok, running the app...\n' "${rom%.nes}"
+
         # --- the application ---------------------------------------------
-        output="$(cd "$ELECTRON" && pnpm exec electron . --rom "$path" --selftest "$frames" \
-            --script "$script" --snapshots "$snapshots" 2>/dev/null)"
+        # --no-gamepad: no controller is part of a parity run, and on macOS
+        # the native helper can keep the process tree alive after the window
+        # closes -- which is exactly what a script capturing stdout must not
+        # be left waiting on.
+        output="$(cd "$ELECTRON" && pnpm exec electron --user-data-dir="$USERDATA" . \
+            --rom "$path" --selftest "$frames" \
+            --script "$script" --snapshots "$snapshots" --no-gamepad 2>/dev/null)"
         electron_hashes="$(printf '%s\n' "$output" | sed -n 's/^hash //p')"
         electron_audio_hash="$(printf '%s\n' "$output" | awk '/^audio [0-9a-f]+$/ { print $2 }' | head -1)"
 

@@ -5,8 +5,8 @@
 #   ./scripts/release.sh --dry-run      build and package, then stop: no
 #                                       commit, no push, no upload
 #   ./scripts/release.sh 0.2.0          bump, build, tag, push, upload
-#   ./scripts/release.sh                release whatever electron/package.json
-#                                       already says
+#   ./scripts/release.sh                release whatever version the repo
+#                                       already says (electron/package.json)
 #   ./scripts/release.sh --draft        open the release as a draft; publish it
 #                                       by hand once the dmg has been tried
 #   ./scripts/release.sh --skip-build   reuse the .dmg/.zip already sitting in
@@ -18,7 +18,10 @@
 #   1. checks the ground: gh installed and logged in, on the release branch,
 #      work tree clean, and the tag free -- or already naming this exact commit,
 #      which is a half-finished release being resumed
-#   2. writes the version into electron/package.json
+#   2. writes the version into the two files that must both carry it:
+#      electron/package.json (npm and electron-builder read it) and
+#      cmake/Version.cmake   (the C++ core, and the libretro core's
+#                             library_version)
 #   3. ./wasm/build.sh                 the C++ core, as WebAssembly
 #      pnpm run build                  main process, renderer, gamepad helper
 #   4. electron-builder                .dmg and .zip into electron/release/
@@ -28,8 +31,8 @@
 #                                      tag, every artifact attached
 #
 # `--dry-run` does 1 through 4 for real -- the point is to find out whether the
-# packaging works -- and then stops. It writes the version to package.json so
-# the file names are right, and puts it back on the way out, so it cannot leave
+# packaging works -- and then stops. It writes the version to both files so the
+# file names are right, and puts them back on the way out, so it cannot leave
 # the tree dirty.
 #
 # There is no signing here, on purpose: the dmg is ad-hoc and Gatekeeper will
@@ -42,6 +45,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ELECTRON="$ROOT/electron"
 PKG="$ELECTRON/package.json"
+# The version has to live in two places -- package.json because npm and
+# electron-builder read it there, and cmake/Version.cmake because CMake does --
+# and a release that updates only one of them ships a core whose
+# library_version disagrees with the app. This script writes both and treats a
+# disagreement between them as a version to be fixed, not as a no-op.
+CMAKE_VERSION_FILE="$ROOT/cmake/Version.cmake"
 OUT="$ELECTRON/release"
 BRANCH="main"
 ARCH="arm64"
@@ -56,12 +65,17 @@ ALLOW_DIRTY=0
 NOTES_FILE=""
 
 PKG_BACKUP=""
+CMAKE_VERSION_BACKUP=""
 NOTES=""
 
 cleanup() {
     if [ -n "$PKG_BACKUP" ] && [ -f "$PKG_BACKUP" ]; then
         cp "$PKG_BACKUP" "$PKG"
         rm -f "$PKG_BACKUP"
+    fi
+    if [ -n "$CMAKE_VERSION_BACKUP" ] && [ -f "$CMAKE_VERSION_BACKUP" ]; then
+        cp "$CMAKE_VERSION_BACKUP" "$CMAKE_VERSION_FILE"
+        rm -f "$CMAKE_VERSION_BACKUP"
     fi
     if [ -n "$NOTES" ] && [ -f "$NOTES" ]; then
         rm -f "$NOTES"
@@ -79,6 +93,11 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
 
+# The version as cmake/Version.cmake currently spells it.
+cmake_version() {
+    sed -n 's/.*set(FC_PROJECT_VERSION "\([^"]*\)").*/\1/p' "$CMAKE_VERSION_FILE"
+}
+
 write_version() {
     PKG="$PKG" VERSION="$VERSION" node -e '
         const fs = require("fs");
@@ -86,6 +105,23 @@ write_version() {
         const json = JSON.parse(fs.readFileSync(file, "utf8"));
         json.version = process.env.VERSION;
         fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
+    '
+
+    # The CMake copy. Rewritten as text, and a failed substitute is an error
+    # rather than a silent no-op: a release that ships a core reporting the
+    # wrong library_version is a bug report nobody can act on.
+    CMAKE_VERSION_FILE="$CMAKE_VERSION_FILE" VERSION="$VERSION" node -e '
+        const fs = require("fs");
+        const file = process.env.CMAKE_VERSION_FILE;
+        const text = fs.readFileSync(file, "utf8");
+        const next = text.replace(
+            /set\(FC_PROJECT_VERSION "[^"]*"\)/,
+            `set(FC_PROJECT_VERSION "${process.env.VERSION}")`);
+        if (next === text) {
+            console.error(`no set(FC_PROJECT_VERSION ...) in ${file}`);
+            process.exit(1);
+        }
+        fs.writeFileSync(file, next);
     '
 }
 
@@ -109,6 +145,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -f "$PKG" ] || die "not a checkout of this project: $PKG is missing"
+[ -f "$CMAKE_VERSION_FILE" ] || die "not a checkout of this project: $CMAKE_VERSION_FILE is missing"
 
 # --- preflight -------------------------------------------------------------
 step "Checking the ground"
@@ -133,6 +170,7 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 
 CURRENT_VERSION="$(node -p "require('$PKG').version")"
+CURRENT_CMAKE_VERSION="$(cmake_version)"
 [ -n "$VERSION" ] || VERSION="$CURRENT_VERSION"
 # Keep the version a version: electron-builder reads it and the tag is built
 # from it, so a stray "v" or space ends up in a file name.
@@ -168,6 +206,7 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 fi
 
 note "version : $CURRENT_VERSION -> $VERSION"
+note "core    : $(cmake_version) -> $VERSION"
 note "tag     : $TAG"
 note "target  : $ARCH"
 [ "$DRAFT" = 1 ]      && note "draft   : yes"
@@ -175,19 +214,29 @@ note "target  : $ARCH"
 [ "$DRY_RUN" = 1 ]    && note "dry run : build and package only, nothing published"
 
 # --- version ---------------------------------------------------------------
-step "Writing the version into electron/package.json"
-if [ "$VERSION" = "$CURRENT_VERSION" ]; then
-    note "already $VERSION"
+step "Writing the version into package.json and cmake/Version.cmake"
+if [ "$VERSION" = "$CURRENT_VERSION" ] && [ "$VERSION" = "$CURRENT_CMAKE_VERSION" ]; then
+    note "already $VERSION in both files"
 else
+    if [ "$VERSION" = "$CURRENT_VERSION" ]; then
+        note "package.json  : already $VERSION"
+    else
+        note "package.json  : $CURRENT_VERSION -> $VERSION"
+    fi
+    if [ "$VERSION" = "$CURRENT_CMAKE_VERSION" ]; then
+        note "Version.cmake : already $VERSION"
+    else
+        note "Version.cmake : $CURRENT_CMAKE_VERSION -> $VERSION"
+    fi
     if [ "$DRY_RUN" = 1 ]; then
         # electron-builder reads the version from package.json and puts it in
-        # every file name, so a dry run has to write it too. It gets put back
-        # by the EXIT trap, because a dry run may not change the checkout.
+        # every file name, so a dry run has to write it too. Both files get put
+        # back by the EXIT trap, because a dry run may not change the checkout.
         PKG_BACKUP="$(mktemp -t fc-pkg-backup)"
         cp "$PKG" "$PKG_BACKUP"
-        note "[dry] $CURRENT_VERSION -> $VERSION (put back at the end)"
-    else
-        note "$CURRENT_VERSION -> $VERSION"
+        CMAKE_VERSION_BACKUP="$(mktemp -t fc-cmake-version-backup)"
+        cp "$CMAKE_VERSION_FILE" "$CMAKE_VERSION_BACKUP"
+        note "[dry] both files restored at the end"
     fi
     write_version
 fi
@@ -245,7 +294,7 @@ step "Committing and tagging"
 if [ "$TAG_AT_HEAD" = 1 ]; then
     note "$TAG is already at HEAD; nothing to commit or tag"
 else
-    git -C "$ROOT" add "$PKG"
+    git -C "$ROOT" add "$PKG" "$CMAKE_VERSION_FILE"
     if git -C "$ROOT" diff --cached --quiet; then
         note "nothing to commit; $VERSION was already the version"
     else

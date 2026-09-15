@@ -44,7 +44,7 @@ std::optional<std::filesystem::path> find_rom(const std::filesystem::path& reque
 {
     const std::filesystem::path candidates[] = {
         requested,
-        "tests/data/super-mario-bros.nes",
+        "packages/fc-core/tests/data/super-mario-bros.nes",
         "/Users/suke/Downloads/超级玛丽.nes",
     };
     for (const auto& path : candidates) {

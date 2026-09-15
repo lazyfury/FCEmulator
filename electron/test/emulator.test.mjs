@@ -21,7 +21,7 @@ import createFcCore from '../../wasm/dist/fc_core.mjs';
 
 // A symlink into a real ROM folder. Nothing is committed there, so this whole
 // file skips itself on a machine that has no ROMs.
-const ROM_PATH = fileURLToPath(new URL('../../tests/data/super-mario-bros.nes', import.meta.url));
+const ROM_PATH = fileURLToPath(new URL('../../packages/fc-core/tests/data/super-mario-bros.nes', import.meta.url));
 const hasRom = existsSync(ROM_PATH);
 
 async function bootedEmulator() {

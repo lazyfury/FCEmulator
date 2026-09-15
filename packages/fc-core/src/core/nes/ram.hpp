@@ -62,6 +62,12 @@ public:
     /// Direct access, for tests and the future debugger. `index` is 0..$07FF.
     [[nodiscard]] const std::array<u8, kSize>& bytes() const noexcept { return bytes_; }
 
+    /// The chip's bytes as a pointer, for a front end that persists or
+    /// searches them. The mask above is still the only way the CPU reaches
+    /// them; this is the view for everything that is not the CPU.
+    [[nodiscard]] u8* data() noexcept { return bytes_.data(); }
+    [[nodiscard]] const u8* data() const noexcept { return bytes_.data(); }
+
 private:
     std::array<u8, kSize> bytes_{};
 };

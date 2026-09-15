@@ -12,7 +12,7 @@
 // wasm/headless.mjs and the Electron renderer share wasm/emulator.mjs, so a
 // bug in that file would be invisible to a test that compares only those two.
 // This tool shares nothing with either of them: it goes through
-// src/ffi/emulator_api.h directly, in C++, and links no JavaScript at all.
+// packages/fc-core/src/ffi/emulator_api.h directly, in C++, and links no JavaScript at all.
 //
 // It is the independent third opinion, and it is what makes the other two
 // comparable rather than merely self-consistent.

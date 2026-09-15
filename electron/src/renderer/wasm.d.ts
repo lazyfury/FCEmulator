@@ -203,6 +203,85 @@ interface FcTestHook {
     }>;
 }
 
+/**
+ * The CoreHost surface, which both ABI back ends implement.
+ *
+ * It is the public shape of the Emulator class above, written once here so
+ * that `useEmulator.ts` can hold either the fc_* wasm module or the libretro
+ * wasm core without knowing which. The two are the same game loop; only the
+ * ABI underneath differs.
+ *
+ * `saveState` and `loadState` move opaque bytes, and `createStateBuffer`
+ * reserves room for several states in the core's own memory, which is what
+ * rewind needs. None of it is a copy the front end has to manage.
+ */
+interface CoreHost {
+    readonly width: number;
+    readonly height: number;
+    /** Bytes between the starts of two rows, when it differs from width * 4.
+     *  mGBA reports 240 visible pixels with a 1024 byte pitch. */
+    readonly pitch?: number;
+    readonly sampleRate: number;
+
+    loadRom(bytes: Uint8Array): boolean;
+    readonly isLoaded: boolean;
+    readonly romSummary: string;
+    readonly lastError: string;
+
+    reset(): void;
+    runFrame(): boolean;
+    readonly isHalted: boolean;
+    readonly frameCount: number;
+    readonly totalCycles: number;
+    readonly cpuPc: number;
+
+    framebufferBytes(): Uint8Array;
+    pixel(x: number, y: number): number;
+
+    takeSamples(count?: number): Float32Array;
+    readonly samplesPending: number;
+    clearSamples(): void;
+
+    setButton(button: number, pressed: boolean, port?: number): void;
+    releaseAllButtons(): void;
+
+    peek(address: number): number;
+    poke(address: number, value: number): void;
+    setCheats(cheats: { address: number; value: number; freeze: boolean; enabled: boolean }[]): void;
+    readonly cheatCount: number;
+
+    saveState(): Uint8Array | null;
+    createStateBuffer(slots: number): import('@wasm').StateBuffer | null;
+    loadState(bytes: Uint8Array): boolean;
+    readonly mapperSavesState: boolean;
+
+    destroy(): void;
+}
+
+/** wasm/libretro.mjs, reached through the `@libretro` alias in vite.config.ts. */
+declare module '@libretro' {
+    /**
+     * Wrap an instantiated `fc_libretro.mjs`. The module is passed in rather
+     * than imported because where the .wasm lives depends on the caller.
+     */
+    export function createCoreHost(module: unknown): Promise<CoreHost>;
+
+    export const Button: (typeof import('@wasm'))['Button'];
+    export const Joypad: Record<string, number>;
+    export const Memory: Record<string, number>;
+    export const Region: Record<string, number>;
+    export const PixelFormat: Record<string, number>;
+    export const Device: Record<string, number>;
+    export class StateBuffer {
+        readonly slots: number;
+        readonly capacity: number;
+        save(slot: number): boolean;
+        load(slot: number): boolean;
+        clear(): void;
+        destroy(): void;
+    }
+}
+
 interface Window {
     fc: import('./shared/api').FcBridge;
     __fc?: FcTestHook;

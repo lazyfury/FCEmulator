@@ -94,9 +94,18 @@ export class AudioOutput {
     static async create(options: {
         capacity?: number;
         targetFill?: number;
+        /** The core's rate: 44100 for the NES, 65536 for a GBA, 131072 for a
+         *  Game Boy. The context runs at it, so nothing resamples on the way
+         *  in; Chromium resamples to the device at the far end. */
+        sampleRate?: number;
     } = {}): Promise<AudioOutput> {
-        const capacity = options.capacity ?? DEFAULT_CAPACITY;
-        const targetFill = options.targetFill ?? DEFAULT_TARGET_FILL;
+        const sampleRate = options.sampleRate ?? 44100;
+        // The ring's sizes are times, not sample counts: three quarters of a
+        // second of headroom and a seventy millisecond target. A core that
+        // runs faster gets proportionally more samples to hold the same time.
+        const scale = sampleRate / 44100;
+        const capacity = options.capacity ?? Math.round(DEFAULT_CAPACITY * scale);
+        const targetFill = options.targetFill ?? Math.round(DEFAULT_TARGET_FILL * scale);
 
         // SharedArrayBuffer is the actual requirement. Cross origin isolation
         // is the usual way a browser grants it, but it is not the only way:
@@ -120,7 +129,7 @@ export class AudioOutput {
         // Ask for the emulator's own rate, so there is no resampling between
         // the APU and the ring. Chromium still resamples to the device at the
         // far end if the hardware runs at 48kHz.
-        const context = new AudioContext({ sampleRate: 44100 });
+        const context = new AudioContext({ sampleRate });
 
         const url = new URL(workletUrl, document.baseURI).href;
         await context.audioWorklet.addModule(url);

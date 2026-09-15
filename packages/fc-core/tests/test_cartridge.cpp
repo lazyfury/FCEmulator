@@ -1809,3 +1809,106 @@ TEST(Cartridge, InterchangesWithTheRamCartridgePlaceholder)
 
     EXPECT_EQ(cpu.registers().a, 0x7F);
 }
+
+// ===========================================================================
+// Save RAM and the battery bit
+//
+// A front end persists the bytes prg_ram() points at, so the two things that
+// matter are that it is the same memory the CPU reads at $6000 and that a
+// cartridge without the battery bit does not claim to have a save at all.
+// ===========================================================================
+
+TEST(Cartridge, WithoutTheBatteryBitThereIsNoSaveRam)
+{
+    const std::vector<u8> rom = make_ines(2, 1, /*flags6=*/0x00);
+    std::string error;
+    auto cart = load(rom, error);
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    EXPECT_FALSE(cart->battery_backed());
+}
+
+TEST(Cartridge, TheBatteryBitIsReportedAndTheRamIsTheCpusRam)
+{
+    // flags 6 bit 1 is the battery. Bit 0 is the mirroring, so 0x02 is
+    // horizontal with a battery.
+    const std::vector<u8> rom = make_ines(2, 1, /*flags6=*/0x02);
+    std::string error;
+    auto cart = load(rom, error);
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    ASSERT_TRUE(cart->battery_backed());
+    ASSERT_EQ(cart->prg_ram().size(), 0x2000u);
+
+    // The exposed buffer is the cartridge's own memory: a write through the
+    // bus is the byte the front end would save, and a byte written into the
+    // buffer is what the CPU reads back.
+    cart->write(0x6000, 0x5A);
+    EXPECT_EQ(cart->prg_ram()[0], 0x5A);
+    cart->prg_ram()[1] = 0xA5;
+    EXPECT_EQ(cart->read(0x6001), 0xA5);
+}
+
+TEST(Cartridge, ABoardThatDoesNotAnswer6000WithRamHasNoSave)
+{
+    // Mapper 87 (Jaleco JF-13) puts registers at $6000, not a RAM chip, so
+    // even with the battery bit set there is nothing a front end could save.
+    // The mapper number packs as (flags7 & 0xF0) | (flags6 >> 4): 87 is 0x57,
+    // so flags6 carries 0x70 (plus the battery) and flags7 carries 0x50.
+    std::vector<u8> rom = make_ines(2, 1, /*flags6=*/0x02 | 0x70);
+    rom[7] = 0x50;
+
+    std::string error;
+    auto cart = load(rom, error);
+    ASSERT_TRUE(cart.has_value()) << error;
+    ASSERT_EQ(cart->header().mapper, 87);
+
+    EXPECT_FALSE(cart->battery_backed());
+}
+
+// ===========================================================================
+// Game Genie patches
+//
+// The patch acts on the byte the cartridge returned, at the CPU address, after
+// the mapper has banked. A compare byte lets a code apply to one bank and not
+// another, which is the only reason eight letter codes exist.
+// ===========================================================================
+
+TEST(Cartridge, APrgPatchReplacesTheByteTheMapperReturned)
+{
+    // make_ines fills PRG so that byte i is (i & 0xFF). NROM maps $8000 to
+    // PRG offset 0, so $8002 reads 0x02 before any patch.
+    const std::vector<u8> rom = make_ines(2, 1);
+    std::string error;
+    auto cart = load(rom, error);
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    EXPECT_EQ(cart->read(0x8002), 0x02);
+
+    const nes::Cartridge::PrgPatch patch{ 0x8002, 0x55, -1 };
+    cart->set_prg_patches(std::span<const nes::Cartridge::PrgPatch>(&patch, 1));
+    EXPECT_EQ(cart->read(0x8002), 0x55);
+    // Only the named address moved.
+    EXPECT_EQ(cart->read(0x8003), 0x03);
+
+    cart->clear_prg_patches();
+    EXPECT_EQ(cart->read(0x8002), 0x02);
+}
+
+TEST(Cartridge, ACompareByteLetsAPatchApplyToOnlyOneValue)
+{
+    const std::vector<u8> rom = make_ines(2, 1);
+    std::string error;
+    auto cart = load(rom, error);
+    ASSERT_TRUE(cart.has_value()) << error;
+
+    // $8002 is 0x02. A patch that expects 0x02 applies; one that expects
+    // anything else leaves the byte alone.
+    const nes::Cartridge::PrgPatch matching{ 0x8002, 0x55, 0x02 };
+    cart->set_prg_patches(std::span<const nes::Cartridge::PrgPatch>(&matching, 1));
+    EXPECT_EQ(cart->read(0x8002), 0x55);
+
+    const nes::Cartridge::PrgPatch missing{ 0x8002, 0x66, 0x03 };
+    cart->set_prg_patches(std::span<const nes::Cartridge::PrgPatch>(&missing, 1));
+    EXPECT_EQ(cart->read(0x8002), 0x02);
+}

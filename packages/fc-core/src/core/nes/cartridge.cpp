@@ -5,14 +5,19 @@
 #include "core/nes/mapper2.hpp"
 #include "core/nes/mapper3.hpp"
 #include "core/nes/mapper4.hpp"
+#include "core/nes/mapper74.hpp"
+#include "core/nes/mapper241.hpp"
+#include "core/nes/mapper245.hpp"
 #include "core/nes/mapper7.hpp"
 #include "core/nes/mapper9.hpp"
 #include "core/nes/mapper10.hpp"
 #include "core/nes/mapper11.hpp"
+#include "core/nes/mapper121.hpp"
 #include "core/nes/mapper13.hpp"
 #include "core/nes/mapper15.hpp"
 #include "core/nes/mapper18.hpp"
 #include "core/nes/mapper19.hpp"
+#include "core/nes/mapper199.hpp"
 #include "core/nes/mapper21.hpp"
 #include "core/nes/mapper32.hpp"
 #include "core/nes/mapper33.hpp"
@@ -23,6 +28,7 @@
 #include "core/nes/mapper87.hpp"
 #include "core/nes/mapper162.hpp"
 #include "core/nes/mapper163.hpp"
+#include "core/nes/mapper165.hpp"
 #include "core/nes/mapper164.hpp"
 #include "core/nes/mapper178.hpp"
 #include "core/nes/mapper177.hpp"
@@ -234,6 +240,16 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
         break;
     }
 
+    case 74: {   // Waixing MMC3 with a 2KB CHR RAM window.
+        auto mapper = std::make_unique<Mapper74>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
     case 78: {   // Jaleco JF-16
         cart.mapper_ = std::make_unique<Mapper78>(
             cart.prg_rom_, cart.chr_rom_, header.mirroring);
@@ -243,6 +259,16 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
     case 87: {   // Jaleco JF-13
         cart.mapper_ = std::make_unique<Mapper87>(
             cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
+    case 121: {  // MMC3 with a protection latch.
+        auto mapper = std::make_unique<Mapper121>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
         break;
     }
 
@@ -286,6 +312,16 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
         break;
     }
 
+    case 165: {  // MMC2-style CHR latch on an MMC3.
+        auto mapper = std::make_unique<Mapper165>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
     case 177: {  // Henggedianzi
         auto mapper = std::make_unique<Mapper177>(
             cart.prg_rom_, cart.chr_rom_, header.mirroring);
@@ -298,6 +334,16 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
 
     case 190: {  // Magic Kid Goo Goo
         auto mapper = std::make_unique<Mapper190>(cart.prg_rom_, cart.chr_rom_);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 199: {  // MMC3 with four board registers and CHR RAM by page.
+        auto mapper = std::make_unique<Mapper199>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
         if (header.chr_rom_pages == 0) {
             mapper->make_chr_ram();
         }
@@ -323,8 +369,24 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
         break;
     }
 
+    case 241: {  // 32KB PRG window and 8KB of CHR RAM.
+        cart.mapper_ = std::make_unique<Mapper241>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
     case 242: {  // Waixing
         auto mapper = std::make_unique<Mapper242>(cart.prg_rom_, cart.chr_rom_);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 245: {  // Waixing MMC3, PRG high bit from CHR register 0.
+        auto mapper = std::make_unique<Mapper245>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
         if (header.chr_rom_pages == 0) {
             mapper->make_chr_ram();
         }
@@ -393,7 +455,22 @@ u8 Cartridge::read(u16 address)
         return prg_ram_[static_cast<std::size_t>(address - kPrgRamBase) % prg_ram_.size()];
     }
 
-    return mapper_->read_prg(address);
+    u8 value = mapper_->read_prg(address);
+
+    // Game Genie patches act here, on the byte the cartridge returned, at the
+    // CPU address -- after banking. An eight letter code only applies when
+    // the byte already matches its compare value, which is how two banks that
+    // share an address are told apart.
+    for (const PrgPatch& patch : prg_patches_) {
+        if (patch.address != address) {
+            continue;
+        }
+        if (patch.compare >= 0 && static_cast<u8>(patch.compare) != value) {
+            continue;
+        }
+        value = patch.value;
+    }
+    return value;
 }
 
 void Cartridge::write(u16 address, u8 value)

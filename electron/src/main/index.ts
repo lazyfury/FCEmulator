@@ -27,9 +27,10 @@ import { pathToFileURL } from 'node:url';
 import { NativeGamepad, EMPTY_READING, gamepadBinaryPath } from './gamepad';
 import { GameLibrary, SCREENSHOT_DIRECTORY, collectGames, isInside } from './library';
 import {
-    IpcChannel, LIBRARY_HOST, type BootRom, type Cheat, type GamepadButtonName,
+    IpcChannel, LIBRARY_HOST, ROM_EXTENSIONS, CORES_BY_SYSTEM,
+    type BootRom, type Cheat, type CoreId, type CoreSelection, type GamepadButtonName,
     type GamepadReading, type InputSettings, type KeyBinding, type LibraryState,
-    type Preferences, DEFAULT_INPUT_SETTINGS,
+    type Preferences, type SystemId, DEFAULT_INPUT_SETTINGS,
 } from '../shared/api';
 import { bootLog, bootOrigin, setBootOrigin } from '../shared/boot';
 
@@ -155,7 +156,7 @@ function parseArguments(argv: string[]): Options {
             // Resolved against the working directory at start up, so that the
             // path the renderer sees is the same one every time it is asked
             // about. Save states are filed by file name and are indifferent,
-            // but cheats are keyed by the whole path, and "../tests/data/x.nes"
+            // but cheats are keyed by the whole path, and "../packages/fc-core/tests/data/x.nes"
             // and an absolute path to the same file would be two entries with
             // different bytes in them.
             options.romPath = argv[i + 1] !== undefined ? resolve(argv[i + 1]) : null;
@@ -519,6 +520,10 @@ function createWindow(): BrowserWindow {
             // Tell the preload what mode it is in. See FcBridge.
             additionalArguments: [
                 `--fc-boot-t0=${bootOrigin()}`,
+                // The saved core choice, so an eager `--rom` build is not on
+                // the wrong core for the first hundred milliseconds. Encoded
+                // because it is JSON and an argument list is not.
+                `--fc-cores=${encodeURIComponent(JSON.stringify(normaliseCores(readConfig().cores)))}`,
                 ...(options.selftestFrames > 0 ? ['--fc-selftest'] : []),
                 ...(EAGER_MACHINE ? ['--fc-eager'] : []),
                 ...(GAMEPAD_ENABLED ? ['--fc-gamepad'] : []),
@@ -634,6 +639,8 @@ interface Config {
     panelWidth?: number;
     /** Keyboard mode, key bindings and pad assignments. */
     input?: InputSettings;
+    /** Which core to use for each console, keyed by system id. */
+    cores?: Record<string, string>;
     /** Cheats, keyed by the cartridge's path. */
     cheats?: Record<string, Cheat[]>;
 }
@@ -718,6 +725,32 @@ function normaliseInput(raw: unknown): InputSettings {
         : [];
 
     return { keyboard, keyboardPlayer, bindings, padPorts };
+}
+
+/**
+ * A core selection, with anything that is not a real (system, core) pair
+ * dropped.
+ *
+ * Read defensively for the same reason `normaliseInput` is: config.json is a
+ * text file a person can edit. The IDs are checked against the shared table so
+ * the main process can never be talked into remembering a core the renderer
+ * would then silently fall back from -- a choice that does not stick is worse
+ * than one that was refused.
+ */
+function normaliseCores(raw: unknown): CoreSelection {
+    const selection: CoreSelection = {};
+    if (raw === null || typeof raw !== 'object') {
+        return selection;
+    }
+    const value = raw as Record<string, unknown>;
+    for (const system of Object.keys(CORES_BY_SYSTEM) as SystemId[]) {
+        const core = value[system];
+        if (typeof core === 'string'
+            && (CORES_BY_SYSTEM[system] as readonly string[]).includes(core)) {
+            selection[system] = core as CoreId;
+        }
+    }
+    return selection;
 }
 
 /** Cached, because this is asked for on every IPC call and reading a file to
@@ -969,7 +1002,7 @@ function registerIpc(): void {
                     title: '添加到游戏库',
                     buttonLabel: '拷贝',
                     properties: ['openFile', 'multiSelections'],
-                    filters: [{ name: 'NES ROM', extensions: ['nes'] }],
+                    filters: [{ name: 'ROM', extensions: [...ROM_EXTENSIONS] }],
                 });
                 if (chosen.canceled) {
                     return null;
@@ -1068,6 +1101,7 @@ function registerIpc(): void {
                 ? config.panelWidth
                 : null,
             input: normaliseInput(config.input),
+            cores: normaliseCores(config.cores),
         };
     });
 
@@ -1081,6 +1115,18 @@ function registerIpc(): void {
      */
     ipcMain.handle(IpcChannel.WriteInputSettings, async (_event, settings: unknown): Promise<void> => {
         writeConfig({ ...readConfig(), input: normaliseInput(settings) });
+    });
+
+    /**
+     * Which core to run each console on.
+     *
+     * The whole mapping at once, and only pairs that exist: see
+     * `normaliseCores`. The renderer has already rebuilt its machine by the
+     * time this lands, so the file is a record of a decision, not the decision
+     * itself.
+     */
+    ipcMain.handle(IpcChannel.WriteCoreSelection, async (_event, selection: unknown): Promise<void> => {
+        writeConfig({ ...readConfig(), cores: normaliseCores(selection) });
     });
 
     /**

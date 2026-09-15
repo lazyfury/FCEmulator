@@ -57,6 +57,7 @@
 
 #include "core/nes/mapper.hpp"
 
+#include <array>
 #include <cstddef>
 #include <utility>
 #include <vector>
@@ -76,6 +77,14 @@ public:
     {
         chr_.assign(size, 0);
         chr_ram_ = true;
+    }
+
+    /// A second CHR store, for boards that mix ROM and RAM on the pattern
+    /// bus: a few kilobytes of writable memory beside the ROM, selected by
+    /// page number rather than by a mode bit.
+    void make_chr_ram_window(std::size_t size)
+    {
+        chr_ram_window_.assign(size, 0);
     }
 
     // -- the CPU's view, $8000-$FFFF -----------------------------------------
@@ -159,29 +168,17 @@ public:
 
     [[nodiscard]] u8 read_chr(u16 address) override
     {
-        const std::size_t banks = chr_.size() / 0x400u;   // 1KB banks
-        if (banks == 0) {
-            return 0;
-        }
         const std::size_t slot = static_cast<std::size_t>(address >> 10) & 0x07u;
-        const std::size_t bank =
-            map_chr_bank(slot, chr_slot_[slot]) % banks;
-        return chr_[bank * 0x400u + static_cast<std::size_t>(address & 0x3FFu)];
+        const std::size_t page = map_chr_bank(slot, chr_slot_[slot]);
+        return read_chr_page(page, static_cast<std::size_t>(address & 0x3FFu));
     }
 
     void write_chr(u16 address, u8 value) override
     {
-        if (!chr_ram_) {
-            return;
-        }
-        const std::size_t banks = chr_.size() / 0x400u;
-        if (banks == 0) {
-            return;
-        }
         const std::size_t slot = static_cast<std::size_t>(address >> 10) & 0x07u;
-        const std::size_t bank =
-            map_chr_bank(slot, chr_slot_[slot]) % banks;
-        chr_[bank * 0x400u + static_cast<std::size_t>(address & 0x3FFu)] = value;
+        const std::size_t page = map_chr_bank(slot, chr_slot_[slot]);
+        ++chr_writes_[page & 0xFFu];
+        write_chr_page(page, static_cast<std::size_t>(address & 0x3FFu), value);
     }
 
     [[nodiscard]] Mirroring mirroring() const noexcept override { return mirroring_; }
@@ -220,6 +217,15 @@ public:
     }
     [[nodiscard]] u8 bank_select() const noexcept { return bank_select_; }
 
+    /// How many times the CPU wrote to a 1KB CHR page, by the page's low byte.
+    /// A game that writes a page it reads as ROM is a game that expects RAM
+    /// there, which is the only reliable way to find where a board puts its
+    /// pattern RAM when the header disagrees.
+    [[nodiscard]] long chr_write_count(std::size_t page) const noexcept
+    {
+        return chr_writes_[page & 0xFFu];
+    }
+
 private:
     [[nodiscard]] std::size_t prg_bank_count() const noexcept
     {
@@ -245,7 +251,72 @@ protected:
         return bank;
     }
 
-private:
+    /// Whether the 1KB CHR page a slot points at lives in the RAM window
+    /// rather than in the ROM. The page is the mapped page number, which for
+    /// every board that mixes ROM and RAM is also the register value. The
+    /// default is the old behaviour: the whole CHR is RAM, or none of it is.
+    [[nodiscard]] virtual bool chr_page_is_ram(std::size_t /*page*/) const noexcept
+    {
+        return chr_ram_;
+    }
+
+protected:
+    /// Read one byte of a 1KB CHR page, from the RAM window or the ROM as the
+    /// page says. Shared by read_chr and by subclasses that map slots
+    /// themselves.
+    [[nodiscard]] u8 read_chr_page(std::size_t page, std::size_t offset) const
+    {
+        if (chr_page_is_ram(page)) {
+            if (chr_ram_window_.empty()) {
+                return 0;
+            }
+            const std::size_t banks = chr_ram_window_.size() / 0x400u;
+            return chr_ram_window_[(page % banks) * 0x400u + offset];
+        }
+        const std::size_t banks = chr_.size() / 0x400u;
+        if (banks == 0) {
+            return 0;
+        }
+        return chr_[(page % banks) * 0x400u + offset];
+    }
+
+    void write_chr_page(std::size_t page, std::size_t offset, u8 value)
+    {
+        if (chr_page_is_ram(page)) {
+            if (chr_ram_window_.empty()) {
+                return;
+            }
+            const std::size_t banks = chr_ram_window_.size() / 0x400u;
+            chr_ram_window_[(page % banks) * 0x400u + offset] = value;
+            return;
+        }
+        if (!chr_ram_) {
+            return;
+        }
+        const std::size_t banks = chr_.size() / 0x400u;
+        if (banks == 0) {
+            return;
+        }
+        chr_[(page % banks) * 0x400u + offset] = value;
+    }
+
+    /// The page a slot currently points at, after any subclass permutation.
+    [[nodiscard]] std::size_t chr_page_for_slot(std::size_t slot) const noexcept
+    {
+        return map_chr_bank(slot, chr_slot_[slot & 0x07u]);
+    }
+
+    /// One byte of an 8KB PRG bank, for a subclass that maps a window itself
+    /// rather than through map_prg_bank().
+    [[nodiscard]] u8 read_prg_bank(std::size_t bank, u16 address) const
+    {
+        if (prg_.empty()) {
+            return 0;
+        }
+        const std::size_t banks = prg_.size() / 0x2000u;
+        const std::size_t b = (banks == 0u) ? 0u : bank % banks;
+        return prg_[b * 0x2000u + static_cast<std::size_t>(address & 0x1FFFu)];
+    }
 
     void write_bank_data(u8 value)
     {
@@ -311,6 +382,8 @@ private:
 
     std::vector<u8> prg_;
     std::vector<u8> chr_;
+    std::vector<u8> chr_ram_window_;
+    std::array<long, 256> chr_writes_{};
     Mirroring mirroring_;
     bool chr_ram_ = false;
 
@@ -380,6 +453,10 @@ public:
         if (chr_ram_) {
             out.sized_bytes(chr_);
         }
+        out.put_flag(!chr_ram_window_.empty());
+        if (!chr_ram_window_.empty()) {
+            out.sized_bytes(chr_ram_window_);
+        }
     }
 
     bool deserialize(StateReader& in) override
@@ -420,6 +497,11 @@ public:
         in.get_flag(chr_ram_);
         if (chr_ram_) {
             in.sized_bytes(chr_);
+        }
+        bool has_window = false;
+        in.get_flag(has_window);
+        if (has_window) {
+            in.sized_bytes(chr_ram_window_);
         }
         return in.ok();
     }

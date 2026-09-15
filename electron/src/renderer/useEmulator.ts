@@ -30,11 +30,15 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { Button, Emulator } from '@wasm';
+import { Button } from '@wasm';
+import { createCoreHost } from '@libretro';
+import { chooseCore, sameCore, type CoreChoice } from './systems';
 
 import { AudioOutput } from './audio/output';
 import { bootLog } from '../shared/boot';
-import { DEFAULT_INPUT_SETTINGS, type Cheat, type InputSettings } from '../shared/api';
+import {
+    DEFAULT_INPUT_SETTINGS, type Cheat, type CoreSelection, type InputSettings,
+} from '../shared/api';
 import { resolveBindings, padPort } from './bindings';
 import { INITIAL_STATUS, unloaded, type EngineStatus } from './engineStatus';
 import {
@@ -43,9 +47,6 @@ import {
 } from './gamepad';
 import { attachKeyboard, InputManager, type ButtonName, type CommandName } from './input';
 import { Rewind } from './rewind';
-
-/** 60.0988 frames per second, the console's real rate. */
-const NES_FRAME_SECONDS = 1 / 60.0988;
 
 /**
  * How many frames one animation frame is allowed to catch up on.
@@ -67,6 +68,14 @@ export interface EmulatorHandle {
     loadRom(path: string): Promise<boolean>;
     /** Take the cartridge out and stop running. */
     unload(): void;
+    /**
+     * Power the console back on with the cartridge already in the slot.
+     *
+     * This is how a core change reaches the machine: `loadRom` would count a
+     * play, but swapping the emulator is not playing the game again. With no
+     * cartridge in the slot it does nothing.
+     */
+    reload(): void;
     /**
      * The same commands the keyboard sends: pause, reset, screenshot, save
      * and load.
@@ -101,6 +110,16 @@ export interface EmulatorHandlers {
      */
     input?: InputSettings;
     /**
+     * The core the player chose for each console.
+     *
+     * Read through the ref at load time, like the input settings, so that a
+     * change made on the settings screen is picked up by the next load -- and
+     * by `reload`, which is what a change made mid-game goes through. The
+     * machine is not rebuilt just because this object changed; the caller
+     * calls reload() when it wants that.
+     */
+    cores?: CoreSelection;
+    /**
      * A PNG of the picture, when the player takes a screenshot.
      *
      * `asCover` is true for Shift+F12 and the 更新封面 button: the picture is
@@ -131,6 +150,8 @@ export function useEmulator(
     // dependency array would otherwise reload the emulator on every render.
     const actions = useRef<{
         loadRom: (path: string) => Promise<boolean>;
+        loadInto: (path: string, countPlay: boolean) => Promise<boolean>;
+        reload: () => Promise<boolean>;
         unload: () => void;
         command: (command: CommandName) => void;
         poke: (address: number, value: number) => void;
@@ -138,6 +159,8 @@ export function useEmulator(
         applyCheats: () => void;
     }>({
         loadRom: async () => false,
+        loadInto: async () => false,
+        reload: async () => false,
         unload: () => undefined,
         command: () => undefined,
         poke: () => undefined,
@@ -162,7 +185,7 @@ export function useEmulator(
 
         let disposed = false;
         let animationFrame = 0;
-        let emulator: Emulator | null = null;
+        let emulator: CoreHost | null = null;
         let detachKeyboard: (() => void) | null = null;
         let commandHandler: ((command: CommandName) => void) | null = null;
         let gamepad: GamepadInput | null = null;
@@ -287,17 +310,38 @@ export function useEmulator(
             const buildStarted = Date.now();
             setStatus((s) => ({ ...s, state: 'loading' }));
 
-            // Where fc_core.mjs lives depends on whether this page came from
-            // the Vite dev server or the app:// protocol, so ask the document
-            // instead of hardcoding. `@vite-ignore` stops Vite trying to
-            // bundle a path it cannot resolve at build time.
-            const moduleUrl = new URL('fc_core.mjs', document.baseURI).href;
-            bootLog('renderer', 'import fc_core.mjs begin', moduleUrl);
+            // Which console. A game the player picked names its own core by
+            // its extension; a game on the command line is the only other
+            // thing that can, so it is fetched here, before anything is built.
+            const bootRomStarted = Date.now();
+            const boot = await window.fc.getBootRom();
+            bootLog(
+                'renderer',
+                'getBootRom',
+                boot === null
+                    ? `${Date.now() - bootRomStarted}ms, no --rom`
+                    : `${Date.now() - bootRomStarted}ms, ${boot.path}`,
+            );
+            const core = pendingCore ?? chooseCore(boot?.path ?? '', outward.current.cores);
+            coreInUse = core;
+            bootLog('renderer', 'core', `${core.id} (${core.module}), ${core.sampleRate} Hz`);
+
+            // Where the core's JavaScript lives depends on whether this page
+            // came from the Vite dev server or the app:// protocol, so ask the
+            // document instead of hardcoding. `@vite-ignore` stops Vite trying
+            // to bundle a path it cannot resolve at build time.
+            //
+            // This is a libretro core. wasm/libretro.mjs is the front end half
+            // of the ABI and does not care which core it is given; the file
+            // name is the whole of the difference between the NES and a Game
+            // Boy.
+            const moduleUrl = new URL(core.module, document.baseURI).href;
+            bootLog('renderer', `import ${core.module} begin`, moduleUrl);
             const importStarted = Date.now();
             const factory = (await import(/* @vite-ignore */ moduleUrl)) as {
                 default: () => Promise<unknown>;
             };
-            bootLog('renderer', 'import fc_core.mjs done', `${Date.now() - importStarted}ms`);
+            bootLog('renderer', `import ${core.module} done`, `${Date.now() - importStarted}ms`);
 
             // Instantiating the module is where the .wasm is compiled and the
             // linear memory is set aside, and it is usually the single largest
@@ -311,8 +355,8 @@ export function useEmulator(
             }
 
             const createStarted = Date.now();
-            emulator = await Emulator.create({ module: wasm as never });
-            bootLog('renderer', 'Emulator.create', `${Date.now() - createStarted}ms`);
+            emulator = await createCoreHost(wasm);
+            bootLog('renderer', 'createCoreHost', `${Date.now() - createStarted}ms`);
             const engine = emulator;
             if (disposed) {
                 engine.destroy();
@@ -333,6 +377,9 @@ export function useEmulator(
             // over the top of this, and a game is loaded when the player picks
             // one -- or straight away, if the command line named one.
             let loaded = false;
+            // The cartridge in the slot, so a rebuild can put it back. Only
+            // meaningful while `loaded` is true.
+            let loadedPath: string | null = null;
 
             // Now that there is a machine, point the input manager at it. The
             // keyboard and the pad were set up when the effect ran; they start
@@ -346,7 +393,10 @@ export function useEmulator(
             // throwing away a working picture because the speaker was busy.
             const audioStarted = Date.now();
             try {
-                audio = await AudioOutput.create();
+                // The core's own rate, so nothing resamples on the way in.
+                // 44100 for the NES, 65536 for a GBA, 131072 for a Game Boy;
+                // Chromium resamples to the device at the far end.
+                audio = await AudioOutput.create({ sampleRate: core.sampleRate });
                 audio.resume().catch(() => undefined);
                 bootLog(
                     'renderer',
@@ -370,18 +420,25 @@ export function useEmulator(
                 return;
             }
 
-            canvas.width = engine.width;
-            canvas.height = engine.height;
-
-            // 256x240 RGBA, allocated once and rewritten every frame.
-            const image = context.createImageData(engine.width, engine.height);
+            // The picture is sized when a cartridge goes in, not now: a
+            // libretro core reports its geometry only once it has a game in it
+            // (mGBA) or whenever it is asked (the NES core), and sizing before
+            // the former would leave a canvas of the wrong shape. Until then a
+            // one pixel placeholder.
+            let image = context.createImageData(1, 1);
+            const sizeCanvas = (): void => {
+                canvas.width = engine.width;
+                canvas.height = engine.height;
+                image = context.createImageData(engine.width, engine.height);
+            };
+            sizeCanvas();
             let firstBlitLogged = false;
 
-            // And the framebuffer view, taken once. This is only safe because
-            // the wasm heap never grows (see wasm/CMakeLists.txt): if it could,
-            // this view would be detached by the first growth and every frame
-            // after that would be drawn from an empty buffer.
-            const framebuffer = engine.framebufferBytes();
+            // The framebuffer view is taken inside blit(), not here. The fc_*
+            // host has a picture pointer as soon as the cartridge is in, but
+            // the libretro host only learns where the picture is when the core
+            // first hands one over -- and a view taken before that is empty.
+            // Taking it again is a subarray, so it costs nothing either way.
 
             /**
              * Turn the emulator's pixels into an image on the canvas.
@@ -394,12 +451,25 @@ export function useEmulator(
              * complexity, and it is worth measuring before optimising.
              */
             const blit = (): void => {
+                // The wasm heap never grows (see wasm/CMakeLists.txt), so this
+                // view into it cannot be detached, and re-taking it each frame
+                // is what lets a host whose pointer arrives late still work.
+                const framebuffer = engine.framebufferBytes();
                 const destination = image.data;
-                for (let source = 0, out = 0; out < destination.length; source += 4, out += 4) {
-                    destination[out] = framebuffer[source + 2];
-                    destination[out + 1] = framebuffer[source + 1];
-                    destination[out + 2] = framebuffer[source];
-                    destination[out + 3] = 255;
+                // The rows are stepped by the core's pitch, not by width * 4.
+                // mGBA renders 240 visible pixels into a 256 pixel wide buffer
+                // and says so; treating the stride as 960 shears every row by
+                // 64 bytes, which is diagonal stripes.
+                const stride = engine.pitch ?? engine.width * 4;
+                let out = 0;
+                for (let y = 0; y < image.height; ++y) {
+                    let source = y * stride;
+                    for (let x = 0; x < image.width; ++x, source += 4, out += 4) {
+                        destination[out] = framebuffer[source + 2];
+                        destination[out + 1] = framebuffer[source + 1];
+                        destination[out + 2] = framebuffer[source];
+                        destination[out + 3] = 255;
+                    }
                 }
                 context.putImageData(image, 0, 0);
                 if (!firstBlitLogged) {
@@ -448,11 +518,20 @@ export function useEmulator(
              * precisely what these tests exist to catch.
              */
             const hashPixels = async (): Promise<string> => {
+                const picture = engine.framebufferBytes();
                 const rgb = new Uint8Array(engine.width * engine.height * 3);
-                for (let source = 0, out = 0; out < rgb.length; source += 4, out += 3) {
-                    rgb[out] = framebuffer[source + 2];
-                    rgb[out + 1] = framebuffer[source + 1];
-                    rgb[out + 2] = framebuffer[source];
+                // Same stride rule as blit: the rows are pitch apart, not
+                // width * 4 apart, or a hash of a Game Boy screen would be a
+                // hash of sheared rows.
+                const stride = engine.pitch ?? engine.width * 4;
+                let out = 0;
+                for (let y = 0; y < engine.height; ++y) {
+                    let source = y * stride;
+                    for (let x = 0; x < engine.width; ++x, source += 4, out += 3) {
+                        rgb[out] = picture[source + 2];
+                        rgb[out + 1] = picture[source + 1];
+                        rgb[out + 2] = picture[source];
+                    }
                 }
                 const digest = await crypto.subtle.digest('SHA-256', rgb);
                 return Array.from(new Uint8Array(digest))
@@ -532,7 +611,7 @@ export function useEmulator(
                     // fills or empties until the player hears a gap.
                     rewind?.record();
 
-                    nextFrameTime += NES_FRAME_SECONDS * (1 + (audio?.rateCorrection ?? 0));
+                    nextFrameTime += core.frameSeconds * (1 + (audio?.rateCorrection ?? 0));
                     ran += 1;
                 }
 
@@ -583,15 +662,22 @@ export function useEmulator(
              * that changing games does not leave the previous one's sound
              * queued up or its keys held down.
              */
-            const applyRom = (bytes: Uint8Array, path: string): boolean => {
+            const applyRom = (bytes: Uint8Array, path: string, countPlay = true): boolean => {
+                bootLog('renderer', 'applyRom begin', path);
                 if (!engine.loadRom(bytes)) {
                     flash(`could not load ${path}: ${engine.lastError}`);
                     return false;
                 }
+                bootLog('renderer', 'applyRom loaded', `${engine.width}x${engine.height}`);
 
                 // What the native tools do before their loop, so a run here can
                 // be compared against theirs cycle for cycle.
                 engine.reset();
+                bootLog('renderer', 'applyRom reset');
+
+                // Now that there is a cartridge, the core knows its geometry.
+                sizeCanvas();
+                bootLog('renderer', 'applyRom canvas', `${engine.width}x${engine.height}`);
 
                 // The cheats for this cartridge. The list is read from the ref
                 // at load time, so a game loaded from the library gets the
@@ -608,8 +694,10 @@ export function useEmulator(
                 // the old cartridge's RAM.
                 rewind?.destroy();
                 rewind = new Rewind(engine);
+                bootLog('renderer', 'applyRom rewind', rewind.available ? 'on' : 'off');
 
                 loaded = true;
+                loadedPath = path;
                 paused = false;
                 // A rewind key held while the library was on screen must not
                 // carry into the game that just started.
@@ -642,7 +730,9 @@ export function useEmulator(
                     romSummary: engine.romSummary,
                 }));
 
-                void window.fc.notePlayed(path);
+                if (countPlay) {
+                    void window.fc.notePlayed(path);
+                }
                 // And which cartridge this is, so that saving and loading know
                 // where the slots belong. The main process cannot work it out
                 // from the command line alone -- a game picked out of the
@@ -651,17 +741,72 @@ export function useEmulator(
                 return true;
             };
 
-            const loadRom = async (path: string): Promise<boolean> => {
+            /** Read the bytes and put them in the machine that is already built. */
+            const loadRomIntoMachine = async (path: string, countPlay = true): Promise<boolean> => {
                 const bytes = await window.fc.readRom(path);
                 if (bytes === null) {
                     flash('could not read that game');
                     return false;
                 }
-                return applyRom(bytes, path);
+                return applyRom(bytes, path, countPlay);
+            };
+
+            /**
+             * Load a game, building the machine for it first if needed.
+             *
+             * Every entry point goes through here -- a click in the library,
+             * the game named on the command line, a test, and a core change --
+             * rather than only the lazy path, because the machine may already
+             * exist for another console or another core: the application
+             * started with a NES game on the default core, the player then
+             * picks a Game Boy one, or asks for Mesen. Handing bytes to the
+             * wrong core is what "the core did not accept this cartridge"
+             * looks like.
+             *
+             * `countPlay` is false for a reload: swapping the emulator under a
+             * running game is powering the console off and on, not playing the
+             * game again.
+             */
+            const loadInto = async (path: string, countPlay: boolean): Promise<boolean> => {
+                const wanted = chooseCore(path, outward.current.cores);
+                if (!sameCore(coreInUse, wanted)) {
+                    await stopMachine();
+                    await startOnce(wanted);
+                    // start() has just replaced actions.current with the
+                    // loaders for the machine it built; let that one do the
+                    // work, rather than handing bytes to the dead engine this
+                    // closure captured.
+                    return actions.current.loadInto(path, countPlay);
+                }
+                return loadRomIntoMachine(path, countPlay);
+            };
+
+            const loadRom = (path: string): Promise<boolean> => loadInto(path, true);
+
+            /**
+             * Put the cartridge already in the slot into a freshly built
+             * machine, on whatever core is now preferred.
+             *
+             * The player changing the core while a game is running is the one
+             * caller. With no cartridge there is nothing to restart.
+             */
+            const reload = (): Promise<boolean> => {
+                if (!loaded || loadedPath === null) {
+                    return Promise.resolve(false);
+                }
+                const wanted = chooseCore(loadedPath, outward.current.cores);
+                if (sameCore(coreInUse, wanted)) {
+                    // Nothing changed -- the caller's effect also runs on the
+                    // first render, and a power cycle nobody asked for would
+                    // be a visible stutter at start up.
+                    return Promise.resolve(false);
+                }
+                return loadInto(loadedPath, false);
             };
 
             const unload = (): void => {
                 loaded = false;
+                loadedPath = null;
                 paused = false;
                 rewinding = false;
                 rewind?.destroy();
@@ -679,7 +824,10 @@ export function useEmulator(
                 setStatus(unloaded);
             };
 
-            actions.current = { ...actions.current, loadRom, unload, command: (c) => commandHandler?.(c) };
+            actions.current = {
+                ...actions.current, loadRom, loadInto, reload, unload,
+                command: (c) => commandHandler?.(c),
+            };
 
             /** A short note in the status line, gone again in two seconds. */
             const flash = (text: string): void => {
@@ -976,19 +1124,12 @@ export function useEmulator(
                 },
             };
 
-            // A game named on the command line loads straight away; without
-            // one the application sits on the library screen until the player
+            // A game named on the command line loads straight away (the bytes
+            // were fetched at the top, before the core was chosen); without one
+            // the application sits on the library screen until the player
             // picks something.
-            const bootRomStarted = Date.now();
-            const boot = await window.fc.getBootRom();
-            bootLog(
-                'renderer',
-                'getBootRom',
-                boot === null
-                    ? `${Date.now() - bootRomStarted}ms, no --rom`
-                    : `${Date.now() - bootRomStarted}ms, ${boot.path}`,
-            );
-            if (boot !== null && !disposed) {
+            if (boot !== null && !bootApplied && !disposed) {
+                bootApplied = true;
                 if (!applyRom(boot.bytes, boot.path)) {
                     loaded = false;
                 }
@@ -1000,7 +1141,7 @@ export function useEmulator(
             if (!window.fc.selftestOnly) {
                 animationFrame = requestAnimationFrame(tick);
             } else if (!loaded) {
-                fail('no ROM. Start with --rom <game.nes>, or put one in tests/data/');
+                fail('no ROM. Start with --rom <game.nes>, or put one in packages/fc-core/tests/data/');
             }
         };
 
@@ -1012,7 +1153,43 @@ export function useEmulator(
          * player who clicks two games in a row must not build two emulators.
          */
         let startPromise: Promise<void> | null = null;
-        const startOnce = (): Promise<void> => (startPromise ??= start());
+        let pendingCore: CoreChoice | null = null;
+        let coreInUse: CoreChoice | null = null;
+        // A game named on the command line is loaded once, by the first
+        // start(). A later start() -- a machine rebuilt for another console --
+        // must not reach back and load it again over the game the player just
+        // picked.
+        let bootApplied = false;
+        const startOnce = (core?: CoreChoice): Promise<void> => {
+            if (core !== undefined) {
+                pendingCore = core;
+            }
+            return (startPromise ??= start());
+        };
+
+        /**
+         * Take the machine apart, so the next start() builds another one.
+         *
+         * Loading a Game Boy game into a NES machine is not a thing the
+         * hardware can do, and a libretro core cannot become another core. So
+         * a game from a different console stops this machine -- frame loop,
+         * speaker, save state ring and all -- and start() builds the right one
+         * in its place.
+         */
+        const stopMachine = async (): Promise<void> => {
+            if (animationFrame !== 0) {
+                cancelAnimationFrame(animationFrame);
+                animationFrame = 0;
+            }
+            rewind?.destroy();
+            rewind = null;
+            await audio?.close();
+            audio = null;
+            emulator?.destroy();
+            emulator = null;
+            startPromise = null;
+            coreInUse = null;
+        };
 
         // When to build the machine.
         //
@@ -1029,8 +1206,10 @@ export function useEmulator(
         // loadRom() at all. See --fc-eager in the main process.
         if (window.fc.eager) {
             void startOnce().catch((error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                bootLog('renderer', 'machine build FAILED', message);
                 if (!disposed) {
-                    fail(error instanceof Error ? error.message : String(error));
+                    fail(message);
                 }
             });
         } else {
@@ -1042,7 +1221,9 @@ export function useEmulator(
             actions.current = {
                 ...actions.current,
                 loadRom: async (path: string) => {
-                    await startOnce();
+                    // The machine may not exist yet. Build the right one for
+                    // this game; the loader it installs does the load itself.
+                    await startOnce(chooseCore(path, outward.current.cores));
                     return actions.current.loadRom(path);
                 },
                 unload: () => undefined,
@@ -1085,6 +1266,7 @@ export function useEmulator(
     return {
         status,
         loadRom: (path: string) => actions.current.loadRom(path),
+        reload: () => actions.current.reload(),
         unload: () => actions.current.unload(),
         command: (command: CommandName) => actions.current.command(command),
         poke: (address: number, value: number) => actions.current.poke(address, value),
