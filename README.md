@@ -239,7 +239,7 @@ FCEmulator/
 ├── AGENTS.md            AI Agent 执行规范（本项目宪法）
 ├── CMakeLists.txt       monorepo 根：只做组装与全局设置，不含模拟逻辑
 ├── cmake/
-│   ├── Version.cmake    项目版本号只写在这里，根与各 package 共用
+│   ├── Version.cmake    C++ 端版本号；release.sh 与 package.json 同步
 │   └── GoogleTest.cmake 测试框架探测，两个 package 复用
 ├── packages/
 │   ├── fc-core/         自定义 FC / NES 核心 —— 独立项目

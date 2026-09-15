@@ -137,7 +137,8 @@ FCEmulator/
 │   ├── src/libretro/       retro_* 适配层 + custom 扩展 + 金手指解码
 │   ├── third_party/libretro/libretro.h
 │   └── tests/
-├── cmake/Version.cmake     版本号唯一来源；GoogleTest.cmake 供两个包复用
+├── cmake/Version.cmake     C++ 端版本号（release.sh 与 package.json 同步）；
+│                           GoogleTest.cmake 供两个包复用
 ├── wasm/  tools/  electron/  消费者
 └── docs/
 ```
@@ -385,7 +386,9 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 - **monorepo 布局**：`packages/fc-core`（`fc_core` + `fc_ffi`）与
   `packages/fc-libretro`（`fc_libretro`）各自有 `project()`、版本号、测试，
   可单独 `cmake -S packages/<name> -B build-<name>`；根 `CMakeLists.txt`
-  只做组装。版本号只在 `cmake/Version.cmake` 写一次。
+  只做组装。版本号在两处：`cmake/Version.cmake`（C++ / libretro 的
+  `library_version`）与 `electron/package.json`（npm / electron-builder）；
+  `scripts/release.sh` 同时写这两个并检测它们是否已经不一致。
   libretro 的 `libretro.h` 也随之移入 `packages/fc-libretro/third_party/`。
 
 - CMake + C++20 + Ninja
