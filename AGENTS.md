@@ -118,6 +118,38 @@ APU
 Frontend
 ```
 
+## 2.3 上下文纪律（Skills）
+
+仓库里每个顶层部件都有一份指南，放在 `.pi/skills/<名字>/SKILL.md`：
+
+| 技能 | 覆盖 |
+|---|---|
+| `fc-repo` | monorepo 总览、路由表、构建/版本/发版、Git 约定 |
+| `fc-core` | `packages/fc-core`：CPU / Bus / Cartridge / Mapper / PPU / APU / State / FFI |
+| `fc-libretro` | `packages/fc-libretro`：`retro_*` 适配层、金手指、custom 扩展 |
+| `fc-wasm` | `wasm/`：Emscripten 构建、JS 绑定、侧模块 |
+| `fc-frontend` | `electron/`：主进程 / preload / 渲染进程 / 手柄助手 |
+| `fc-tools` | `tools/`：教学 demo 与命令行工具 |
+| `fc-docs` | `docs/` 与教学契约 |
+
+**动手之前先读技能，再读源码。** 每个技能的开头都有一条硬规则：
+
+```
+先定位，再精读。一次只打开一个包。
+```
+
+具体地：
+
+- **禁止**读 `build*/`、`wasm/dist/`、`electron/node_modules`、`electron/dist`、
+  `electron/release`、`.git/` —— 那些是产物，不是源码。
+- **禁止**整读 `packages/fc-libretro/third_party/libretro/libretro.h`（8716 行）
+  或 700+ 行的 `README.md` / `AGENTS.md`。
+- 要读大文件时，先 `rg -n '符号' <文件>` 拿行号，再 `read offset/limit`
+  只读那一段。
+- 一轮对话默认最多打开 3 个文件；要更多先说明理由。
+
+「读整个项目」既慢又会把真正相关的那 20 行埋掉。
+
 ---
 
 # 3. 技术架构
