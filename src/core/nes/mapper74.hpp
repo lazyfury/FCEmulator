@@ -31,8 +31,45 @@ class Mapper74 : public Mapper4 {
 public:
     Mapper74(std::vector<u8> prg, std::vector<u8> chr, Mirroring default_mirroring)
         : Mapper4(std::move(prg), std::move(chr), default_mirroring)
+        , exp_ram_(0x1000, 0)
     {
         make_chr_ram_window(0x800);   // 2KB, two 1KB pages
+    }
+
+    /// 4KB of RAM at $5000-$5FFF, beside the MMC3's usual 8KB at $6000.
+    ///
+    /// The board has it and the games use it the way games use RAM: they copy
+    /// a short bank-switch routine into it and call the copy, so that the call
+    /// survives the bank it switches away from. Without it the JSR lands on
+    /// nothing and the game executes zeros.
+    [[nodiscard]] u8 read_expansion(u16 address) override
+    {
+        if (address >= 0x5000u && address <= 0x5FFFu) {
+            return exp_ram_[static_cast<std::size_t>(address - 0x5000u)];
+        }
+        return 0;
+    }
+
+    void write_expansion(u16 address, u8 value) override
+    {
+        if (address >= 0x5000u && address <= 0x5FFFu) {
+            exp_ram_[static_cast<std::size_t>(address - 0x5000u)] = value;
+        }
+    }
+
+    void serialize(StateWriter& out) const override
+    {
+        Mapper4::serialize(out);
+        out.sized_bytes(exp_ram_);
+    }
+
+    bool deserialize(StateReader& in) override
+    {
+        if (!Mapper4::deserialize(in)) {
+            return false;
+        }
+        in.sized_bytes(exp_ram_);
+        return in.ok();
     }
 
 protected:
@@ -40,6 +77,9 @@ protected:
     {
         return page == 8u || page == 9u;
     }
+
+private:
+    std::vector<u8> exp_ram_;
 };
 
 } // namespace fc::nes
