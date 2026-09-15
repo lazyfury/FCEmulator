@@ -49,7 +49,7 @@ if [ $# -ge 1 ] && [ -f "$1" ]; then
 else
     ROM_DIR="${1:-}"
     if [ -z "$ROM_DIR" ]; then
-        for candidate in "$ROOT/packages/fc-core/tests/data" "$HOME/Documents/FC games"; do
+        for candidate in "$ROOT/packages/fc-core/tests/data" "$HOME/Documents/Fc Game Library" "$HOME/Documents/FC games"; do
             # -L so a symlink is followed: packages/fc-core/tests/data holds symlinks into a
             # ROM folder that may have moved, and a dangling one must not be
             # mistaken for a usable ROM.

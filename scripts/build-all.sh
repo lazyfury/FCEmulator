@@ -129,7 +129,7 @@ find_rom() {
         printf '%s' "$(cd "$(dirname "$ROM")" && pwd)/$(basename "$ROM")"
         return 0
     fi
-    for candidate in "$ROOT/packages/fc-core/tests/data" "$HOME/Documents/Classic Game Box ROMs" "$HOME/Documents/FC games"; do
+    for candidate in "$ROOT/packages/fc-core/tests/data" "$HOME/Documents/Fc Game Library" "$HOME/Documents/FC games"; do
         hit="$(find -L "$candidate" -maxdepth 1 -iname '*.nes' -type f 2>/dev/null | sort | head -1)"
         if [ -n "$hit" ]; then
             printf '%s' "$hit"
