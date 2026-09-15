@@ -19,5 +19,5 @@
 # ---------------------------------------------------------------------------
 
 if(NOT DEFINED FC_PROJECT_VERSION)
-    set(FC_PROJECT_VERSION "0.1.2")
+    set(FC_PROJECT_VERSION "0.1.3")
 endif()
