@@ -43,3 +43,6 @@ wasm/dist/
 # Test ROMs. Copyrighted, large, and not ours to commit. See the README for
 # where to get them; the tests skip themselves when the folder is empty.
 tests/data/testroms/
+
+# mGBA source + build tree (fetched by wasm/mgba/build.sh; ~94MB)
+/build-mgba/

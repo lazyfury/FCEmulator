@@ -338,7 +338,20 @@ export async function createCoreHost(module)
         };
     }
 
-    const av = readAvInfo();
+    // Some cores (mGBA) dereference their machine inside
+    // retro_get_system_av_info and are only safe to ask once a cartridge is in;
+    // others (this project's own) answer whenever. So the call is attempted and,
+    // if it faults, the geometry is filled in at load instead. The defaults are
+    // the NES, this front end's home console.
+    let av = {
+        baseWidth: 256, baseHeight: 240, maxWidth: 256, maxHeight: 240,
+        fps: 60.0988, sampleRate: 44100.0,
+    };
+    try {
+        av = readAvInfo();
+    } catch (ignored) {
+        // Left at the defaults; loadRom refreshes it once the core has a game.
+    }
 
     // -- the CoreHost surface ------------------------------------------------
 
@@ -377,6 +390,11 @@ export async function createCoreHost(module)
             if (isLoaded) {
                 frameCount = 0;
                 lastError = '';
+                try {
+                    av = readAvInfo();
+                } catch (ignored) {
+                    // A core that still will not answer keeps the defaults.
+                }
             } else {
                 lastError = 'the core did not accept this cartridge';
             }
@@ -389,7 +407,14 @@ export async function createCoreHost(module)
         },
 
         get isLoaded() { return isLoaded; },
-        get romSummary() { return mod.UTF8ToString(mod._fc_ext_rom_summary()); },
+        get romSummary()
+        {
+            // The extension has the one line summary; a core without it gets
+            // its library name, which is the next best thing.
+            return mod._fc_ext_rom_summary !== undefined
+                ? mod.UTF8ToString(mod._fc_ext_rom_summary())
+                : readSystemInfo().libraryName;
+        },
         get lastError() { return lastError; },
 
         // -- running ----------------------------------------------------------
@@ -412,8 +437,15 @@ export async function createCoreHost(module)
 
         get isHalted() { return false; },
         get frameCount() { return frameCount; },
-        get totalCycles() { return Number(mod._fc_ext_total_cycles()); },
-        get cpuPc() { return mod._fc_ext_cpu_pc(); },
+        get totalCycles()
+        {
+            return mod._fc_ext_total_cycles !== undefined
+                ? Number(mod._fc_ext_total_cycles()) : 0;
+        },
+        get cpuPc()
+        {
+            return mod._fc_ext_cpu_pc !== undefined ? mod._fc_ext_cpu_pc() : 0;
+        },
 
         // -- video ------------------------------------------------------------
 
@@ -499,12 +531,15 @@ export async function createCoreHost(module)
 
         peek(address)
         {
-            return mod._fc_ext_peek(address & 0xFFFF);
+            return mod._fc_ext_peek !== undefined
+                ? mod._fc_ext_peek(address & 0xFFFF) : 0;
         },
 
         poke(address, value)
         {
-            mod._fc_ext_poke(address & 0xFFFF, value & 0xFF);
+            if (mod._fc_ext_poke !== undefined) {
+                mod._fc_ext_poke(address & 0xFFFF, value & 0xFF);
+            }
         },
 
         /**
@@ -587,7 +622,13 @@ export async function createCoreHost(module)
             return ok;
         },
 
-        get mapperSavesState() { return mod._fc_ext_mapper_saves_state() !== 0; },
+        get mapperSavesState()
+        {
+            // A core without the extension is assumed whole; the flag exists to
+            // warn about the ones that are not.
+            return mod._fc_ext_mapper_saves_state !== undefined
+                ? mod._fc_ext_mapper_saves_state() !== 0 : true;
+        },
 
         // -- lifecycle --------------------------------------------------------
 
