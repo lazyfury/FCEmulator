@@ -9,12 +9,11 @@
             "intelliSenseMode": "macos-clang-arm64",
             "compilerPath": "/usr/bin/clang++",
             "includePath": [
-                "${workspaceFolder}/src/**"
+                "${workspaceFolder}/packages/**"
             ],
             "browse": {
                 "path": [
-                    "${workspaceFolder}/src",
-                    "${workspaceFolder}/tests",
+                    "${workspaceFolder}/packages",
                     "${workspaceFolder}/tools"
                 ],
                 "limitSymbolsToIncludedHeaders": true
