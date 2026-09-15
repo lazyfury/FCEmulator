@@ -36,7 +36,7 @@ import type { ResolvedBinding } from './bindings';
 
 /**
  * The eight switches. The names are the contract with the C enum in
- * src/ffi/emulator_api.h; the numbers behind them live there and in
+ * packages/fc-core/src/ffi/emulator_api.h; the numbers behind them live there and in
  * wasm/emulator.mjs's `Button`.
  */
 export type ButtonName = GamepadButtonName;

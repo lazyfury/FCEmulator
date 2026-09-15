@@ -122,11 +122,47 @@ Frontend
 
 # 3. 技术架构
 
+## Monorepo 结构
+
+仓库是一个 monorepo。每个 `packages/*` 都是一个能单独配置、单独构建、
+单独测试的 CMake 项目；根 `CMakeLists.txt` 只负责组装，不含任何模拟逻辑。
+
+```
+FCEmulator/
+├── packages/fc-core/       自定义 FC / NES 核心（fc_core, fc_ffi）
+│   ├── src/core/           纯 C++ 机器，禁止依赖 UI
+│   ├── src/ffi/            emulator_api.h 纯 C 接口
+│   └── tests/
+├── packages/fc-libretro/   libretro 包装（fc_libretro）—— 独立项目
+│   ├── src/libretro/       retro_* 适配层 + custom 扩展 + 金手指解码
+│   ├── third_party/libretro/libretro.h
+│   └── tests/
+├── cmake/Version.cmake     版本号唯一来源；GoogleTest.cmake 供两个包复用
+├── wasm/  tools/  electron/  消费者
+└── docs/
+```
+
+依赖方向只有一条，且不允许反向：
+
+```
+wasm / tools / electron  ->  packages/fc-libretro  ->  packages/fc-core
+```
+
+单独构建某个包：
+
+```bash
+cmake -S packages/fc-core     -B build-core     -G Ninja
+cmake -S packages/fc-libretro -B build-libretro -G Ninja
+```
+
 ## Core
 
 语言：`C++20`
 
 负责：CPU / Bus / Memory / Cartridge / Mapper / PPU / APU / Controller
+
+位于 `packages/fc-core/src/core`。它对 UI / 文件 IO / 线程 / 异常无依赖，
+所以同一份源码能原样编译成原生库和 WebAssembly。
 
 ## Electron 前端
 
@@ -262,7 +298,7 @@ N = result 的 bit 7，不是判决
 
 并必须解释：`A - M` 后的真实符号是 `N XOR V`。
 
-见 `docs/computer-science/overflow-flag.md` 与 `src/core/alu.hpp`。
+见 `docs/computer-science/overflow-flag.md` 与 `packages/fc-core/src/core/alu.hpp`。
 
 ## CPU Concepts
 
@@ -341,57 +377,64 @@ Unit Test → Instruction Test → Timing Test → Integration Test
 
 # 7. Current Implementation Status
 
-当前：**Phase 7 完成 —— 项目完成**
+当前：**Phase 7 完成 —— 项目完成**；仓库已重构为 monorepo（`packages/fc-core`
+与 `packages/fc-libretro` 是两个独立项目，可各自单独构建）。
 
 已完成：
+
+- **monorepo 布局**：`packages/fc-core`（`fc_core` + `fc_ffi`）与
+  `packages/fc-libretro`（`fc_libretro`）各自有 `project()`、版本号、测试，
+  可单独 `cmake -S packages/<name> -B build-<name>`；根 `CMakeLists.txt`
+  只做组装。版本号只在 `cmake/Version.cmake` 写一次。
+  libretro 的 `libretro.h` 也随之移入 `packages/fc-libretro/third_party/`。
 
 - CMake + C++20 + Ninja
 - GoogleTest 测试框架（370 个单元测试全通过）
 - `docs/` 十三篇（computer-science 十章 + nes 两篇 + architecture 一篇）
-- `src/core/bit.{hpp,cpp}` `types.hpp` `alu.hpp`
-- `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
-- `src/core/cpu/` 全部 151 个 opcode、256 项周期表、反汇编器、13 种寻址
-- `src/core/nes/device.hpp` Device / OamTarget 接口
-- `src/core/nes/ram.hpp` 2KB RAM（掩码就是未接的地址线）
-- `src/core/nes/bus.{hpp,cpp}` 地址译码、镜像、open bus、OAM DMA
-- `src/core/nes/ines.{hpp,cpp}` iNES 文件头解析
-- `src/core/nes/mapper.hpp` 映射器接口 + `mapper0.hpp` Mapper 0 (NROM)
-- `src/core/nes/mapper1.hpp` Mapper 1 (MMC1)：串行移位寄存器、4/8KB CHR 分页、
+- `packages/fc-core/src/core/bit.{hpp,cpp}` `types.hpp` `alu.hpp`
+- `packages/fc-core/src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
+- `packages/fc-core/src/core/cpu/` 全部 151 个 opcode、256 项周期表、反汇编器、13 种寻址
+- `packages/fc-core/src/core/nes/device.hpp` Device / OamTarget 接口
+- `packages/fc-core/src/core/nes/ram.hpp` 2KB RAM（掩码就是未接的地址线）
+- `packages/fc-core/src/core/nes/bus.{hpp,cpp}` 地址译码、镜像、open bus、OAM DMA
+- `packages/fc-core/src/core/nes/ines.{hpp,cpp}` iNES 文件头解析
+- `packages/fc-core/src/core/nes/mapper.hpp` 映射器接口 + `mapper0.hpp` Mapper 0 (NROM)
+- `packages/fc-core/src/core/nes/mapper1.hpp` Mapper 1 (MMC1)：串行移位寄存器、4/8KB CHR 分页、
   16/32KB PRG 分页、运行时可切换镜像（Zelda II、Tetris 用）
-- `src/core/nes/mapper2.hpp` Mapper 2 (UxROM)：16KB PRG 分页、CHR RAM（洛克人）
-- `src/core/nes/mapper3.hpp` Mapper 3 (CNROM)：8KB CHR 分页（越野摩托）
-- `src/core/nes/mapper4.hpp` Mapper 4 (MMC3)：8KB PRG、1/2KB CHR、**扫描线 IRQ**
+- `packages/fc-core/src/core/nes/mapper2.hpp` Mapper 2 (UxROM)：16KB PRG 分页、CHR RAM（洛克人）
+- `packages/fc-core/src/core/nes/mapper3.hpp` Mapper 3 (CNROM)：8KB CHR 分页（越野摩托）
+- `packages/fc-core/src/core/nes/mapper4.hpp` Mapper 4 (MMC3)：8KB PRG、1/2KB CHR、**扫描线 IRQ**
   （超级玛丽 3、星之卡比）；配套 `Mapper::on_ppu_address` / `irq_asserted` 钩子
-- `src/core/nes/mapper7.hpp` Mapper 7 (AxROM)：32KB PRG、单屏镜像（大理石疯疯）
-- `src/core/nes/mapper9.hpp` Mapper 9 (MMC2)：PPU 取 tile $FD/$FE 翻转 CHR latch
-- `src/core/nes/mapper10.hpp` Mapper 10 (MMC4)：同 MMC2 的 latch，16KB PRG
-- `src/core/nes/mapper11.hpp` Mapper 11 (Color Dreams)：8KB CHR 分页
-- `src/core/nes/mapper13.hpp` Mapper 13 (CPROM)：自带 16KB CHR RAM，4KB 分页
-- `src/core/nes/mapper15.hpp` Mapper 15 (100-in-1)：16KB PRG 可切换 + 顶部 16KB 固定、
+- `packages/fc-core/src/core/nes/mapper7.hpp` Mapper 7 (AxROM)：32KB PRG、单屏镜像（大理石疯疯）
+- `packages/fc-core/src/core/nes/mapper9.hpp` Mapper 9 (MMC2)：PPU 取 tile $FD/$FE 翻转 CHR latch
+- `packages/fc-core/src/core/nes/mapper10.hpp` Mapper 10 (MMC4)：同 MMC2 的 latch，16KB PRG
+- `packages/fc-core/src/core/nes/mapper11.hpp` Mapper 11 (Color Dreams)：8KB CHR 分页
+- `packages/fc-core/src/core/nes/mapper13.hpp` Mapper 13 (CPROM)：自带 16KB CHR RAM，4KB 分页
+- `packages/fc-core/src/core/nes/mapper15.hpp` Mapper 15 (100-in-1)：16KB PRG 可切换 + 顶部 16KB 固定、
   单屏镜像、8KB CHR RAM（`100合1.NES` 1MB 多合一卡实测能启动到菜单）
-- `src/core/nes/mapper163.hpp` Mapper 163 (Nanjing FC-001)：32KB PRG 分页、
+- `packages/fc-core/src/core/nes/mapper163.hpp` Mapper 163 (Nanjing FC-001)：32KB PRG 分页、
   寄存器在扩展区 $5000、防拷反馈位、自动 4KB CHR RAM 切换。
   （`金庸群侠传.nes` 2MB 实测能进标题并开始游戏）
-- `src/core/nes/mapper226.hpp` Mapper 226 (76-in-1)：7 位 PRG bank 拆在
+- `packages/fc-core/src/core/nes/mapper226.hpp` Mapper 226 (76-in-1)：7 位 PRG bank 拆在
   $8000/$8001、32KB/16KB 两种模式、寄存器 bit6 选镜像。
-- `src/core/nes/mapper18.hpp` Mapper 18 (SS88006)、`mapper21.hpp`
+- `packages/fc-core/src/core/nes/mapper18.hpp` Mapper 18 (SS88006)、`mapper21.hpp`
   Mapper 21/22/23/25 (VRC2/VRC4)：8KB PRG、1KB CHR、CPU 周期 IRQ
   （靠新增的 `clocks_on_cpu_cycles()` / `on_cpu_cycle()` 钩子）
-- `src/core/nes/mapper32.hpp` (IREM)、`mapper33.hpp` (Taito)、
+- `packages/fc-core/src/core/nes/mapper32.hpp` (IREM)、`mapper33.hpp` (Taito)、
   `mapper66.hpp` (GxROM)、`mapper68.hpp` (Sunsoft-4)、`mapper71.hpp`
   (Codemasters)、`mapper78.hpp` / `mapper87.hpp` (Jaleco)
-- `src/core/nes/mapper162/164/178/242.hpp` (Waixing)、`mapper190.hpp`、
+- `packages/fc-core/src/core/nes/mapper162/164/178/242.hpp` (Waixing)、`mapper190.hpp`、
   `mapper227.hpp` / `mapper246.hpp`（中文/多合一）
 - 接口钩子共六个（全部默认空实现）：`on_ppu_address` / `irq_asserted` /
   `read_expansion` / `write_expansion` / `on_scanline` /
   `clocks_on_cpu_cycles` + `on_cpu_cycle` / `has_work_ram`
-- `src/core/nes/cartridge.{hpp,cpp}` 真正的卡带
-- `src/core/nes/ppu.{hpp,cpp}` PPU：8 个寄存器、VRAM、调色板、OAM、扫描线时序、背景/精灵渲染、sprite 0 hit
-- `src/core/nes/machine.{hpp,cpp}` CPU 与 PPU 的 3:1 同步、NMI、脚本输入接口
-- `src/core/nes/controller.hpp` 手柄串行协议，接在 `$4016`/`$4017`
-- `src/core/nes/apu.{hpp,cpp}` 五个声道、包络、长度/线性计数器、扫频、帧序列器、非线性混音、DMC
-- `src/core/nes/ram_cartridge.hpp` 卡带槽占位（测试用）
-- `src/ffi/emulator_api.h` 纯 C 接口（22 个测试）
+- `packages/fc-core/src/core/nes/cartridge.{hpp,cpp}` 真正的卡带
+- `packages/fc-core/src/core/nes/ppu.{hpp,cpp}` PPU：8 个寄存器、VRAM、调色板、OAM、扫描线时序、背景/精灵渲染、sprite 0 hit
+- `packages/fc-core/src/core/nes/machine.{hpp,cpp}` CPU 与 PPU 的 3:1 同步、NMI、脚本输入接口
+- `packages/fc-core/src/core/nes/controller.hpp` 手柄串行协议，接在 `$4016`/`$4017`
+- `packages/fc-core/src/core/nes/apu.{hpp,cpp}` 五个声道、包络、长度/线性计数器、扫频、帧序列器、非线性混音、DMC
+- `packages/fc-core/src/core/nes/ram_cartridge.hpp` 卡带槽占位（测试用）
+- `packages/fc-core/src/ffi/emulator_api.h` 纯 C 接口（22 个测试）
 - `electron/` Electron + TypeScript 前端：Core 编译成 WebAssembly 在渲染进程里跑，
   canvas 出画面，Web Audio 出声，SQLite 游戏库，含可验证的无头模式
 - `electron/src/renderer/{input,gamepad}.ts` 键盘与手柄汇入同一个 `InputManager`
@@ -425,7 +468,7 @@ copy_y()，于是 CPU 每写十几个字节就被管线把 v 拨走一次。
 用 rendering_enabled() 包住。render_pixel() 仍在运行，所以消隐时
 屏幕正确显示 $3F00 背景色。
 
-回归测试：tests/test_ppu.cpp
+回归测试：packages/fc-core/tests/test_ppu.cpp
   Ppu.ABlockWriteDuringForcedBlankingLandsWhereItWasPointed
 复现方式：F12 截图（shot_0001.ppm 等）与 --headless --dump 完全一致，
 说明是 Core 而不是 Metal。349 → 350 个测试全通过。
@@ -462,7 +505,7 @@ copy_y()，于是 CPU 每写十几个字节就被管线把 v 拨走一次。
    不用噪声声道，所以听不出来。
    修法：噪声周期表和 DMC 速率表用前除以 2 再减 1；帧序列器 step
    改为 3729 tick；三角波定时器每个 tick 走两次。
-   回归测试：tests/test_apu.cpp ApuRates.*
+   回归测试：packages/fc-core/tests/test_apu.cpp ApuRates.*
 ```
 
 已修复：Zelda II 大地图全是方块 / 侧视关卡 tile 错位
@@ -486,8 +529,8 @@ bank 取模后变成 0），$02 -> 2。于是大地图（$8149 处写 CHR0=$10�
 这个 bug 的隐蔽之处：游戏照常运行、不会崩，只是 tile 全部错位两个
 bank，所以光看“能不能跑”永远发现不了。
 
-修法：src/core/nes/mapper1.hpp 的 chr_offset() 8KB 分支改为 chr0 >> 1。
-回归测试：tests/test_cartridge.cpp
+修法：packages/fc-core/src/core/nes/mapper1.hpp 的 chr_offset() 8KB 分支改为 chr0 >> 1。
+回归测试：packages/fc-core/tests/test_cartridge.cpp
   Mapper1.ChrEightKiloByteModeUsesBankZeroShiftedRight
 ```
 
@@ -579,7 +622,7 @@ bank 寄存器从 0x3E→0x39（菜单的 $FFD0 表）正常工作。
   地图屏幕底部恢复为文字 + 3 个道具框，下方干净；
   其余 10 张 ROM 回归正常，429 个测试全通过。
 
-回归测试：tests/test_cartridge.cpp
+回归测试：packages/fc-core/tests/test_cartridge.cpp
   Mapper4.TheCounterIsClockedOncePerScanlineEvenWithNoSprites
   （把 64 个精灵全放到屏幕下方，跑一帧，断言计数器增加 ~240）
 ```
@@ -591,7 +634,7 @@ bank 寄存器从 0x3E→0x39（菜单的 $FFD0 表）正常工作。
   金庸群侠传.nes  ->  mapper 163，2MB PRG、CHR RAM、带电池
   76合1.nes      ->  mapper 226，2MB PRG、CHR RAM
 
-Mapper 163（src/core/nes/mapper163.hpp）：
+Mapper 163（packages/fc-core/src/core/nes/mapper163.hpp）：
   - 32KB 窗口，分页寄存器在扩展区 $5000/$5200/$5300；
   - 复位时 mode bit2=0，把 A15/A16 强制为 11 —— 开机在 bank 3，
     不是 bank 0（复位向量就写在 bank 3）；
@@ -600,7 +643,7 @@ Mapper 163（src/core/nes/mapper163.hpp）：
     近似真机的 PPU A13/A9 锁存；
   - 实测：标题画面稳定，按 Start 后进入正式游戏画面，音乐正常。
 
-Mapper 226（src/core/nes/mapper226.hpp）：
+Mapper 226（packages/fc-core/src/core/nes/mapper226.hpp）：
   - 7 位 bank 号拆在 $8000（低 5 位 + bit5 模式 + bit6 镜像 + bit7
     第 6 位）和 $8001（第 7 位）；
   - 模式 0 = 一个 32KB bank（丢掉最低位）；模式 1 = 同一 16KB bank
@@ -610,7 +653,7 @@ Mapper 226（src/core/nes/mapper226.hpp）：
   read_expansion / write_expansion  扩展区 $4020-$5FFF
   on_scanline                       扫描线事件
 
-测试：tests/test_cartridge.cpp 新增 13 个（Mapper163.* / Mapper226.*），
+测试：packages/fc-core/tests/test_cartridge.cpp 新增 13 个（Mapper163.* / Mapper226.*），
 389 -> 403 个测试全通过（上一轮：163/226）
 403 -> 423 个测试全通过（本轮：授权一批 + 中文一批，共 +20）
 423 -> 424（MMC3 / SMB3 状态栏回归）

@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // The WebAssembly build's one C++ file.
 //
-// Everything the emulator does is already in src/core, behind the C interface
-// in src/ffi/emulator_api.h. This file adds nothing to the emulator. It exists
+// Everything the emulator does is already in packages/fc-core/src/core, behind the C interface
+// in packages/fc-core/src/ffi/emulator_api.h. This file adds nothing to the emulator. It exists
 // for two smaller reasons:
 //
 //   1. A linker needs at least one input, and it gives us a place to hang the

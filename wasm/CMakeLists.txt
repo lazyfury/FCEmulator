@@ -76,10 +76,10 @@ set(FC_WASM_EXPORTS
     _free
 )
 
-# The heap views. src/ffi/emulator_api.h hands back bare pointers -- the
-# framebuffer at 0x00RRGGBB per pixel, and APU samples as float -- and a
-# pointer is only useful on the JavaScript side if we can turn it back into a
-# typed array. That is what HEAPU8 and HEAPF32 are.
+# The heap views. packages/fc-core/src/ffi/emulator_api.h hands back bare
+# pointers -- the framebuffer at 0x00RRGGBB per pixel, and APU samples as float
+# -- and a pointer is only useful on the JavaScript side if we can turn it back
+# into a typed array. That is what HEAPU8 and HEAPF32 are.
 #
 # They are not exposed by default any more, so ask for them by name. UTF8ToString
 # is how a `const char*` becomes a JavaScript string.
@@ -126,8 +126,9 @@ set_target_properties(fc_wasm PROPERTIES
 # ---------------------------------------------------------------------------
 # The libretro core, as a WebAssembly module.
 #
-# The same src/libretro/fc_libretro.cpp that becomes fc_libretro.dylib, built
-# for the browser instead. It is a *standalone* module, not a side module:
+# The same packages/fc-libretro/src/libretro/fc_libretro.cpp that becomes
+# fc_libretro.dylib, built for the browser instead. It is a *standalone* module,
+# not a side module:
 # its own linear memory, `retro_*` exported by name, and the front end's
 # callbacks handed in from JavaScript with addFunction. That is route L4a in
 # docs/architecture/libretro-migration.md, chosen because an Emscripten side
@@ -142,21 +143,14 @@ set_target_properties(fc_wasm PROPERTIES
 # ---------------------------------------------------------------------------
 
 add_executable(fc_libretro_wasm
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/libretro/fc_libretro.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/libretro/cheat_codes.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/libretro_ext_glue.cpp
 )
 
-target_link_libraries(fc_libretro_wasm PRIVATE fc_core)
-
-target_include_directories(fc_libretro_wasm PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/libretro
-    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libretro
-)
-
-target_compile_definitions(fc_libretro_wasm PRIVATE
-    FC_LIBRETRO_VERSION="${PROJECT_VERSION}"
-)
+# fc_libretro_core is the OBJECT library the native .dylib is also built from:
+# one set of object files, two linkings, so the two products cannot drift apart.
+# Its PUBLIC include directories bring libretro.h and fc_libretro_ext.h along,
+# and its PUBLIC link to fc_core brings the emulator itself.
+target_link_libraries(fc_libretro_wasm PRIVATE fc_libretro_core)
 
 # Every retro_* the standard ABI names, plus the custom extension, plus malloc
 # and free so JavaScript can hand a ROM in and take a save state out.

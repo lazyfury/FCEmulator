@@ -2,7 +2,7 @@
 // A NES, wrapped.
 //
 // The JavaScript twin of frontend/Sources/Emulator.swift. Below this file
-// there is nothing but C: src/ffi/emulator_api.h, compiled to WebAssembly.
+// there is nothing but C: packages/fc-core/src/ffi/emulator_api.h, compiled to WebAssembly.
 // Nothing here knows how a PPU works, and nothing below it knows that
 // JavaScript exists. Change the language above the C interface and not one
 // line of the emulator has to move.
@@ -40,7 +40,7 @@
 // at each call site is cheaper than a build step that rewrites the import.
 // ---------------------------------------------------------------------------
 
-/// One button. These values are the contract with src/ffi/emulator_api.h,
+/// One button. These values are the contract with packages/fc-core/src/ffi/emulator_api.h,
 /// which in turn matches nes::Controller::Button. They are not arbitrary and
 /// must not be reordered.
 export const Button = Object.freeze({
@@ -373,7 +373,7 @@ export class Emulator {
      * `cheats` is an array of objects shaped `{ address, value, freeze,
      * enabled }`. They are packed into the four-bytes-per-entry form the C
      * side reads, which is the one place the layout is written down on this
-     * side of the boundary; `fc_set_cheats` in src/ffi/emulator_api.h is the
+     * side of the boundary; `fc_set_cheats` in packages/fc-core/src/ffi/emulator_api.h is the
      * other.
      */
     setCheats(cheats = []) {

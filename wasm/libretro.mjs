@@ -34,13 +34,13 @@
 //     float. The NES has one speaker, so the two channels are the same sample,
 //     and `takeSamples` hands back the left one scaled to [-1, 1].
 //   * buttons: the console's eight switches are numbered one way by
-//     src/ffi/emulator_api.h (A=0) and another by libretro (B=0, A=8). The
+//     packages/fc-core/src/ffi/emulator_api.h (A=0) and another by libretro (B=0, A=8). The
 //     front end keeps speaking the first; the map lives here.
 // ---------------------------------------------------------------------------
 
 // -- the constants a front end needs, named the way libretro.h names them ----
 
-/** One console button, numbered the way src/ffi/emulator_api.h numbers them.
+/** One console button, numbered the way packages/fc-core/src/ffi/emulator_api.h numbers them.
  *  This is the numbering the rest of the front end already uses, so it is the
  *  one the CoreHost surface speaks. */
 export const Button = Object.freeze({
@@ -164,7 +164,7 @@ export class StateBuffer {
 const HEX = '0123456789ABCDEF';
 
 /** A raw `{address, value}` cheat as a Pro Action Replay code, which is the
- *  language `retro_cheat_set` speaks. See src/libretro/cheat_codes.cpp. */
+ *  language `retro_cheat_set` speaks. See packages/fc-libretro/src/libretro/cheat_codes.cpp. */
 function proActionReplayCode(address, value)
 {
     const byte = (n) => HEX[(n >> 4) & 0xF] + HEX[n & 0xF];

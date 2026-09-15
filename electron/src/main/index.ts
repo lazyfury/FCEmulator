@@ -156,7 +156,7 @@ function parseArguments(argv: string[]): Options {
             // Resolved against the working directory at start up, so that the
             // path the renderer sees is the same one every time it is asked
             // about. Save states are filed by file name and are indifferent,
-            // but cheats are keyed by the whole path, and "../tests/data/x.nes"
+            // but cheats are keyed by the whole path, and "../packages/fc-core/tests/data/x.nes"
             // and an absolute path to the same file would be two entries with
             // different bytes in them.
             options.romPath = argv[i + 1] !== undefined ? resolve(argv[i + 1]) : null;

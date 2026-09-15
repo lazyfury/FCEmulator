@@ -222,7 +222,7 @@ int16_t input_state_cb(unsigned port, unsigned device, unsigned index, unsigned 
 }
 
 // ---------------------------------------------------------------------------
-// A fingerprint of the picture. Same idea as the one in tests/test_state.cpp:
+// A fingerprint of the picture. Same idea as the one in packages/fc-core/tests/test_state.cpp:
 // cheap, and equal only when the pixels are equal.
 // ---------------------------------------------------------------------------
 
@@ -252,7 +252,7 @@ int main(int argc, char** argv)
 {
     const std::string core_path = (argc > 1) ? argv[1] : "build/fc_libretro.dylib";
     const std::string rom_path =
-        (argc > 2) ? argv[2] : "tests/data/testroms/nestest.nes";
+        (argc > 2) ? argv[2] : "packages/fc-core/tests/data/testroms/nestest.nes";
 
     std::printf("core : %s\nrom  : %s\n\n", core_path.c_str(), rom_path.c_str());
 

@@ -73,26 +73,26 @@ pnpm run dev                    # 开发窗口；pnpm start 跑生产构建
 
 - [x] CMake 4.4 + C++20 + Ninja
 - [x] GoogleTest 1.18 单元测试（429 个测试全通过）
-- [x] `src/core/types.hpp` `bit.{hpp,cpp}` `alu.hpp`
-- [x] `src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
-- [x] `src/core/cpu/` 全部 151 个 opcode、256 项周期表、反汇编器、寻址
-- [x] `src/core/nes/` 地址译码、2KB RAM 镜像、open bus、OAM DMA
-- [x] `src/core/nes/ines.{hpp,cpp}` **iNES 文件头解析**
+- [x] `packages/fc-core/src/core/types.hpp` `bit.{hpp,cpp}` `alu.hpp`
+- [x] `packages/fc-core/src/core/bus.hpp` 总线抽象（含 `take_stall_cycles()`）
+- [x] `packages/fc-core/src/core/cpu/` 全部 151 个 opcode、256 项周期表、反汇编器、寻址
+- [x] `packages/fc-core/src/core/nes/` 地址译码、2KB RAM 镜像、open bus、OAM DMA
+- [x] `packages/fc-core/src/core/nes/ines.{hpp,cpp}` **iNES 文件头解析**
 - [x] **Mapper 0 / 1 / 2 / 3 / 4 / 7 / 9 / 10 / 11 / 13 / 15 / 18 / 19 / 21 / 22 / 23 / 25 / 32 / 33 / 66 / 68 / 71 / 78 / 87 / 162 / 163 / 164 / 177 / 178 / 190 / 226 / 227 / 242 / 246 / 249**
       （NROM、MMC1、UxROM、CNROM、MMC3 含扫描线 IRQ、AxROM、
       MMC2、MMC4、Color Dreams、CPROM、100-in-1、SS88006、Namco 163、
       VRC2/VRC4、IREM、Taito、GxROM、Sunsoft-4、Codemasters、Jaleco、
       Waixing、Nanjing、Henggedianzi、Magic Kid Goo Goo、多合一、T9552）
-      `src/core/nes/mapper0.hpp` … `mapper15.hpp`
-- [x] `src/core/nes/cartridge.{hpp,cpp}` 真正的卡带：加载 .nes 文件
-- [x] `src/core/nes/ppu.{hpp,cpp}` **PPU：渲染管线、精灵、滚动、sprite 0 hit**
-- [x] `src/core/nes/machine.{hpp,cpp}` **CPU/PPU 3:1 同步、NMI 传递**
-- [x] `src/core/nes/framebuffer.hpp` 256×240 输出
-- [x] `src/core/nes/controller.hpp` 手柄串行协议，两个端口接在 `$4016`/`$4017`
-- [x] `src/core/nes/apu.{hpp,cpp}` **五个声道、包络、长度/线性计数器、扫频、帧序列器、非线性混音、DMC**
+      `packages/fc-core/src/core/nes/mapper0.hpp` … `mapper15.hpp`
+- [x] `packages/fc-core/src/core/nes/cartridge.{hpp,cpp}` 真正的卡带：加载 .nes 文件
+- [x] `packages/fc-core/src/core/nes/ppu.{hpp,cpp}` **PPU：渲染管线、精灵、滚动、sprite 0 hit**
+- [x] `packages/fc-core/src/core/nes/machine.{hpp,cpp}` **CPU/PPU 3:1 同步、NMI 传递**
+- [x] `packages/fc-core/src/core/nes/framebuffer.hpp` 256×240 输出
+- [x] `packages/fc-core/src/core/nes/controller.hpp` 手柄串行协议，两个端口接在 `$4016`/`$4017`
+- [x] `packages/fc-core/src/core/nes/apu.{hpp,cpp}` **五个声道、包络、长度/线性计数器、扫频、帧序列器、非线性混音、DMC**
 - [x] 11 个教学 demo；15 个测试文件
 - [x] `docs/` 十七章
-- [x] `src/ffi/emulator_api.h` **纯 C 接口**
+- [x] `packages/fc-core/src/ffi/emulator_api.h` **纯 C 接口**
 - [x] `electron/` **Electron + TypeScript 前端**（WebAssembly 里跑 Core，canvas 出画面，Web Audio 出声），含可验证的无头模式
 
 **现在能运行真实的 NES ROM 并画出画面了：**
@@ -144,13 +144,13 @@ pnpm run dev                    # 开发窗口；或者 pnpm start 跑生产构�
 ```
 
 ```
-CPU  / Bus / Cartridge / PPU / APU / Controller   <- Core (C++)
-                     |
-              src/ffi/emulator_api.h              <- 纯 C 边界
-                     |
-              wasm/ (Emscripten)                  <- 同一份 Core 编译成 WebAssembly
-                     |
-   Electron (TypeScript, canvas + Web Audio)      <- 前端
+packages/fc-core/          CPU / Bus / Cartridge / PPU / APU / Controller   (C++)
+   |
+   +-- src/ffi/emulator_api.h  ->  wasm/fc_core.wasm
+   |
+   +-- packages/fc-libretro/   ->  retro_* 适配层  ->  wasm/fc_libretro.wasm
+                                                              |
+                          Electron (canvas + Web Audio)  <----+        前端
 ```
 
 游戏从内置游戏库选，或者直接把 `.nes` 拖进窗口。详见 [electron/README.md](electron/README.md)。
@@ -197,10 +197,10 @@ ctest --test-dir build --output-on-failure
 cd electron && pnpm install && pnpm start
 ```
 
-用真实 ROM 跑测试（默认会查找 `tests/data/*.nes`）：
+用真实 ROM 跑测试（默认会查找 `packages/fc-core/tests/data/*.nes`）：
 
 ```bash
-ln -s /path/to/game.nes tests/data/game.nes   # 或者：
+ln -s /path/to/game.nes packages/fc-core/tests/data/game.nes   # 或者：
 FC_TEST_ROM=/path/to/game.nes ctest --test-dir build
 ```
 
@@ -231,35 +231,58 @@ FC_TEST_ROM=/path/to/game.nes ctest --test-dir build
 
 ## 目录结构
 
+这是一个 **monorepo**：每个 `packages/*` 都是一个能单独配置、单独构建、
+单独测试的 CMake 项目，根目录只负责把它们组装起来。
+
 ```
 FCEmulator/
 ├── AGENTS.md            AI Agent 执行规范（本项目宪法）
-├── CMakeLists.txt
+├── CMakeLists.txt       monorepo 根：只做组装与全局设置，不含模拟逻辑
+├── cmake/
+│   ├── Version.cmake    项目版本号只写在这里，根与各 package 共用
+│   └── GoogleTest.cmake 测试框架探测，两个 package 复用
+├── packages/
+│   ├── fc-core/         自定义 FC / NES 核心 —— 独立项目
+│   │   ├── CMakeLists.txt
+│   │   ├── src/core/    纯 C++ 机器，禁止依赖 UI
+│   │   │   ├── types.hpp  bit.{hpp,cpp}  alu.hpp  bus.hpp  flat_bus.hpp
+│   │   │   ├── cpu/       寄存器、opcode 表、反汇编、寻址、表驱动派发
+│   │   │   └── nes/       地址译码、卡带、PPU、APU、手柄、Machine
+│   │   ├── src/ffi/     纯 C 接口（emulator_api.h）
+│   │   └── tests/       17 个核心测试 + 真实 ROM 测试的 fixtures
+│   └── fc-libretro/     libretro 包装 —— 独立项目
+│       ├── CMakeLists.txt
+│       ├── src/libretro/  retro_* 适配层 + custom 扩展 + 金手指解码
+│       ├── third_party/libretro/libretro.h  vendored 的 ABI 契约
+│       └── tests/        ABI 测试 + 金手指解码测试
 ├── docs/                学习文档
 │   ├── images/            README 用的截图
 │   ├── computer-science/  二进制 / 十六进制 / 补码 / 位运算 / V flag / CPU / 汇编
 │   ├── architecture/      系统架构
 │   ├── assembly/          6502 汇编索引
 │   └── nes/               NES 硬件规范
-├── src/
-│   ├── core/            纯 C++ 核心，禁止依赖 UI
-│   │   ├── types.hpp      定宽整数
-│   │   ├── bit.{hpp,cpp}  位运算工具
-│   │   ├── alu.hpp        加法器与标志位
-│   │   ├── bus.hpp        总线抽象
-│   │   ├── flat_bus.hpp   测试替身：64KB 平铺内存
-│   │   ├── cpu/           寄存器、opcode 表、反汇编、寻址、表驱动派发
-│   │   └── nes/           地址译码、卡带、PPU、APU、手柄、Machine
-│   └── ffi/            纯 C 接口（前端唯一需要链接的东西）
-├── wasm/               同一份 Core 编译成 WebAssembly 的脚本与绑定
+├── wasm/               同一份 package 编译成 WebAssembly 的脚本与绑定
 ├── electron/           Electron + TypeScript 前端
 │   ├── src/            主进程 / preload / 渲染进程
 │   ├── native/         手柄助手：macOS 用 Swift + GameController（gamepad/），
 │   │                   Windows 用 C++ + XInput（gamepad-cpp/），协议一致
 │   └── test/           前端的 Node 测试
 ├── tools/               教学 demo 与命令行工具
-├── scripts/             本地发布脚本（release.sh）
-└── tests/               单元测试
+└── scripts/             本地发布脚本（release.sh）
+```
+
+依赖方向只有一条，且不允许反向：
+
+```
+wasm / tools / electron  ->  packages/fc-libretro  ->  packages/fc-core
+                             packages/fc-ffi ………………^
+```
+
+单独构建某一个 package（不经过根目录）：
+
+```bash
+cmake -S packages/fc-core     -B build-core     -G Ninja
+cmake -S packages/fc-libretro -B build-libretro -G Ninja  # 会把 fc-core 作为子项目拉进来
 ```
 
 ---
@@ -274,7 +297,7 @@ FCEmulator/
 
 ## 设计原则
 
-1. **核心与 UI 分离** — `src/core` 是纯 C++，不知道窗口、Canvas 或 Electron 存在
+1. **核心与 UI 分离** — `packages/fc-core/src/core` 是纯 C++，不知道窗口、Canvas 或 Electron 存在
 2. **禁止 CPU 直接访问 PPU** — 一切经过 Bus
 3. **一切核心模块必须有测试**
 4. **每个阶段先理解，再实现**
