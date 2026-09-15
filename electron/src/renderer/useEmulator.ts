@@ -694,13 +694,36 @@ export function useEmulator(
                 return true;
             };
 
-            const loadRom = async (path: string): Promise<boolean> => {
+            /** Read the bytes and put them in the machine that is already built. */
+            const loadRomIntoMachine = async (path: string): Promise<boolean> => {
                 const bytes = await window.fc.readRom(path);
                 if (bytes === null) {
                     flash('could not read that game');
                     return false;
                 }
                 return applyRom(bytes, path);
+            };
+
+            /**
+             * Load a game, building the right machine for it first if needed.
+             *
+             * Every entry point goes through here -- a click in the library,
+             * the game named on the command line, a test -- rather than only
+             * the lazy path, because the machine may already exist for another
+             * console: the application started with a NES game, the player
+             * then picks a Game Boy one. Handing Game Boy bytes to a NES core
+             * is what "the core did not accept this cartridge" looks like.
+             */
+            const loadRom = async (path: string): Promise<boolean> => {
+                const wanted = chooseCore(path);
+                if (!sameCore(coreInUse, wanted)) {
+                    await stopMachine();
+                    await startOnce(wanted);
+                    // start() has just replaced actions.current.loadRom with a
+                    // loader for the machine it built; let that one do the work.
+                    return actions.current.loadRom(path);
+                }
+                return loadRomIntoMachine(path);
             };
 
             const unload = (): void => {
@@ -1116,12 +1139,9 @@ export function useEmulator(
             actions.current = {
                 ...actions.current,
                 loadRom: async (path: string) => {
-                    const wanted = chooseCore(path);
-                    if (!sameCore(coreInUse, wanted)) {
-                        // A different console: the machine is the wrong one.
-                        await stopMachine();
-                    }
-                    await startOnce(wanted);
+                    // The machine may not exist yet. Build the right one for
+                    // this game; the loader it installs does the load itself.
+                    await startOnce(chooseCore(path));
                     return actions.current.loadRom(path);
                 },
                 unload: () => undefined,
