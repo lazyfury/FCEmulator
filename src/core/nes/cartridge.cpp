@@ -5,6 +5,9 @@
 #include "core/nes/mapper2.hpp"
 #include "core/nes/mapper3.hpp"
 #include "core/nes/mapper4.hpp"
+#include "core/nes/mapper74.hpp"
+#include "core/nes/mapper241.hpp"
+#include "core/nes/mapper245.hpp"
 #include "core/nes/mapper7.hpp"
 #include "core/nes/mapper9.hpp"
 #include "core/nes/mapper10.hpp"
@@ -234,6 +237,16 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
         break;
     }
 
+    case 74: {   // Waixing MMC3 with a 2KB CHR RAM window.
+        auto mapper = std::make_unique<Mapper74>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
     case 78: {   // Jaleco JF-16
         cart.mapper_ = std::make_unique<Mapper78>(
             cart.prg_rom_, cart.chr_rom_, header.mirroring);
@@ -323,8 +336,24 @@ std::optional<Cartridge> Cartridge::from_bytes(std::span<const u8> rom, std::str
         break;
     }
 
+    case 241: {  // 32KB PRG window and 8KB of CHR RAM.
+        cart.mapper_ = std::make_unique<Mapper241>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
+        break;
+    }
+
     case 242: {  // Waixing
         auto mapper = std::make_unique<Mapper242>(cart.prg_rom_, cart.chr_rom_);
+        if (header.chr_rom_pages == 0) {
+            mapper->make_chr_ram();
+        }
+        cart.mapper_ = std::move(mapper);
+        break;
+    }
+
+    case 245: {  // Waixing MMC3, PRG high bit from CHR register 0.
+        auto mapper = std::make_unique<Mapper245>(
+            cart.prg_rom_, cart.chr_rom_, header.mirroring);
         if (header.chr_rom_pages == 0) {
             mapper->make_chr_ram();
         }
