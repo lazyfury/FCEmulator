@@ -57,6 +57,7 @@
 
 #include "core/nes/mapper.hpp"
 
+#include <array>
 #include <cstddef>
 #include <utility>
 #include <vector>
@@ -176,6 +177,7 @@ public:
     {
         const std::size_t slot = static_cast<std::size_t>(address >> 10) & 0x07u;
         const std::size_t page = map_chr_bank(slot, chr_slot_[slot]);
+        ++chr_writes_[page & 0xFFu];
         write_chr_page(page, static_cast<std::size_t>(address & 0x3FFu), value);
     }
 
@@ -214,6 +216,15 @@ public:
         return (index >= 0 && index < 2) ? prg_bank_[index] : 0;
     }
     [[nodiscard]] u8 bank_select() const noexcept { return bank_select_; }
+
+    /// How many times the CPU wrote to a 1KB CHR page, by the page's low byte.
+    /// A game that writes a page it reads as ROM is a game that expects RAM
+    /// there, which is the only reliable way to find where a board puts its
+    /// pattern RAM when the header disagrees.
+    [[nodiscard]] long chr_write_count(std::size_t page) const noexcept
+    {
+        return chr_writes_[page & 0xFFu];
+    }
 
 private:
     [[nodiscard]] std::size_t prg_bank_count() const noexcept
@@ -372,6 +383,7 @@ protected:
     std::vector<u8> prg_;
     std::vector<u8> chr_;
     std::vector<u8> chr_ram_window_;
+    std::array<long, 256> chr_writes_{};
     Mirroring mirroring_;
     bool chr_ram_ = false;
 

@@ -3,20 +3,29 @@
 // ---------------------------------------------------------------------------
 // Mapper 74, the Waixing MMC3.
 //
-// An MMC3 with one difference that is not a register: the board carries 2KB of
-// CHR RAM beside the pattern ROM, and the two CHR page numbers 8 and 9 come
-// from that RAM instead of the ROM. Nothing selects it with a bit; the page
-// number is the selector.
+// An MMC3 with a piece of pattern RAM whose place is chosen by the page number
+// rather than by a mode bit, plus 4KB of work RAM below the MMC3's usual 8KB.
 //
-//     CHR page 0..7   pattern ROM
-//     CHR page 8..9   the 2KB of RAM
-//     CHR page 10..   pattern ROM
+// Where the pattern RAM is
+// ------------------------
+// The header lies. These cartridges are dumped with a CHR page count for ROM
+// that is not there, and the game writes its tiles into pages the header
+// calls ROM. The writes are what say where the RAM is: 天使之翼2 writes CHR
+// pages 0-3 thousands of times and touches no other page, so the lower 4KB of
+// the pattern side is RAM and everything above it is ROM.
 //
-// It is a small, strange piece of wiring, and it exists because a game wanted
-// a tile it could rewrite -- a status bar, a font -- without giving up the
-// ROM it was already using for everything else. Mapper 74 was written for the
-// 外星科技 cartridges (天使之翼2, 天神之剑, 封神榜) and it is the first mapper
-// here whose CHR is not wholly one thing or the other.
+// It is worth saying that FCEUX documents this mapper as a 2KB window at pages
+// 8 and 9. Either that is a different board of the same number or the header
+// it was written against numbered its pages differently. The data decides:
+// pages 0-3, and the rest of the ROM stays where the game expects it.
+//
+// Where the work RAM is
+// ---------------------
+// $5000-$5FFF is RAM, beside $6000-$7FFF. The games copy a short bank-switch
+// routine down there and call the copy, so that the call survives the bank it
+// switches away from, and they clear the range on the way through.
+//
+// 天使之翼2, 天神之剑 and 封神榜 are the cartridges this was written for.
 // ---------------------------------------------------------------------------
 
 #include "core/nes/mapper4.hpp"
@@ -33,15 +42,10 @@ public:
         : Mapper4(std::move(prg), std::move(chr), default_mirroring)
         , exp_ram_(0x1000, 0)
     {
-        make_chr_ram_window(0x800);   // 2KB, two 1KB pages
+        make_chr_ram_window(0x1000);   // 4KB, CHR pages 0-3
     }
 
     /// 4KB of RAM at $5000-$5FFF, beside the MMC3's usual 8KB at $6000.
-    ///
-    /// The board has it and the games use it the way games use RAM: they copy
-    /// a short bank-switch routine into it and call the copy, so that the call
-    /// survives the bank it switches away from. Without it the JSR lands on
-    /// nothing and the game executes zeros.
     [[nodiscard]] u8 read_expansion(u16 address) override
     {
         if (address >= 0x5000u && address <= 0x5FFFu) {
@@ -75,7 +79,7 @@ public:
 protected:
     [[nodiscard]] bool chr_page_is_ram(std::size_t page) const noexcept override
     {
-        return page == 8u || page == 9u;
+        return page < 4u;
     }
 
 private:
