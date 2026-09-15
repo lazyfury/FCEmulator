@@ -1,6 +1,7 @@
 # 迁移到 libretro ABI —— 调研与计划 v2
 
-> 状态：**L1~L5 完成；L6 完成“编译与 ABI 对齐”里程碑（mGBA wasm 已能跑），剩集成**。
+> 状态：**L1~L6 完成**。FC 走 libretro 化并端到端验收；mGBA 编译 + ABI 对齐 + 前端集成完成，
+> `.gba/.gb/.gbc` 可在 App 里运行。唯一未做：卡带电池存档（`.srm`）落盘。
 > v2 变更：确立 **libretro 为准**；列出**暂时隐藏**的功能；新增 **custom ABI 扩展**设计；
 > 用实验**确认了 wasm 动态加载外部核心的可行性**（结论：原生 core 不行，专用
 > wasm side module 可以，已验证）。
@@ -189,7 +190,7 @@ interface CoreHost {
 | **L3** | Game Genie/PAR 解码 + ROM 补丁钩子 + `SET_MEMORY_MAPS` | 金手指完整、搜索可用 | ✅ 已完成 |
 | **L4** | wasm 加载本 core：采用 **L4a —— 独立 wasm 模块 + JS libretro frontend**（`wasm/libretro.mjs`）。side module 机制对 C core 已验证可行；C++ 运行时对齐问题绕开 | 浏览器/Node 可加载本 core | ✅ 已完成 |
 | **L5** | Electron `CoreHost` 切到 libretro wasm 宿主（`wasm/libretro.mjs`）；canvas 绘制、音频、金手指、诊断全部走 CoreHost | 前端 libretro 化、零回归 | ✅ 已完成 |
-| **L6** | 接入 mGBA：**wasm 已编成、ABI 已对齐、CoreHost 已能驱动（已验证）**；剩系统注册表/按扩展名路由/库收 .gba/UI 泛化 | `.gba` 可玩 | 🟡 编译完成，集成中 |
+| **L6** | 接入 mGBA：自己编 wasm core、ABI 对齐、系统注册表、按扩展名路由与重建机器、库收 `.gba/.gb/.gbc`、分辨率/帧率/采样率按 core | `.gba/.gb/.gbc` 可玩 | ✅ 已完成 |
 | 备选 | native core host（B1）`native/core-host` + IPC | 可加载任意现成 `.dylib` | 1~2 周 |
 
 L1~L3 只增不改；L4 起才动 wasm/前端。
@@ -422,6 +423,22 @@ mGBA **没有**上游 wasm 构建，EmulatorJS 的预编译产物又是它自己
 **剩余（集成，非编译）**：系统注册表 + 按扩展名路由（`.nes`→fc，`.gba/.gb/.gbc`
 →mgba）、库收非 `.nes`、按 core 重建机器（现在模块在启动时加载一次）、
 分辨率/帧率/输入描述数据化、BIOS 与存档目录。估 **2~3 人天**。
+
+### 8.4 集成已完成
+
+- `electron/src/renderer/systems.ts`：扩展名 → core（`fc_libretro` / `mgba_libretro`）、
+  以及每个机种的采样率与帧长。采样率必须随 core 走：NES 44100、GBA 65536、
+  GB/GBC 131072，音频上下文按它建。
+- `useEmulator`：建机器时根据扩展名（或命令行 ROM）选 core；已装卡时若换机种，
+  先 `stopMachine()` 拆掉（帧循环、音频、倒带环）再重建。
+- 库与打开面板收 `.nes/.gba/.gb/.gbc`；帧循环用 `core.frameSeconds`（GBA 59.7275）。
+- 修了两个 mGBA 才暴露的问题：`retro_cheat_reset` 在 load 前解引用 `core`（
+  装卡前不调 core 的 cheat），以及 canvas 尺寸要在 load 后（mGBA 才能报几何）重设。
+- 实测（Pokémon Sapphire 256Mb，`--rom` 启动）：240×160、400 帧、音频 peak 0.208、
+  画面在动、倒带落回同一帧。FC 路径 parity 仍逐像素逐采样一致。
+
+**未做**：卡带电池存档（`.srm`）落盘。存档槽/倒带用的是 save state，已在；
+但 Pokémon 自己的存档需要把 `RETRO_MEMORY_SAVE_RAM` 写到磁盘并在加载时读回。
 
 ---
 

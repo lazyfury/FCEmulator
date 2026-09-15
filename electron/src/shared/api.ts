@@ -577,3 +577,13 @@ export interface FcBridge {
     onGamepadState(callback: (reading: GamepadReading) => void): void;
     offGamepadState(): void;
 }
+
+/**
+ * The file extensions the emulator can run, and the one test for them.
+ *
+ * Shared rather than written twice: the main process filters the library by
+ * these, and the renderer picks a libretro core by them. A file the library
+ * lists but the renderer has no core for is a game that appears and then
+ * fails, which is the drift keeping one list prevents.
+ */
+export const ROM_EXTENSIONS = ['nes', 'gba', 'gb', 'gbc'] as const;

@@ -27,7 +27,7 @@ import { pathToFileURL } from 'node:url';
 import { NativeGamepad, EMPTY_READING, gamepadBinaryPath } from './gamepad';
 import { GameLibrary, SCREENSHOT_DIRECTORY, collectGames, isInside } from './library';
 import {
-    IpcChannel, LIBRARY_HOST, type BootRom, type Cheat, type GamepadButtonName,
+    IpcChannel, LIBRARY_HOST, ROM_EXTENSIONS, type BootRom, type Cheat, type GamepadButtonName,
     type GamepadReading, type InputSettings, type KeyBinding, type LibraryState,
     type Preferences, DEFAULT_INPUT_SETTINGS,
 } from '../shared/api';
@@ -969,7 +969,7 @@ function registerIpc(): void {
                     title: '添加到游戏库',
                     buttonLabel: '拷贝',
                     properties: ['openFile', 'multiSelections'],
-                    filters: [{ name: 'NES ROM', extensions: ['nes'] }],
+                    filters: [{ name: 'ROM', extensions: [...ROM_EXTENSIONS] }],
                 });
                 if (chosen.canceled) {
                     return null;

@@ -551,6 +551,16 @@ export async function createCoreHost(module)
          */
         setCheats(cheats = [])
         {
+            // Before a cartridge is in, there is nothing to cheat on, and a
+            // core is not obliged to survive being asked: mGBA's
+            // retro_cheat_reset dereferences its machine, which does not exist
+            // until retro_load_game. The front end asks at machine build (for
+            // cheats that may already be set) and again at load, so doing
+            // nothing here costs nothing.
+            if (!isLoaded) {
+                return;
+            }
+
             mod._retro_cheat_reset();
             cheatCount = 0;
 
@@ -665,12 +675,21 @@ export async function createCoreHost(module)
         unserialize(bytes) { return host.loadState(bytes); },
         cheatSet(index, enabled, code)
         {
+            if (!isLoaded) {
+                return;
+            }
             const text = mod._malloc(mod.lengthBytesUTF8(code) + 1);
             mod.stringToUTF8(code, text, mod.lengthBytesUTF8(code) + 1);
             mod._retro_cheat_set(index, enabled ? 1 : 0, text);
             mod._free(text);
         },
-        cheatReset() { mod._retro_cheat_reset(); cheatCount = 0; },
+        cheatReset()
+        {
+            if (isLoaded) {
+                mod._retro_cheat_reset();
+            }
+            cheatCount = 0;
+        },
         extension()
         {
             const pointer = mod._fc_libretro_get_ext();
