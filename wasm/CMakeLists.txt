@@ -196,6 +196,7 @@ set(FC_LIBRETRO_WASM_EXPORTS
     _fc_ext_total_cycles
     _fc_ext_cpu_pc
     _fc_ext_take_samples
+    _fc_ext_last_error
     _malloc
     _free
 )

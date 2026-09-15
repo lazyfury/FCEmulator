@@ -140,7 +140,7 @@ check(systemRam[0x10] === 0x5a, 'the memory view is the machine, not a copy');
 
 const extension = host.extension();
 check(extension !== null, 'the custom extension is exported');
-check(extension.abiVersion === 2, 'the extension is version 2');
+check(extension.abiVersion === 3, 'the extension is version 3');
 check(extension.structSize > 0, 'the extension reports its size');
 
 // -- save states --------------------------------------------------------------

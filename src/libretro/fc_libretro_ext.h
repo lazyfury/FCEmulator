@@ -46,7 +46,7 @@
 extern "C" {
 #endif
 
-#define FC_LIBRETRO_EXT_VERSION 2u
+#define FC_LIBRETRO_EXT_VERSION 3u
 
 typedef struct fc_libretro_ext_v1 {
     /** Equal to FC_LIBRETRO_EXT_VERSION at the time the core was built. */
@@ -121,6 +121,20 @@ typedef struct fc_libretro_ext_v1 {
      * samples are drained: the next frame's call returns the next frame's.
      */
     size_t (*take_samples)(float* out, size_t max);
+
+    /* -- why a load failed ------------------------------------------------
+     *
+     * libretro reports a failed retro_load_game with a bare false. A libretro
+     * logger would carry the reason -- "mapper 176 is not implemented yet" --
+     * but the log callback is a C variadic function and JavaScript cannot
+     * build one, so on the wasm side the reason was lost and the player saw
+     * only "the core did not accept this cartridge". This carries the text out
+     * instead.
+     *
+     * Empty when the last load succeeded, or when nothing has been attempted.
+     * A core without the extension falls back to the generic message.
+     */
+    const char* (*last_error)(void);
 } fc_libretro_ext_v1;
 
 /**

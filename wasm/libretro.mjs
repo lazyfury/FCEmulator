@@ -413,7 +413,18 @@ export async function createCoreHost(module)
                     // A core that still will not answer keeps the defaults.
                 }
             } else {
+                // The core's own reason for refusing, when it has one to give:
+                // the NES core carries "mapper 176 is not implemented yet" in
+                // the extension, and without it the player only sees the
+                // generic line. A core from another project has no extension
+                // and keeps the generic message.
                 lastError = 'the core did not accept this cartridge';
+                if (mod._fc_ext_last_error !== undefined) {
+                    const reason = mod.UTF8ToString(mod._fc_ext_last_error());
+                    if (reason) {
+                        lastError = reason;
+                    }
+                }
             }
 
             // The core copies what it needs during the call (need_fullpath is

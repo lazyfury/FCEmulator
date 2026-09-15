@@ -78,4 +78,10 @@ size_t fc_ext_take_samples(float* out, size_t max)
     return ext != nullptr ? ext->take_samples(out, max) : 0;
 }
 
+const char* fc_ext_last_error(void)
+{
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+    return ext != nullptr ? ext->last_error() : "";
+}
+
 } // extern "C"

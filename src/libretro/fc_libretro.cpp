@@ -98,6 +98,10 @@ retro_log_printf_t g_log = nullptr;
 /// moment the call returned.
 std::string g_rom_summary;
 
+/// Why the last retro_load_game failed, for a front end with no logger. Empty
+/// after a successful load.
+std::string g_last_error;
+
 /// The last frame's APU samples, in the float form the APU produced them.
 /// Filled by drain_audio and handed out by the extension's take_samples.
 std::vector<fc::f32> g_last_samples;
@@ -389,6 +393,11 @@ size_t ext_take_samples(float* out, size_t max)
     return count;
 }
 
+const char* ext_last_error()
+{
+    return g_last_error.c_str();
+}
+
 /// The table itself. Field order has to match the header exactly, which the
 /// compiler checks as long as every field is initialized -- and it will warn
 /// if one is not.
@@ -404,6 +413,7 @@ const fc_libretro_ext_v1 kExt = {
     ext_total_cycles,
     ext_cpu_pc,
     ext_take_samples,
+    ext_last_error,
 };
 
 // ---------------------------------------------------------------------------
@@ -694,8 +704,11 @@ RETRO_API void retro_cheat_set(unsigned index, bool enabled, const char* code)
 
 RETRO_API bool retro_load_game(const struct retro_game_info* game)
 {
+    g_last_error.clear();
+
     if (game == nullptr || game->data == nullptr || game->size == 0) {
-        log_message(RETRO_LOG_ERROR, "FC Emulator: no ROM data was provided");
+        g_last_error = "no ROM data was provided";
+        log_message(RETRO_LOG_ERROR, "FC Emulator: %s", g_last_error.c_str());
         return false;
     }
 
@@ -704,7 +717,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
     enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
     if (g_environ != nullptr &&
         !g_environ(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) {
-        log_message(RETRO_LOG_ERROR, "FC Emulator: the front end does not support XRGB8888");
+        g_last_error = "the front end does not support XRGB8888";
+        log_message(RETRO_LOG_ERROR, "FC Emulator: %s", g_last_error.c_str());
         return false;
     }
     if (g_machine == nullptr) {
@@ -715,6 +729,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
                                       game->size);
     std::string error;
     if (!g_machine->load_rom(rom, error)) {
+        // The reason, kept for a front end that has no logger. On the wasm
+        // side this is how "mapper 176 is not implemented yet" reaches the
+        // player instead of a bare false.
+        g_last_error = error;
         log_message(RETRO_LOG_ERROR, "FC Emulator: %s", error.c_str());
         return false;
     }
@@ -761,6 +779,7 @@ RETRO_API void retro_unload_game(void)
     g_machine = nullptr;
     g_halted = false;
     g_rom_summary.clear();
+    g_last_error.clear();
     // Codes are the front end's, but the patches they became were this
     // machine's. The next cartridge starts with neither.
     g_cheats.clear();
@@ -887,6 +906,7 @@ RETRO_API void retro_deinit(void)
     g_machine = nullptr;
     g_halted = false;
     g_rom_summary.clear();
+    g_last_error.clear();
     g_cheats.clear();
     g_environ = nullptr;
     g_video = nullptr;
