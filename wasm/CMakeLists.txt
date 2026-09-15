@@ -144,6 +144,7 @@ set_target_properties(fc_wasm PROPERTIES
 add_executable(fc_libretro_wasm
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/libretro/fc_libretro.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/libretro/cheat_codes.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/libretro_ext_glue.cpp
 )
 
 target_link_libraries(fc_libretro_wasm PRIVATE fc_core)
@@ -186,6 +187,15 @@ set(FC_LIBRETRO_WASM_EXPORTS
     _retro_init
     _retro_deinit
     _fc_libretro_get_ext
+    _fc_ext_peek
+    _fc_ext_poke
+    _fc_ext_set_raw_cheats
+    _fc_ext_raw_cheat_count
+    _fc_ext_mapper_saves_state
+    _fc_ext_rom_summary
+    _fc_ext_total_cycles
+    _fc_ext_cpu_pc
+    _fc_ext_take_samples
     _malloc
     _free
 )

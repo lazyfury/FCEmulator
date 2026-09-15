@@ -30,7 +30,8 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { Button, Emulator } from '@wasm';
+import { Button } from '@wasm';
+import { createCoreHost } from '@libretro';
 
 import { AudioOutput } from './audio/output';
 import { bootLog } from '../shared/boot';
@@ -162,7 +163,7 @@ export function useEmulator(
 
         let disposed = false;
         let animationFrame = 0;
-        let emulator: Emulator | null = null;
+        let emulator: CoreHost | null = null;
         let detachKeyboard: (() => void) | null = null;
         let commandHandler: ((command: CommandName) => void) | null = null;
         let gamepad: GamepadInput | null = null;
@@ -287,17 +288,21 @@ export function useEmulator(
             const buildStarted = Date.now();
             setStatus((s) => ({ ...s, state: 'loading' }));
 
-            // Where fc_core.mjs lives depends on whether this page came from
-            // the Vite dev server or the app:// protocol, so ask the document
-            // instead of hardcoding. `@vite-ignore` stops Vite trying to
-            // bundle a path it cannot resolve at build time.
-            const moduleUrl = new URL('fc_core.mjs', document.baseURI).href;
-            bootLog('renderer', 'import fc_core.mjs begin', moduleUrl);
+            // Where the core's JavaScript lives depends on whether this page
+            // came from the Vite dev server or the app:// protocol, so ask the
+            // document instead of hardcoding. `@vite-ignore` stops Vite trying
+            // to bundle a path it cannot resolve at build time.
+            //
+            // This is the libretro core (stage L5). The file it replaces,
+            // fc_core.mjs, speaks the project's own C ABI; this one speaks
+            // libretro, and libretro.mjs is the front end half of it.
+            const moduleUrl = new URL('fc_libretro.mjs', document.baseURI).href;
+            bootLog('renderer', 'import fc_libretro.mjs begin', moduleUrl);
             const importStarted = Date.now();
             const factory = (await import(/* @vite-ignore */ moduleUrl)) as {
                 default: () => Promise<unknown>;
             };
-            bootLog('renderer', 'import fc_core.mjs done', `${Date.now() - importStarted}ms`);
+            bootLog('renderer', 'import fc_libretro.mjs done', `${Date.now() - importStarted}ms`);
 
             // Instantiating the module is where the .wasm is compiled and the
             // linear memory is set aside, and it is usually the single largest
@@ -311,8 +316,8 @@ export function useEmulator(
             }
 
             const createStarted = Date.now();
-            emulator = await Emulator.create({ module: wasm as never });
-            bootLog('renderer', 'Emulator.create', `${Date.now() - createStarted}ms`);
+            emulator = await createCoreHost(wasm);
+            bootLog('renderer', 'createCoreHost', `${Date.now() - createStarted}ms`);
             const engine = emulator;
             if (disposed) {
                 engine.destroy();
@@ -377,11 +382,11 @@ export function useEmulator(
             const image = context.createImageData(engine.width, engine.height);
             let firstBlitLogged = false;
 
-            // And the framebuffer view, taken once. This is only safe because
-            // the wasm heap never grows (see wasm/CMakeLists.txt): if it could,
-            // this view would be detached by the first growth and every frame
-            // after that would be drawn from an empty buffer.
-            const framebuffer = engine.framebufferBytes();
+            // The framebuffer view is taken inside blit(), not here. The fc_*
+            // host has a picture pointer as soon as the cartridge is in, but
+            // the libretro host only learns where the picture is when the core
+            // first hands one over -- and a view taken before that is empty.
+            // Taking it again is a subarray, so it costs nothing either way.
 
             /**
              * Turn the emulator's pixels into an image on the canvas.
@@ -394,6 +399,10 @@ export function useEmulator(
              * complexity, and it is worth measuring before optimising.
              */
             const blit = (): void => {
+                // The wasm heap never grows (see wasm/CMakeLists.txt), so this
+                // view into it cannot be detached, and re-taking it each frame
+                // is what lets a host whose pointer arrives late still work.
+                const framebuffer = engine.framebufferBytes();
                 const destination = image.data;
                 for (let source = 0, out = 0; out < destination.length; source += 4, out += 4) {
                     destination[out] = framebuffer[source + 2];
@@ -448,11 +457,12 @@ export function useEmulator(
              * precisely what these tests exist to catch.
              */
             const hashPixels = async (): Promise<string> => {
+                const picture = engine.framebufferBytes();
                 const rgb = new Uint8Array(engine.width * engine.height * 3);
                 for (let source = 0, out = 0; out < rgb.length; source += 4, out += 3) {
-                    rgb[out] = framebuffer[source + 2];
-                    rgb[out + 1] = framebuffer[source + 1];
-                    rgb[out + 2] = framebuffer[source];
+                    rgb[out] = picture[source + 2];
+                    rgb[out + 1] = picture[source + 1];
+                    rgb[out + 2] = picture[source];
                 }
                 const digest = await crypto.subtle.digest('SHA-256', rgb);
                 return Array.from(new Uint8Array(digest))

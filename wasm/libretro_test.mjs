@@ -14,7 +14,8 @@
 // did rather than how the JavaScript is written.
 // ---------------------------------------------------------------------------
 
-import { createCoreHost, Joypad, Memory, PixelFormat } from './libretro.mjs';
+import createFcLibretro from './dist/fc_libretro.mjs';
+import { createCoreHost, Button, Memory, PixelFormat } from './libretro.mjs';
 
 // -- a tiny test harness ------------------------------------------------------
 
@@ -71,7 +72,7 @@ function framebufferHash(heapU8, pointer, pixels)
 // -- the run ------------------------------------------------------------------
 
 console.log('creating the core...');
-const host = await createCoreHost();
+const host = await createCoreHost(await createFcLibretro());
 
 check(host.apiVersion() === 1, 'retro_api_version is 1');
 
@@ -118,7 +119,7 @@ check(obs.inputPolls >= FRAMES, 'input was polled every frame');
 check(obs.inputQueries >= FRAMES * 16, 'both ports were queried every frame (8 buttons each)');
 
 // Pressing a button is visible to the core through the callback it installed.
-host.setButton(0, Joypad.START, true);
+host.setButton(Button.START, true, 0);
 host.run();
 check(host.observations().inputQueries > obs.inputQueries, 'a held button is queried');
 
@@ -139,7 +140,7 @@ check(systemRam[0x10] === 0x5a, 'the memory view is the machine, not a copy');
 
 const extension = host.extension();
 check(extension !== null, 'the custom extension is exported');
-check(extension.abiVersion === 1, 'the extension is version 1');
+check(extension.abiVersion === 2, 'the extension is version 2');
 check(extension.structSize > 0, 'the extension reports its size');
 
 // -- save states --------------------------------------------------------------
@@ -181,7 +182,7 @@ host.run();
 check(true, 'a Game Genie code can be installed without crashing');
 host.cheatReset();
 
-host.unload();
+host.destroy();
 
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'} (${failures} failure${failures === 1 ? '' : 's'})\n`);
 process.exit(failures === 0 ? 0 : 1);

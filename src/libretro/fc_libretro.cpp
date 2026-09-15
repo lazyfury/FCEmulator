@@ -50,6 +50,7 @@
 #include "core/types.hpp"
 #include "fc_libretro_ext.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -96,6 +97,10 @@ retro_log_printf_t g_log = nullptr;
 /// hands out a `const char*` and a temporary std::string would dangle the
 /// moment the call returned.
 std::string g_rom_summary;
+
+/// The last frame's APU samples, in the float form the APU produced them.
+/// Filled by drain_audio and handed out by the extension's take_samples.
+std::vector<fc::f32> g_last_samples;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -246,13 +251,27 @@ void apply_input()
 
 void drain_audio()
 {
-    if (g_machine == nullptr || (g_audio_batch == nullptr && g_audio == nullptr)) {
+    // Last frame's samples, kept for the custom extension. Cleared first so a
+    // frame that produces nothing does not hand out the frame before it.
+    g_last_samples.clear();
+
+    if (g_machine == nullptr) {
         return;
     }
 
     const std::size_t taken =
         g_machine->apu().drain(g_mono.data(), kMaxSamplesPerFrame);
     if (taken == 0) {
+        return;
+    }
+
+    // Retained in the APU's own float form, before the int16 conversion below
+    // rounds the low bits away. A front end that compares samples byte for
+    // byte asks for these through the extension; everyone else gets the int16
+    // the libretro ABI specifies.
+    g_last_samples.assign(g_mono.begin(), g_mono.begin() + taken);
+
+    if (g_audio_batch == nullptr && g_audio == nullptr) {
         return;
     }
 
@@ -356,6 +375,20 @@ uint16_t ext_cpu_pc()
     return g_machine == nullptr ? 0 : g_machine->cpu().registers().pc;
 }
 
+size_t ext_take_samples(float* out, size_t max)
+{
+    if (out == nullptr || max == 0) {
+        return 0;
+    }
+
+    const size_t count = std::min(max, g_last_samples.size());
+    std::copy_n(g_last_samples.begin(), count, out);
+    // Drained, like the libretro audio queue: the next frame's call returns
+    // the next frame's samples.
+    g_last_samples.clear();
+    return count;
+}
+
 /// The table itself. Field order has to match the header exactly, which the
 /// compiler checks as long as every field is initialized -- and it will warn
 /// if one is not.
@@ -370,6 +403,7 @@ const fc_libretro_ext_v1 kExt = {
     ext_rom_summary,
     ext_total_cycles,
     ext_cpu_pc,
+    ext_take_samples,
 };
 
 // ---------------------------------------------------------------------------

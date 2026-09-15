@@ -46,7 +46,7 @@
 extern "C" {
 #endif
 
-#define FC_LIBRETRO_EXT_VERSION 1u
+#define FC_LIBRETRO_EXT_VERSION 2u
 
 typedef struct fc_libretro_ext_v1 {
     /** Equal to FC_LIBRETRO_EXT_VERSION at the time the core was built. */
@@ -102,6 +102,25 @@ typedef struct fc_libretro_ext_v1 {
 
     /** The CPU's program counter, for a status line. */
     uint16_t (*cpu_pc)(void);
+
+    /* -- audio, without the conversion libretro asks for --------------------
+     *
+     * libretro carries sound as interleaved signed 16-bit stereo, and this
+     * core obeys that: `retro_run` calls the front end's audio callback with
+     * exactly that. But the APU computes in 32-bit float, and a front end that
+     * has always compared its output sample for sample -- this project's own,
+     * through electron/verify.sh -- cannot round trip through int16 without
+     * every byte changing.
+     *
+     * So the frame's samples are kept in their original form and handed out
+     * here as well. It is the same audio, at full precision, for a front end
+     * that asked for it by name. A standard front end never calls this and
+     * still gets correct int16 through the normal callback.
+     *
+     * Copies up to `max` mono samples into `out` and returns how many. The
+     * samples are drained: the next frame's call returns the next frame's.
+     */
+    size_t (*take_samples)(float* out, size_t max);
 } fc_libretro_ext_v1;
 
 /**

@@ -586,6 +586,28 @@ TEST_F(LibretroTest, TheCustomExtensionIsPresentAndVersioned)
     EXPECT_EQ(ext->struct_size, sizeof(fc_libretro_ext_v1));
 }
 
+TEST_F(LibretroTest, TheExtensionCarriesTheApuSamplesAtFullPrecision)
+{
+    load();
+    run(2);
+
+    const fc_libretro_ext_v1* ext = fc_libretro_get_ext();
+    ASSERT_NE(ext, nullptr);
+
+    // A frame is about 734 mono samples. The point is that they arrive as the
+    // APU's own floats rather than the int16 libretro's callback carries, so a
+    // front end that hashes samples byte for byte still matches.
+    float samples[4096] = {};
+    const std::size_t count = ext->take_samples(samples, 4096);
+    EXPECT_GT(count, 0u);
+    EXPECT_LT(count, 4096u);
+
+    // Drained, like the libretro audio queue: asking twice gets nothing.
+    EXPECT_EQ(ext->take_samples(samples, 4096), 0u);
+    run(1);
+    EXPECT_GT(ext->take_samples(samples, 4096), 0u);
+}
+
 TEST_F(LibretroTest, TheExtensionIsUsableWithoutACartridge)
 {
     // Every field has to survive being asked before a game is loaded, because
@@ -600,6 +622,8 @@ TEST_F(LibretroTest, TheExtensionIsUsableWithoutACartridge)
     EXPECT_EQ(ext->cpu_pc(), 0u);
     ext->poke(0x0000, 1);
     EXPECT_EQ(ext->set_raw_cheats(nullptr, 0), -1);
+    float samples[16] = {};
+    EXPECT_EQ(ext->take_samples(samples, 16), 0u);
 }
 
 TEST_F(LibretroTest, PeekAndPokeGoThroughTheBus)

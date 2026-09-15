@@ -31,6 +31,10 @@ export default defineConfig({
             // wasm/emulator.mjs is shared with Node (wasm/headless.mjs), so it
             // stays outside this package and is imported by path.
             '@wasm': resolve(here, '..', 'wasm', 'emulator.mjs'),
+            // The libretro core's front end half. Same shape as wasm/emulator.mjs
+            // (see electron/src/renderer/wasm.d.ts), so the renderer can pick
+            // either ABI without the game loop changing.
+            '@libretro': resolve(here, '..', 'wasm', 'libretro.mjs'),
         },
     },
 

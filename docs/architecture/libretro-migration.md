@@ -1,6 +1,6 @@
 # 迁移到 libretro ABI —— 调研与计划 v2
 
-> 状态：**L1~L4 完成（L4 采用 L4a）；L5、L6 未执行**。
+> 状态：**L1~L5 完成（L4 采用 L4a，CoreHost 后端为 wasm libretro 前端）；L6 未执行**。
 > v2 变更：确立 **libretro 为准**；列出**暂时隐藏**的功能；新增 **custom ABI 扩展**设计；
 > 用实验**确认了 wasm 动态加载外部核心的可行性**（结论：原生 core 不行，专用
 > wasm side module 可以，已验证）。
@@ -188,7 +188,7 @@ interface CoreHost {
 | **L2** | custom 扩展符号 `fc_libretro_get_ext()`；`Cartridge::prg_ram()`、`NesBus::ram_data()`、电池标志；RAM 型金手指 | 电池存档、内存视图、custom 通道 | ✅ 已完成 |
 | **L3** | Game Genie/PAR 解码 + ROM 补丁钩子 + `SET_MEMORY_MAPS` | 金手指完整、搜索可用 | ✅ 已完成 |
 | **L4** | wasm 加载本 core：采用 **L4a —— 独立 wasm 模块 + JS libretro frontend**（`wasm/libretro.mjs`）。side module 机制对 C core 已验证可行；C++ 运行时对齐问题绕开 | 浏览器/Node 可加载本 core | ✅ 已完成 |
-| **L5** | Electron `CoreHost` 切到 libretro 宿主；隐藏 §4.2 功能；回归 | 前端 libretro 化 | 1 周 |
+| **L5** | Electron `CoreHost` 切到 libretro wasm 宿主（`wasm/libretro.mjs`）；canvas 绘制、音频、金手指、诊断全部走 CoreHost | 前端 libretro 化、零回归 | ✅ 已完成 |
 | **L6** | mGBA 编为 wasm side module + 系统注册表 + UI 泛化 | `.gba` 可玩 | 3~7 人天 |
 | 备选 | native core host（B1）`native/core-host` + IPC | 可加载任意现成 `.dylib` | 1~2 周 |
 
@@ -365,6 +365,18 @@ framebuffer / audio / memory / serialize / cheat / extension）。因为是独�
 验收：`node wasm/libretro_test.mjs`（合成电池 NROM，无需真实 ROM）——
 ABI、XRGB8888、256×240、~734 stereo/帧、两端口轮询、2KB/8KB 内存视图、
 存档往返像素一致、custom 扩展版本，全部通过。
+
+**L5 已落地**：CoreHost 的默认后端是**渲染进程内的 wasm libretro 前端**
+（不是子进程）。`wasm/libretro.mjs` 同时实现 `useEmulator.ts` 一直在用的
+`Emulator` 接口，所以切换是“换模块 + 换构造器”的一行改动，游戏循环、输入、
+金手指、倒带均未变。canvas 绘制改成每帧重取 framebuffer 视图（`subarray`，O(1)）
+——libretro core 的 framebuffer 指针只有跑过一帧才有效，缓存一次会永远画空帧。
+
+音频是唯一“libretro 表达不了”的东西：ABI 只带 int16 stereo，而本项目的
+`electron/verify.sh` 逐字节比对 APU 的 float32。因此扩展新增
+`take_samples(float*, size_t)`（版本升到 **2**），把 APU 原始 float 样本交给
+自家前端；标准前端仍走 int16 回调。已验证：SMB 60 帧下，libretro 路径与原生
+`fc_headless` 的**像素哈希与音频字节完全一致**。
 
 ---
 
