@@ -51,7 +51,16 @@ wasm / tools / electron  ->  packages/fc-libretro  ->  packages/fc-core
 
 ## 2. 构建与测试
 
-根目录只做组装，不含模拟逻辑：
+根目录只做组装，不含模拟逻辑。全量一条命令（native C++ + wasm + Mesen/mGBA
++ 前端 + 全部测试，七步，失败即停并报出是哪一步、跑了多久）：
+
+```bash
+./scripts/build-all.sh              # 全量
+./scripts/build-all.sh --fast       # 跳过两个第三方核心（几分钟，与 packages/ 无关）
+./scripts/build-all.sh --verify     # 再加 wasm/verify.sh 与 electron/verify.sh 的逐像素校验
+```
+
+想单独跑某一步时：
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug

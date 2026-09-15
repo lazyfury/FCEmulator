@@ -66,6 +66,8 @@ verify.sh       逐像素/逐采样对比原生构建与前端
 | `pnpm run audiotest` | 实时播 8 秒，报告音频环形队列 |
 | `./verify.sh [rom-dir]` | 每个 ROM 走原生与前端两条路，逐像素/逐采样比对 |
 
+全仓库一条命令构建 + 测试（含前端的 111 个测试）：`./scripts/build-all.sh`。
+
 无头模式是**唯一的自动化验证手段**（画面无法截图比对之外的断言），
 改渲染/输入/音频后至少要跑 `selftest` + `keytest`（+ `audiotest`）。
 

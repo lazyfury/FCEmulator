@@ -169,7 +169,23 @@ packages/fc-core/          CPU / Bus / Cartridge / PPU / APU / Controller   (C++
 brew install cmake ninja googletest
 ```
 
-构建与测试：
+一条命令全量构建 + 全量测试：
+
+```bash
+./scripts/build-all.sh              # native C++ -> wasm -> Mesen/mGBA -> 前端 -> 全部测试
+./scripts/build-all.sh --fast       # 跳过两个第三方核心（几分钟，和 packages/ 的改动无关）
+./scripts/build-all.sh --verify     # 再加 wasm/verify.sh 与 electron/verify.sh 的逐像素/逐采样校验
+./scripts/build-all.sh --help       # --clean / --skip-tests / --rom / -j
+```
+
+它按顺序做七步：native C++（Core、libretro、demo、`fc_headless`）、`ctest`、
+`wasm/build.sh`、Mesen + mGBA 两个 libretro 核心、Electron（主进程 / 渲染进程 /
+手柄助手）、前端测试 111 个、wasm 冒烟测试（libretro ABI + 一个真实 ROM）。
+任一步失败就停下并指出是哪一步、跑了多久。真实 ROM 会自动在
+`packages/fc-core/tests/data/` 和 `~/Documents/` 下的 ROM 目录里找，也可以用
+`--rom <路径>` 指定。
+
+想看清每一步在做什么，就分开手动跑：
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug

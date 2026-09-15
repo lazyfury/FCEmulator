@@ -45,7 +45,10 @@ cmake --build build-wasm
 ```
 
 产物：`wasm/dist/fc_core.{mjs,wasm}`、`fc_libretro.{mjs,wasm}`、
-`mesen_libretro.*`、`mgba_libretro.*`。
+`mesen_libretro.*`、`mgba_libretro.*`。后两个不属于 CMake 构建：它们是
+`wasm/mesen/build.sh` / `wasm/mgba/build.sh` 按需克隆上游、用 `emmake make` 编的
+（首次要网络，几分钟）。全量入口 `./scripts/build-all.sh` 已经把这两个串进去了，
+`--fast` 则跳过它们。
 
 `wasm/CMakeLists.txt` **只能经 emcmake 进入**（根 `CMakeLists.txt` 里有条件块），
 不要当普通 CMake 直接 `cmake -S wasm`。
