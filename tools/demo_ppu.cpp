@@ -176,7 +176,7 @@ void showPalette(nes::Machine& machine)
 
 int main(int argc, char** argv)
 {
-    std::cout << "FC Emulator - Phase 4: the PPU\n";
+    std::cout << "Classic Game Box - Phase 4: the PPU\n";
 
     const std::filesystem::path requested = (argc > 1) ? argv[1] : "";
     const auto path = find_rom(requested);

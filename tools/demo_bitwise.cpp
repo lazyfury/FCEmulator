@@ -181,7 +181,7 @@ void show_little_endian()
 
 int main()
 {
-    std::cout << "FC Emulator - Phase 0.1: bits, bytes and numbers\n";
+    std::cout << "Classic Game Box - Phase 0.1: bits, bytes and numbers\n";
 
     show_bit_weights();
     show_number_systems();

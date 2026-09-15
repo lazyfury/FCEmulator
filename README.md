@@ -1,8 +1,8 @@
-# FC Emulator
+# Classic Game Box
 
 macOS 上的 NES / FC 模拟器。**打开就能玩**：把 `.nes` 拖进窗口，接上手柄或者用键盘，开始。
 
-![FC Emulator 主界面](docs/images/app.png)
+![Classic Game Box 主界面](docs/images/app.png)
 
 **[⬇️ 下载最新版本](https://github.com/lazyfury/FCEmulator/releases/latest)** · [源码](https://github.com/lazyfury/FCEmulator) · 它同时也是一份「从二进制到屏幕上的像素」的计算机科学学习工程。
 
@@ -10,12 +10,12 @@ macOS 上的 NES / FC 模拟器。**打开就能玩**：把 `.nes` 拖进窗口�
 
 ## 下载与安装
 
-1. 打开 [Releases](https://github.com/lazyfury/FCEmulator/releases/latest)，下载 `FC Emulator-<版本>-arm64.dmg`（Apple Silicon）。
-2. 双击打开 dmg，把 **FC Emulator** 拖进「应用程序」。
+1. 打开 [Releases](https://github.com/lazyfury/FCEmulator/releases/latest)，下载 `Classic Game Box-<版本>-arm64.dmg`（Apple Silicon）。
+2. 双击打开 dmg，把 **Classic Game Box** 拖进「应用程序」。
 3. 第一次打开若提示**「已损坏，无法打开」**，那是 macOS 对未签名应用的隔离标记，执行一次即可：
 
    ```bash
-   xattr -dr com.apple.quarantine "/Applications/FC Emulator.app"
+   xattr -dr com.apple.quarantine "/Applications/Classic Game Box.app"
    ```
 
 > 仓库里**不包含任何 ROM**（版权且体积大）。请使用你合法拥有的游戏文件。
@@ -235,7 +235,7 @@ FC_TEST_ROM=/path/to/game.nes ctest --test-dir build
 单独测试的 CMake 项目，根目录只负责把它们组装起来。
 
 ```
-FCEmulator/
+classic-game-box/
 ├── AGENTS.md            AI Agent 执行规范（本项目宪法）
 ├── CMakeLists.txt       monorepo 根：只做组装与全局设置，不含模拟逻辑
 ├── cmake/

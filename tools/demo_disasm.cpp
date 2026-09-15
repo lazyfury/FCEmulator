@@ -329,7 +329,7 @@ void showKnowledgeGap(const std::vector<u8>& program)
 
 int main()
 {
-    std::cout << "FC Emulator - Phase 0.3: 6502 assembly and disassembly\n";
+    std::cout << "Classic Game Box - Phase 0.3: 6502 assembly and disassembly\n";
 
     const std::vector<u8> program = {
         0xA9, 0x42,        // LDA #$42

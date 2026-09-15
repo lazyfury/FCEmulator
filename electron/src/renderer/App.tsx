@@ -2,7 +2,7 @@
 // The application shell -- three columns and a title bar.
 //
 //   ┌──────────────────────────────────────────────────────────────┐
-//   │ ●●●   FC Emulator                                   ⧉ ⧉ ⧉   │  unified title bar
+//   │ ●●●   Classic Game Box                                   ⧉ ⧉ ⧉   │  unified title bar
 //   ├────────┬─────────────────────┬───────────────────────────────┤
 //   │ 功能区  │ 中间栏              │ 游戏画面                       │
 //   │ 游戏库  │ 卡片 / 截图 / 存档  │ canvas + 控制条                │

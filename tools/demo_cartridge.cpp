@@ -394,7 +394,7 @@ void showGraphics(nes::Cartridge& cart)
 
 int main(int argc, char** argv)
 {
-    std::cout << "FC Emulator - Phase 3: cartridges\n";
+    std::cout << "Classic Game Box - Phase 3: cartridges\n";
 
     const std::filesystem::path requested = (argc > 1) ? argv[1] : "";
     const auto path = find_rom(requested);

@@ -273,7 +273,7 @@ TEST_F(LibretroTest, SystemInfoDescribesAnInMemoryNes)
     retro_system_info info{};
     retro_get_system_info(&info);
 
-    EXPECT_STREQ(info.library_name, "FC Emulator");
+    EXPECT_STREQ(info.library_name, "Classic Game Box");
     EXPECT_STREQ(info.valid_extensions, "nes");
     // need_fullpath false is what lets a front end hand over bytes rather than
     // a file, which is what makes patching and archives the front end's job.

@@ -493,7 +493,7 @@ void showTiming()
 
 int main()
 {
-    std::cout << "FC Emulator - Phase 1: the complete 6502\n";
+    std::cout << "Classic Game Box - Phase 1: the complete 6502\n";
 
     showCompleteness();
     showAdcFlags();

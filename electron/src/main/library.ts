@@ -315,7 +315,7 @@ export class GameLibrary {
         } else if (version > SCHEMA_VERSION) {
             db.close();
             throw new Error(
-                `${databasePath} was written by a newer version of FC Emulator `
+                `${databasePath} was written by a newer version of Classic Game Box `
                 + `(schema ${version}, this build understands ${SCHEMA_VERSION})`,
             );
         }

@@ -155,6 +155,27 @@ for tool in git node pnpm gh shasum; do
 done
 gh auth status >/dev/null 2>&1 || die "gh is not logged in; run: gh auth login"
 
+# --- what the app is called -------------------------------------------------
+# One source of truth: electron/package.json. Everything a player sees -- the
+# release title, the .dmg file name, the line that says which folder to drag
+# into Applications, the quarantine command -- is spelled once, here, and
+# derived from build.productName. Renaming the app is a one-line change in
+# package.json; nothing in this script has to be found and edited to match.
+#
+# APP_NAME   display name  "Classic Game Box"   productName, window title, dmg
+# APP_SLUG   file names    "classic-game-box"   package.json name, temp files
+# APP_ID     bundle id     "com.….electron"     appId
+APP_NAME="$(node -p "require('$PKG').build.productName")"
+APP_ID="$(node -p "require('$PKG').build.appId")"
+APP_SLUG="$(node -p "require('$PKG').name")"
+[ -n "$APP_NAME" ] || die "build.productName is missing from $PKG"
+[ -n "$APP_SLUG" ] || die "name is missing from $PKG"
+# The display name goes straight into a file name and into a glob, so a slash,
+# quote or colon in it turns into a build that produces nothing and a `find`
+# that matches nothing. Say so here rather than three steps later.
+printf '%s' "$APP_NAME" | grep -qE '^[^/\\:*?"<>|]+$' \
+    || die "build.productName '$APP_NAME' has characters a file name cannot hold"
+
 CURRENT_BRANCH="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
 [ "$CURRENT_BRANCH" = "$BRANCH" ] || die "on '$CURRENT_BRANCH', expected '$BRANCH' (--branch to change)"
 
@@ -179,7 +200,13 @@ printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+' \
     || die "version '$VERSION' is not x.y.z"
 
 TAG="v$VERSION"
-TITLE="FC Emulator $VERSION"
+TITLE="$APP_NAME $VERSION"
+# Every name electron-builder will produce, and every name the notes mention,
+# derived once so the three cannot drift apart. electron-builder names its
+# artifacts "${productName}-${version}-${arch}.${ext}" by default.
+ARTIFACT_GLOB="$APP_NAME-$VERSION-*"
+DMG_NAME="$APP_NAME-$VERSION-$ARCH.dmg"
+APP_BUNDLE="$APP_NAME.app"
 
 # Three states, and the difference between them is what makes a retry possible:
 # nothing tagged yet (the normal run), the tag already on this commit (an
@@ -207,6 +234,7 @@ fi
 
 note "version : $CURRENT_VERSION -> $VERSION"
 note "core    : $(cmake_version) -> $VERSION"
+note "app     : $APP_NAME ($APP_ID)"
 note "tag     : $TAG"
 note "target  : $ARCH"
 [ "$DRAFT" = 1 ]      && note "draft   : yes"
@@ -232,9 +260,9 @@ else
         # electron-builder reads the version from package.json and puts it in
         # every file name, so a dry run has to write it too. Both files get put
         # back by the EXIT trap, because a dry run may not change the checkout.
-        PKG_BACKUP="$(mktemp -t fc-pkg-backup)"
+        PKG_BACKUP="$(mktemp -t "$APP_SLUG-pkg-backup")"
         cp "$PKG" "$PKG_BACKUP"
-        CMAKE_VERSION_BACKUP="$(mktemp -t fc-cmake-version-backup)"
+        CMAKE_VERSION_BACKUP="$(mktemp -t "$APP_SLUG-cmake-version-backup")"
         cp "$CMAKE_VERSION_FILE" "$CMAKE_VERSION_BACKUP"
         note "[dry] both files restored at the end"
     fi
@@ -268,7 +296,7 @@ step "Collecting artifacts"
 ASSETS=()
 while IFS= read -r f; do
     ASSETS+=("$f")
-done < <(find "$OUT" -maxdepth 1 -name "FC Emulator-$VERSION-*" \
+done < <(find "$OUT" -maxdepth 1 -name "$ARTIFACT_GLOB" \
             \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' \) | sort -u)
 [ "${#ASSETS[@]}" -gt 0 ] || die "no artifacts for $VERSION in $OUT"
 
@@ -309,7 +337,7 @@ fi
 
 # --- notes -----------------------------------------------------------------
 step "Writing the release notes"
-NOTES="$(mktemp -t fc-release-notes)"
+NOTES="$(mktemp -t "$APP_SLUG-release-notes")"
 
 if [ -n "$NOTES_FILE" ]; then
     [ -f "$NOTES_FILE" ] || die "no notes file at $NOTES_FILE"
@@ -319,12 +347,12 @@ else
     {
         echo "## 安装"
         echo
-        echo "1. 下载下面的 \`FC Emulator-$VERSION-$ARCH.dmg\`"
-        echo "2. 把 **FC Emulator** 拖进「应用程序」"
+        echo "1. 下载下面的 \`$DMG_NAME\`"
+        echo "2. 把 **$APP_NAME** 拖进「应用程序」"
         echo "3. 首次打开若提示「已损坏，无法打开」，执行一次："
         echo
         echo '   ```bash'
-        echo '   xattr -dr com.apple.quarantine "/Applications/FC Emulator.app"'
+        echo "   xattr -dr com.apple.quarantine \"/Applications/$APP_BUNDLE\""
         echo '   ```'
         echo
         # ${ARCH} with braces, not $ARCH: bash 3.2's parser swallows the

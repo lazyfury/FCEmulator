@@ -1,6 +1,6 @@
 ---
 name: fc-repo
-description: FCEmulator monorepo 的入口技能（路由表 + 仓库级上下文纪律）。用于跨多个包的任务、新增或搬动包、改版本号、发版、跑全量测试，或不确定该读哪个目录时。给出仓库布局、依赖方向、整体构建/测试命令、版本号的唯一来源，并把任务路由到 fc-core / fc-libretro / fc-wasm / fc-frontend / fc-tools / fc-docs。
+description: Classic Game Box monorepo 的入口技能（路由表 + 仓库级上下文纪律）。用于跨多个包的任务、新增或搬动包、改版本号、发版、跑全量测试，或不确定该读哪个目录时。给出仓库布局、依赖方向、整体构建/测试命令、三个项目名各自的用途，并把任务路由到 fc-core / fc-libretro / fc-wasm / fc-frontend / fc-tools / fc-docs。
 ---
 
 # fc-repo —— monorepo 总览与路由

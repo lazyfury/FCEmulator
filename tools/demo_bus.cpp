@@ -376,7 +376,7 @@ void showFullProgram()
 
 int main()
 {
-    std::cout << "FC Emulator - Phase 2: address decoding and mirroring\n";
+    std::cout << "Classic Game Box - Phase 2: address decoding and mirroring\n";
 
     showMemoryMap();
     showWhyMirroringExists();

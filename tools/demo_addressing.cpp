@@ -343,7 +343,7 @@ void runARealProgram()
 
 int main()
 {
-    std::cout << "FC Emulator - Phase 0.4: effective addresses\n";
+    std::cout << "Classic Game Box - Phase 0.4: effective addresses\n";
 
     FlatBus bus;
 

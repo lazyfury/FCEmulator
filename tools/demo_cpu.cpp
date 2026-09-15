@@ -197,7 +197,7 @@ void showResetVectorMechanism()
 
 int main()
 {
-    std::cout << "FC Emulator - Phase 0.2: the fetch / decode / execute loop\n";
+    std::cout << "Classic Game Box - Phase 0.2: the fetch / decode / execute loop\n";
 
     const std::vector<u8> program = {
         0xA9, 0x42,   // LDA #$42    A = 0x42

@@ -289,7 +289,7 @@ void showPolling(nes::Machine& machine)
 
 int main(int argc, char** argv)
 {
-    std::cout << "FC Emulator - Phase 5: the controller\n";
+    std::cout << "Classic Game Box - Phase 5: the controller\n";
 
     const std::filesystem::path requested = (argc > 1) ? argv[1] : "";
     const auto path = find_rom(requested);

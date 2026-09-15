@@ -61,7 +61,7 @@ export interface CoreChoice {
 const CORES: readonly CoreChoice[] = [
     {
         id: 'fc',
-        name: 'FC Emulator Core',
+        name: 'Classic Game Box Core',
         system: 'nes',
         module: 'fc_libretro.mjs',
         sampleRate: 44100,

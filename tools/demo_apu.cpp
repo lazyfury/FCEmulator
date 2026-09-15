@@ -408,7 +408,7 @@ void exportAudio(nes::Machine& machine, const std::filesystem::path& out_dir)
 
 int main(int argc, char** argv)
 {
-    std::cout << "FC Emulator - Phase 6: the APU\n";
+    std::cout << "Classic Game Box - Phase 6: the APU\n";
 
     const std::filesystem::path requested = (argc > 1) ? argv[1] : "";
     const std::filesystem::path out_dir = (argc > 2) ? argv[2] : "frames";

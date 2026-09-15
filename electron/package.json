@@ -1,9 +1,9 @@
 {
-  "name": "fc-emulator",
+  "name": "classic-game-box",
   "private": true,
   "version": "0.1.3",
-  "description": "NES / FC emulator - Electron front end. The emulator itself is in ../src, compiled to WebAssembly.",
-  "author": "FC Emulator",
+  "description": "Classic Game Box - NES / FC emulator, Electron front end. The emulator itself is in ../packages/fc-core/src, compiled to WebAssembly.",
+  "author": "Classic Game Box",
   "main": "dist-electron/main/index.js",
   "scripts": {
     "wasm": "bash ../wasm/build.sh",
@@ -29,8 +29,8 @@
     "dist:win": "pnpm run build && electron-builder --win nsis"
   },
   "build": {
-    "appId": "com.fcemulator.electron",
-    "productName": "FC Emulator",
+    "appId": "com.classicgamebox.electron",
+    "productName": "Classic Game Box",
     "directories": {
       "output": "release"
     },
@@ -71,7 +71,7 @@
       ]
     },
     "dmg": {
-      "title": "FC Emulator"
+      "title": "Classic Game Box"
     }
   },
   "devDependencies": {

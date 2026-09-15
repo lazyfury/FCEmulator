@@ -77,7 +77,7 @@ export default function TitleBar({
             <div className="titlebar-lights" aria-hidden="true" />
 
             <div className="titlebar-titles">
-                <span className="titlebar-app">FC Emulator</span>
+                <span className="titlebar-app">Classic Game Box</span>
                 <span className="titlebar-sub">{subtitle || section}</span>
             </div>
 

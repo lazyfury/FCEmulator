@@ -2,7 +2,7 @@
     "version": 4,
     "configurations": [
         {
-            "name": "FCEmulator",
+            "name": "ClassicGameBox",
             "compileCommands": "${workspaceFolder}/build/compile_commands.json",
             "cppStandard": "c++20",
             "cStandard": "c17",

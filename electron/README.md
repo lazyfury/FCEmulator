@@ -1,4 +1,4 @@
-# FC Emulator — Electron front end
+# Classic Game Box — Electron front end
 
 The front end. It sits on the C interface (`../packages/fc-core/src/ffi/emulator_api.h`);
 the emulator itself is not in this directory and is not written in JavaScript.
@@ -29,7 +29,8 @@ pnpm run dev -- --rom "/path/to/game.nes"
 ```
 
 Started with no arguments the app opens on its **library**. The library is a
-folder — by default `~/Library/Application Support/fc-emulator/library` — that
+folder — by default `~/Library/Application Support/Classic Game Box/library`,
+because Electron names that folder after `productName` — that
 holds the ROMs, a `screenshots/` folder, and a SQLite database describing both.
 Add games from the interface with the **+** beside the title, or by dragging
 `.nes` files — or a folder of them — onto the window. Either way the file is

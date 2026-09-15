@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# FC Emulator —— monorepo 根目录
+# Classic Game Box —— monorepo 根目录
 #
 # 这里不定义任何模拟逻辑，只负责把几个独立项目组装起来并给出全局设置。
 #
@@ -24,9 +24,9 @@ cmake_minimum_required(VERSION 3.20)
 # 项目版本只写在一个地方，见 cmake/Version.cmake。
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Version.cmake)
 
-project(FCEmulator
+project(ClassicGameBox
     VERSION ${FC_PROJECT_VERSION}
-    DESCRIPTION "NES / FC emulator for macOS - a computer science learning project"
+    DESCRIPTION "Classic Game Box - NES / FC emulator for macOS, a computer science learning project"
     LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------

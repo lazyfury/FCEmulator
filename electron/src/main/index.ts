@@ -19,7 +19,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, shell 
 import type {
     MessageBoxOptions, MessageBoxReturnValue, OpenDialogOptions, OpenDialogReturnValue,
 } from 'electron';
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, extname, join, normalize, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -223,6 +223,37 @@ bootLog(
         || options.keytest || options.audioTestSeconds > 0 || options.layoutTest
         || options.romPath !== null}`,
 );
+
+// ---------------------------------------------------------------------------
+// The application used to be called "FC Emulator", and Electron names the
+// user-data folder after `productName`. So renaming the product renames
+// `~/Library/Application Support/<name>` -- and that folder is the library
+// (the ROM files themselves, copied in), the save states, the screenshots and
+// config.json. An install that already exists would come up empty.
+//
+// So move it once, as the first thing in the process to touch that path.
+// Nothing is deleted: if the new folder is already there it wins and the old
+// one is left alone; if the move fails the application carries on with a fresh
+// folder rather than refusing to start. Which of those happened goes in the
+// boot log, because a library that silently disappeared is the one outcome
+// nobody can debug.
+// ---------------------------------------------------------------------------
+const PREVIOUS_APP_NAME = 'FC Emulator';
+
+function adoptUserDataFromPreviousName(): void {
+    const current = app.getPath('userData');
+    const previous = join(app.getPath('appData'), PREVIOUS_APP_NAME);
+    if (previous === current || !existsSync(previous) || existsSync(current)) return;
+    try {
+        renameSync(previous, current);
+        bootLog('main', 'library folder moved', `${previous} -> ${current}`);
+    } catch (error) {
+        bootLog('main', 'could not move the old library folder',
+                `${previous} -> ${current}: ${String(error)}`);
+    }
+}
+
+adoptUserDataFromPreviousName();
 
 // ---------------------------------------------------------------------------
 // Which gamepad path this run uses
@@ -495,7 +526,7 @@ function createWindow(): BrowserWindow {
         // own background stops the flash of the wrong shade on start up, and
         // which shade is right depends on the system appearance.
         backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ececec',
-        title: 'FC Emulator',
+        title: 'Classic Game Box',
         // A self test that only wants a pixel hash does not need a window on
         // screen; one that wants a screenshot, real key presses, or a
         // real-time audio ring does. A hidden window is not a window without

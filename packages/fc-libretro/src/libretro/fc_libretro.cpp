@@ -456,7 +456,7 @@ void rebuild_cheats()
 
         const fc::libretro::DecodedCheat decoded = fc::libretro::decode_cheat(slot.code);
         if (!decoded.ok) {
-            log_message(RETRO_LOG_WARN, "FC Emulator: not a cheat code: %s",
+            log_message(RETRO_LOG_WARN, "Classic Game Box: not a cheat code: %s",
                         slot.code.c_str());
             continue;
         }
@@ -476,7 +476,7 @@ void rebuild_cheats()
     g_machine->cheats().set(ram_cheats);
 
     if (!patches.empty() || !ram_cheats.empty()) {
-        log_message(RETRO_LOG_INFO, "FC Emulator: %zu ROM patches, %zu RAM cheats",
+        log_message(RETRO_LOG_INFO, "Classic Game Box: %zu ROM patches, %zu RAM cheats",
                     patches.size(), ram_cheats.size());
     }
 }
@@ -553,7 +553,7 @@ RETRO_API void retro_get_system_info(struct retro_system_info* info)
     }
 
     std::memset(info, 0, sizeof(*info));
-    info->library_name = "FC Emulator";
+    info->library_name = "Classic Game Box";
 #ifdef FC_LIBRETRO_VERSION
     info->library_version = FC_LIBRETRO_VERSION;
 #else
@@ -623,7 +623,7 @@ RETRO_API void retro_run(void)
         // and then keep handing the front end the last picture so it does not
         // wait for a frame that will never come.
         g_halted = true;
-        log_message(RETRO_LOG_ERROR, "FC Emulator: the CPU halted on an unknown opcode");
+        log_message(RETRO_LOG_ERROR, "Classic Game Box: the CPU halted on an unknown opcode");
     }
 
     if (g_video != nullptr) {
@@ -708,7 +708,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
 
     if (game == nullptr || game->data == nullptr || game->size == 0) {
         g_last_error = "no ROM data was provided";
-        log_message(RETRO_LOG_ERROR, "FC Emulator: %s", g_last_error.c_str());
+        log_message(RETRO_LOG_ERROR, "Classic Game Box: %s", g_last_error.c_str());
         return false;
     }
 
@@ -718,7 +718,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
     if (g_environ != nullptr &&
         !g_environ(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) {
         g_last_error = "the front end does not support XRGB8888";
-        log_message(RETRO_LOG_ERROR, "FC Emulator: %s", g_last_error.c_str());
+        log_message(RETRO_LOG_ERROR, "Classic Game Box: %s", g_last_error.c_str());
         return false;
     }
     if (g_machine == nullptr) {
@@ -733,7 +733,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
         // side this is how "mapper 176 is not implemented yet" reaches the
         // player instead of a bare false.
         g_last_error = error;
-        log_message(RETRO_LOG_ERROR, "FC Emulator: %s", error.c_str());
+        log_message(RETRO_LOG_ERROR, "Classic Game Box: %s", error.c_str());
         return false;
     }
 
@@ -750,7 +750,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
     const auto* cartridge = g_machine->cartridge();
     if (cartridge != nullptr) {
         g_rom_summary = cartridge->summary();
-        log_message(RETRO_LOG_INFO, "FC Emulator: %s", g_rom_summary.c_str());
+        log_message(RETRO_LOG_INFO, "Classic Game Box: %s", g_rom_summary.c_str());
     }
 
     // Both of these depend on the cartridge that just went in: the memory map
@@ -897,7 +897,7 @@ RETRO_API void retro_init(void)
         }
     }
 
-    log_message(RETRO_LOG_INFO, "FC Emulator: core initialised");
+    log_message(RETRO_LOG_INFO, "Classic Game Box: core initialised");
 }
 
 RETRO_API void retro_deinit(void)

@@ -103,7 +103,7 @@ rm -rf "$SCRATCH"
 # means a developer's own config.json (which could name any core) cannot change
 # what this test compares. It lives outside the repository so there is nothing
 # to clean up but the directory itself.
-USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/fc-emulator-verify.XXXXXX")"
+USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/classic-game-box-verify.XXXXXX")"
 trap 'rm -rf "$USERDATA"' EXIT
 printf '{ "cores": { "nes": "fc" } }\n' > "$USERDATA/config.json"
 

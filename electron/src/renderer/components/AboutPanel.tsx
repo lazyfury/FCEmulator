@@ -29,7 +29,7 @@ export default function AboutPanel() {
             <header className="panel-head">
                 <div className="panel-title">
                     <h2>关于</h2>
-                    <span className="panel-count">FC Emulator 0.1.0</span>
+                    <span className="panel-count">Classic Game Box 0.1.0</span>
                 </div>
             </header>
 

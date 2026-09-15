@@ -195,7 +195,7 @@ void signedComparison()
 
 int main()
 {
-    std::cout << "FC Emulator - the V (overflow) flag\n";
+    std::cout << "Classic Game Box - the V (overflow) flag\n";
 
     oneAdditionTwoQuestions();
     carryIntoVsCarryOut();

@@ -1,8 +1,8 @@
-# FC Emulator Project — Agent Instructions
+# Classic Game Box Project — Agent Instructions
 
 ## Project Name
 
-FC Emulator for macOS
+Classic Game Box for macOS
 
 ---
 
@@ -118,7 +118,21 @@ APU
 Frontend
 ```
 
-## 2.3 上下文纪律（Skills）
+## 2.3 项目名称
+
+一个仓库里有三个名字，别把它们混起来：
+
+| 名字 | 用在哪 | 例子 |
+|---|---|---|
+| `Classic Game Box` | 给玩家看的显示名 | 窗口标题、`productName`、dmg/app 名、libretro 的 `library_name` |
+| `ClassicGameBox` | 必须是单个标识符的地方 | `project()`、编辑器配置 |
+| `classic-game-box` | 目录名、npm 包名、临时文件名 | `package.json` 的 `name` |
+
+`scripts/release.sh` 不再自己拼这些字符串：它从 `electron/package.json` 里读出
+`build.productName`，用它拼出 `TITLE`、产物名和安装说明。所以**改显示名只要改
+`package.json` 一处**，发版脚本跟着走。
+
+## 2.4 上下文纪律（Skills）
 
 仓库里每个顶层部件都有一份指南，放在 `.pi/skills/<名字>/SKILL.md`：
 
@@ -160,7 +174,7 @@ Frontend
 单独测试的 CMake 项目；根 `CMakeLists.txt` 只负责组装，不含任何模拟逻辑。
 
 ```
-FCEmulator/
+classic-game-box/
 ├── packages/fc-core/       自定义 FC / NES 核心（fc_core, fc_ffi）
 │   ├── src/core/           纯 C++ 机器，禁止依赖 UI
 │   ├── src/ffi/            emulator_api.h 纯 C 接口
