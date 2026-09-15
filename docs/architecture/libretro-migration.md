@@ -1,6 +1,6 @@
 # 迁移到 libretro ABI —— 调研与计划 v2
 
-> 状态：**L1~L5 完成（L4 采用 L4a，CoreHost 后端为 wasm libretro 前端）；L6 未执行**。
+> 状态：**L1~L5 完成；L6 完成“编译与 ABI 对齐”里程碑（mGBA wasm 已能跑），剩集成**。
 > v2 变更：确立 **libretro 为准**；列出**暂时隐藏**的功能；新增 **custom ABI 扩展**设计；
 > 用实验**确认了 wasm 动态加载外部核心的可行性**（结论：原生 core 不行，专用
 > wasm side module 可以，已验证）。
@@ -189,7 +189,7 @@ interface CoreHost {
 | **L3** | Game Genie/PAR 解码 + ROM 补丁钩子 + `SET_MEMORY_MAPS` | 金手指完整、搜索可用 | ✅ 已完成 |
 | **L4** | wasm 加载本 core：采用 **L4a —— 独立 wasm 模块 + JS libretro frontend**（`wasm/libretro.mjs`）。side module 机制对 C core 已验证可行；C++ 运行时对齐问题绕开 | 浏览器/Node 可加载本 core | ✅ 已完成 |
 | **L5** | Electron `CoreHost` 切到 libretro wasm 宿主（`wasm/libretro.mjs`）；canvas 绘制、音频、金手指、诊断全部走 CoreHost | 前端 libretro 化、零回归 | ✅ 已完成 |
-| **L6** | mGBA 编为 wasm side module + 系统注册表 + UI 泛化 | `.gba` 可玩 | 3~7 人天 |
+| **L6** | 接入 mGBA：**wasm 已编成、ABI 已对齐、CoreHost 已能驱动（已验证）**；剩系统注册表/按扩展名路由/库收 .gba/UI 泛化 | `.gba` 可玩 | 🟡 编译完成，集成中 |
 | 备选 | native core host（B1）`native/core-host` + IPC | 可加载任意现成 `.dylib` | 1~2 周 |
 
 L1~L3 只增不改；L4 起才动 wasm/前端。
@@ -402,6 +402,26 @@ ABI、XRGB8888、256×240、~734 stereo/帧、两端口轮询、2KB/8KB 内存�
 - RTC：`RETRO_MEMORY_RTC`（宝可梦）。
 - 金手指：CodeBreaker/GameShark 字符串，core 自解析，前端只透传。
 - e-Reader / 多卡：`load_game_special`，可先不支持。
+
+### 8.3 wasm 路线已验证（L6 里程碑）
+
+mGBA **没有**上游 wasm 构建，EmulatorJS 的预编译产物又是它自己的
+`EJS_Runtime` 胶水（没有 `_retro_*`/`addFunction`），不能直接用。所以自己编：
+
+- `wasm/mgba/build.sh`：拉 `EmulatorJS/mgba` fork（含 libretro Makefile 的
+  `platform=emscripten` 目标）→ 改两个宏 → `emmake make` 出目标文件 → 用
+  `emcc` 自己链成导出 `retro_*` 的独立模块（与 `fc_libretro.wasm` 同形）。
+- 两处关键修改：去掉 `-DCOLOR_16_BIT`（否则 mGBA 用 RGB565，与前端和 parity
+  测试的 XRGB8888 不一致）；去掉 `-DHAVE_CRC32`（否则缺 zlib 的 `crc32`）。
+- 验证：`node wasm/mgba_test.mjs <rom>` —— 2MB GBC ROM 能加载、跑 60 帧、
+  画 160×144、出声、存/读 202KB 状态，全部通过。
+- 顺带验证了“**换 core 不改前端**”：`wasm/libretro.mjs` 不用知道它在驱动 mGBA。
+  为此加了两处容错：mGBA 的 `retro_get_system_av_info` 要 load 之后才安全
+  （FC 任何时候都行），扩展函数（peek/poke/诊断）在其他 core 上不存在要降级。
+
+**剩余（集成，非编译）**：系统注册表 + 按扩展名路由（`.nes`→fc，`.gba/.gb/.gbc`
+→mgba）、库收非 `.nes`、按 core 重建机器（现在模块在启动时加载一次）、
+分辨率/帧率/输入描述数据化、BIOS 与存档目录。估 **2~3 人天**。
 
 ---
 
