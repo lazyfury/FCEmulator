@@ -80,9 +80,11 @@ if ! command -v pnpm > /dev/null 2>&1; then
     exit 2
 fi
 
-echo "==> building the renderer"
-(cd "$ELECTRON" && pnpm run build) > /dev/null 2>&1 || {
-    echo "error: the Electron build failed; run 'pnpm run build' in electron/ to see why" >&2
+echo "==> building the renderer (pnpm run build)"
+# Shown, not silenced. The first build compiles the Swift gamepad helper, which
+# can take a minute; with its output hidden that minute looks like a hang.
+(cd "$ELECTRON" && pnpm run build) || {
+    echo "error: the Electron build failed; see the output above" >&2
     exit 2
 }
 
@@ -141,9 +143,17 @@ for scenario in "${scenarios[@]}"; do
         # structured clone for a number that fits in 64 hex digits.
         native_audio_hash="$(shasum -a 256 "$SCRATCH/samples.raw" | cut -d' ' -f1)"
 
+        # Say so before the app starts, so a slow launch is visibly working
+        # rather than apparently stuck.
+        printf '    %-40s native ok, running the app...\n' "${rom%.nes}"
+
         # --- the application ---------------------------------------------
+        # --no-gamepad: no controller is part of a parity run, and on macOS
+        # the native helper can keep the process tree alive after the window
+        # closes -- which is exactly what a script capturing stdout must not
+        # be left waiting on.
         output="$(cd "$ELECTRON" && pnpm exec electron . --rom "$path" --selftest "$frames" \
-            --script "$script" --snapshots "$snapshots" 2>/dev/null)"
+            --script "$script" --snapshots "$snapshots" --no-gamepad 2>/dev/null)"
         electron_hashes="$(printf '%s\n' "$output" | sed -n 's/^hash //p')"
         electron_audio_hash="$(printf '%s\n' "$output" | awk '/^audio [0-9a-f]+$/ { print $2 }' | head -1)"
 
