@@ -378,6 +378,17 @@ export async function createCoreHost(module)
                 return false;
             }
 
+            // A libretro core holds one game at a time. Loading a second
+            // without taking the first out is undefined for the core: mGBA
+            // keeps the machine it already has and refuses the new cartridge,
+            // which is a Game Boy game that "does not start" when the player
+            // picks another one. The unload is what a front end owes the ABI
+            // between two games.
+            if (isLoaded) {
+                mod._retro_unload_game();
+                isLoaded = false;
+            }
+
             const data = mod._malloc(bytes.length);
             if (data === 0) {
                 lastError = `could not allocate ${bytes.length} bytes for the ROM`;
