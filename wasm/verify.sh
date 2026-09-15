@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # Cross compilation parity check.
 #
-# The rule this enforces: compiling src/core to WebAssembly must not change
+# The rule this enforces: compiling packages/fc-core/src/core to WebAssembly must not change
 # one thing about what the emulator computes.
 #
 # It runs the same ROM four ways and compares all of them:
@@ -49,8 +49,8 @@ if [ $# -ge 1 ] && [ -f "$1" ]; then
 else
     ROM_DIR="${1:-}"
     if [ -z "$ROM_DIR" ]; then
-        for candidate in "$ROOT/tests/data" "$HOME/Documents/FC games"; do
-            # -L so a symlink is followed: tests/data holds symlinks into a
+        for candidate in "$ROOT/packages/fc-core/tests/data" "$HOME/Documents/FC games"; do
+            # -L so a symlink is followed: packages/fc-core/tests/data holds symlinks into a
             # ROM folder that may have moved, and a dangling one must not be
             # mistaken for a usable ROM.
             if [ -n "$(find -L "$candidate" -maxdepth 1 -iname '*.nes' -type f 2>/dev/null | head -1)" ]; then
@@ -86,7 +86,7 @@ fi
 SCRATCH="$ROOT/build-wasm/parity"
 
 echo "=== wasm parity check: ${#ROMS[@]} ROM(s), ${#scenarios[@]} scenario(s) ==="
-echo "    native : build/fc_headless   (C++, through src/ffi/emulator_api.h)"
+echo "    native : build/fc_headless   (C++, through packages/fc-core/src/ffi/emulator_api.h)"
 echo "    wasm   : wasm/headless.mjs   (the module Electron loads)"
 echo "    each run is done twice: straight through, and with a save and reload"
 echo

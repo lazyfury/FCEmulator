@@ -9,12 +9,12 @@
 #
 # The ROMs are not in the repository. Get them from
 # https://github.com/christopherpow/nes-test-roms and put nestest in
-# tests/data/testroms/ as described in the README.
+# packages/fc-core/tests/data/testroms/ as described in the README.
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DATA="$ROOT/tests/data/testroms"
+DATA="$ROOT/packages/fc-core/tests/data/testroms"
 
 if [ ! -f "$DATA/nestest.nes" ]; then
     echo "no test ROMs in $DATA" >&2

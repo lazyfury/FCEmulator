@@ -27,7 +27,7 @@
 // waits. If the ring is empty it outputs silence and counts the underrun. A
 // callback that blocks is a callback that misses its deadline, and the
 // speaker clicks. That is also why this is not written as a worker with a
-// mutex -- see src/ffi/emulator_api.h for the same argument in C.
+// mutex -- see packages/fc-core/src/ffi/emulator_api.h for the same argument in C.
 //
 // (Plain JavaScript rather than TypeScript because Vite imports this with
 // `?url`, which copies the file as-is instead of transpiling it. addModule

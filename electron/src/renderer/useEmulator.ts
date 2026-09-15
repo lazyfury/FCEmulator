@@ -1141,7 +1141,7 @@ export function useEmulator(
             if (!window.fc.selftestOnly) {
                 animationFrame = requestAnimationFrame(tick);
             } else if (!loaded) {
-                fail('no ROM. Start with --rom <game.nes>, or put one in tests/data/');
+                fail('no ROM. Start with --rom <game.nes>, or put one in packages/fc-core/tests/data/');
             }
         };
 

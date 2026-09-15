@@ -5,7 +5,7 @@
 // Run:    ./build/demo_cpu
 //
 // The listing and the register trace are produced by the real disassembler
-// from src/core/cpu/disassembler.cpp - no hand written mnemonic table here.
+// from packages/fc-core/src/core/cpu/disassembler.cpp - no hand written mnemonic table here.
 // ---------------------------------------------------------------------------
 
 #include "core/bit.hpp"

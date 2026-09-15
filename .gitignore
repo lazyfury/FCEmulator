@@ -3,6 +3,10 @@
 # icon) and is source, not output.
 /build/
 cmake-build-*/
+# Standalone builds of a single monorepo package, as the README describes
+# (cmake -S packages/fc-core -B build-core).
+/build-core/
+/build-libretro/
 
 # macOS
 .DS_Store
@@ -25,7 +29,7 @@ DerivedData/
 
 # Real ROMs are never committed (copyright, and they are big)
 *.nes
-tests/data/
+packages/fc-core/tests/data/
 
 # Demo output: PPM pictures and WAV files the teaching demos write. Generated
 # by `./build/demo_ppu`, `./build/demo_input` and `./build/demo_apu`; the README
@@ -42,7 +46,7 @@ wasm/dist/
 
 # Test ROMs. Copyrighted, large, and not ours to commit. See the README for
 # where to get them; the tests skip themselves when the folder is empty.
-tests/data/testroms/
+packages/fc-core/tests/data/testroms/
 
 # mGBA source + build tree (fetched by wasm/mgba/build.sh; ~94MB)
 /build-mgba/

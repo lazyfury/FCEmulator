@@ -201,8 +201,8 @@ static_assert(b == 165);
 ---
 
 **相关实践代码：**
-- `src/core/bit.hpp` — `to_binary()`、`make_u16()`
+- `packages/fc-core/src/core/bit.hpp` — `to_binary()`、`make_u16()`
 - `tools/demo_bitwise.cpp` — 第 1、2、6 节的可运行版本
-- `tests/test_bit.cpp` — 自动验证
+- `packages/fc-core/tests/test_bit.cpp` — 自动验证
 
 **下一章：** [hexadecimal.md](hexadecimal.md)

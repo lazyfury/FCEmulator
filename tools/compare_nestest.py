@@ -3,7 +3,7 @@
 
 Usage:
     fc_testrom nestest.nes --nestest 9000 > ours.log
-    python3 tools/compare_nestest.py tests/data/testroms/nestest.log ours.log
+    python3 tools/compare_nestest.py packages/fc-core/tests/data/testroms/nestest.log ours.log
 
 Why the two columns are allowed to differ
 ----------------------------------------

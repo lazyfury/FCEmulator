@@ -45,8 +45,8 @@ import Foundation
 import GameController
 
 /// The eight names, and the order is the order of the protocol. It is also the
-/// order src/ffi/emulator_api.h's enum uses, so the whole chain -- helper,
-/// main process, renderer, core -- agrees on which switch is which.
+/// order packages/fc-core/src/ffi/emulator_api.h's enum uses, so the whole chain
+/// -- helper, main process, renderer, core -- agrees on which switch is which.
 private let buttonNames = ["A", "B", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT"]
 
 /// Everything up, which is also the starting state and the "pad has gone" state.

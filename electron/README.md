@@ -1,8 +1,8 @@
 # FC Emulator — Electron front end
 
-The front end. It sits on the C interface (`../src/ffi/emulator_api.h`);
+The front end. It sits on the C interface (`../packages/fc-core/src/ffi/emulator_api.h`);
 the emulator itself is not in this directory and is not written in JavaScript.
-It is `../src/core`, compiled to WebAssembly by `../wasm/build.sh`.
+It is `../packages/fc-core/src/core`, compiled to WebAssembly by `../wasm/build.sh`.
 
 ---
 
@@ -668,12 +668,12 @@ watch it change; that row is lives. `$075A` is where Super Mario Bros keeps
 them. This is why `peek` exists as well as `poke`: an automatic cheat search
 (scan, diff, narrow down) is the next layer on top of exactly this panel.
 
-**Where it lives, layer by layer.** `CheatSet` in `src/core/nes/cheats.hpp` is
+**Where it lives, layer by layer.** `CheatSet` in `packages/fc-core/src/core/nes/cheats.hpp` is
 the list and the one operation that matters, applied by `Machine::run_frame`.
 It writes **through the Bus**, not into the RAM array, so address decoding is
 the same one the CPU sees: `$075A` and `$0F5A` are one byte, and a cheat
 written against either has to land on the other. `fc_peek`/`fc_poke`/
-`fc_set_cheats`/`fc_cheat_count` in `src/ffi/emulator_api.h` are the C surface;
+`fc_set_cheats`/`fc_cheat_count` in `packages/fc-core/src/ffi/emulator_api.h` are the C surface;
 `Emulator.peek/poke/setCheats` in `wasm/emulator.mjs` is the JavaScript one.
 `peek` deliberately is **not** a bus cycle -- reading `$2002` clears the vblank
 flag -- so it answers from RAM and returns 0 for a register.
@@ -689,7 +689,7 @@ Three layers again, and the first one is the only one that matters.
 
 **The property.** Saving and immediately reloading has to change *nothing*.
 A state missing one field loads happily and diverges a few frames later, so
-"the bytes came back" is not a test. `tests/test_state.cpp` runs sixty frames,
+"the bytes came back" is not a test. `packages/fc-core/tests/test_state.cpp` runs sixty frames,
 saves, reloads, runs sixty more, and requires the picture to be exactly where
 it would have been without the round trip.
 
@@ -707,7 +707,7 @@ PASSED: 38 run(s) byte for byte identical, 8 skipped
 
 Every mapper this emulator implements saves its bank registers, and every ROM
 in the folder round trips. Nine mappers are covered — 0, 1, 2, 3, 4, 7, 19,
-163 and 177 — and `tests/test_state.cpp` fails the build if one of them stops
+163 and 177 — and `packages/fc-core/tests/test_state.cpp` fails the build if one of them stops
 covering itself.
 
 `fc_mapper_saves_state()` is what a front end asks before promising the player
