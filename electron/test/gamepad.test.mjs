@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
-import { mapPad, PAD_INDICES } from '../src/renderer/gamepad.ts';
+import { mapPad, PAD_INDICES, samePads } from '../src/renderer/gamepad.ts';
 import { InputManager } from '../src/renderer/input.ts';
 import {
     EMPTY_READING,
@@ -22,7 +22,7 @@ import {
     parseGamepadLine,
     sameReading,
 } from '../src/main/gamepad.ts';
-import { NO_GAMEPAD_READING } from '../src/shared/api.ts';
+import { NO_GAMEPAD_READING, PAD_BUTTONS } from '../src/shared/api.ts';
 
 /** A pad with nothing pressed. */
 function pad({ buttons = {}, axes = [0, 0] } = {}) {
@@ -236,4 +236,29 @@ test('the helper binary is looked for where the build script puts it', () => {
         join('/app', 'native', 'bin', 'fc-gamepad.exe'),
     );
     assert.equal(gamepadBinaryPath('/app').endsWith(`fc-gamepad${process.platform === 'win32' ? '.exe' : ''}`), true);
+});
+
+// -- the report the status line draws ----------------------------------------
+
+test('a report changes when a button does', () => {
+    // The settings screen's pad tester is drawn from this, and the status line
+    // is only redrawn when the report differs. A comparison that ignored
+    // buttons would say "the same" every time one was pressed, and the tester
+    // would sit there dark while somebody pressed every button on the
+    // controller wondering why.
+    const pad = (buttons) => ({
+        pads: [{ index: 0, id: 'Xbox', mapping: 'native', port: 0, buttons }],
+    });
+    const all = (down) => Object.fromEntries(PAD_BUTTONS.map((name) => [name, down.includes(name)]));
+
+    assert.equal(samePads(pad(all([])), pad(all([]))), true);
+    assert.equal(samePads(pad(all([])), pad(all(['L1']))), false);
+    assert.equal(samePads(pad(all(['L1'])), pad(all(['L1', 'R2']))), false);
+
+    // And the things the summary is made of still matter.
+    const one = pad(all([]));
+    assert.equal(samePads(one, { pads: [] }), false);
+    assert.equal(samePads(one, {
+        pads: [{ index: 0, id: 'Xbox', mapping: 'native', port: 1, buttons: all([]) }],
+    }), false);
 });

@@ -1,4 +1,16 @@
 // ---------------------------------------------------------------------------
+// The settings panes -- the play column, in the 设置 section.
+//
+// One pane per group of settings, shown one at a time by TabsView: the index
+// in the middle column chooses which. Everything that was here is still here,
+// moved from a single scroll to four tabs, because a value wants room and the
+// play column is the only column with any.
+//
+// The console's own pane is one of the tabs while this section is open (see
+// App), so a player can flip back to the picture to see what a change did --
+// which is the whole reason display settings are worth having next to the
+// game rather than in a dialog.
+// ---------------------------------------------------------------------------
 // Settings -- the middle column, in the 设置 section.
 //
 // There are no preferences to edit, and pretending otherwise would be a lie:
@@ -20,10 +32,13 @@ import type { CoreSelection, InputSettings, Library } from '../../shared/api';
 import InputPanel, { Segment } from './InputPanel';
 import { SYSTEMS, coresFor } from '../systems';
 import type { EngineStatus } from '../engineStatus';
+import { settingsGroup, type SettingsGroupId } from '../settings';
 import type { PixelScale } from '../usePixelScale';
 import { formatCycles, formatHex16 } from '../format';
 
 interface SettingsPanelProps {
+    /** Which group of settings this pane is. */
+    group: SettingsGroupId;
     status: EngineStatus;
     picture: PixelScale;
     scanlines: boolean;
@@ -89,7 +104,8 @@ function Rows({ rows }: { rows: [string, string][] }) {
     );
 }
 
-export default function SettingsPanel({
+export default function SettingsPanes({
+    group,
     status,
     picture,
     scanlines,
@@ -106,66 +122,23 @@ export default function SettingsPanel({
 }: SettingsPanelProps) {
     const pinned = library.games.filter((game) => game.pinned).length;
 
-    return (
-        <section className="panel" aria-label="设置">
-            <header className="panel-head">
-                <div className="panel-title">
-                    <h2>设置</h2>
-                    <span className="panel-count">核心 · 画面滤镜 · 游戏库 · 输入</span>
-                </div>
-            </header>
-
-            <div className="panel-scroll">
-                <Group title="游戏库">
-                    <Rows
-                        rows={[
-                            ['目录', library.directory === '' ? '—' : library.directory],
-                            ['数据库', library.database === '' ? '—' : 'library.sqlite'],
-                            ['游戏', `${library.games.length} 个`],
-                            ['置顶', `${pinned} 个`],
-                            ['截图', `${screenshots} 张`],
-                        ]}
-                    />
-                    <div className="panel-actions">
-                        <button type="button" className="button" onClick={onChooseDirectory}>
-                            <FolderCog size={13} />
-                            选择游戏库文件夹
-                        </button>
-                    </div>
-                    <p className="prose">
-                        游戏库是一个文件夹：ROM、截图
-                        （<code>screenshots/</code>）、它们的元数据
-                        （<code>library.sqlite</code>）都在里面。换一个文件夹就是换一个游戏库。
-                    </p>
-                </Group>
-
-                <Group title="模拟器核心">
-                    {SYSTEMS.map((system) => {
-                        const available = coresFor(system.id);
-                        if (available.length === 0) {
-                            return null;
-                        }
-                        const chosen = cores[system.id] ?? available[0].id;
-                        return (
-                            <div className="setting-row" key={system.id}>
-                                <span className="setting-label">{system.name}</span>
-                                <Segment
-                                    value={chosen}
-                                    options={available.map((core) => ({
-                                        value: core.id,
-                                        label: core.name,
-                                    }))}
-                                    onChange={(id) => onCores({ ...cores, [system.id]: id })}
-                                />
-                            </div>
-                        );
-                    })}
-                    <p className="prose">
-                        同一个机种可以选不同的模拟器核心。切换核心会拆掉当前机器，
-                        再用新核心把卡带重新装进去 —— 卡带没变，只是换了硬件。
-                    </p>
-                </Group>
-
+    const content = (() => {
+        switch (group) {
+            case 'input':
+                return (
+                    <Group title="输入">
+                        <InputPanel
+                            input={input}
+                            onInput={onInput}
+                            pads={status.gamepad.pads}
+                            gamepadEnabled={gamepadEnabled}
+                            gamepadNative={gamepadNative}
+                        />
+                    </Group>
+                );
+            case 'display':
+                return (
+                    <>
                 <Group title="显示">
                     <dl className="rows">
                         <div className="row">
@@ -208,16 +181,77 @@ export default function SettingsPanel({
                     />
                 </Group>
 
-                <Group title="输入">
-                    <InputPanel
-                        input={input}
-                        onInput={onInput}
-                        pads={status.gamepad.pads}
-                        gamepadEnabled={gamepadEnabled}
-                        gamepadNative={gamepadNative}
-                    />
+                    </>
+                );
+            case 'cores':
+                return (
+                <Group title="模拟器核心">
+                    {SYSTEMS.map((system) => {
+                        const available = coresFor(system.id);
+                        if (available.length === 0) {
+                            return null;
+                        }
+                        const chosen = cores[system.id] ?? available[0].id;
+                        return (
+                            <div className="setting-row" key={system.id}>
+                                <span className="setting-label">{system.name}</span>
+                                <Segment
+                                    value={chosen}
+                                    options={available.map((core) => ({
+                                        value: core.id,
+                                        label: core.name,
+                                    }))}
+                                    onChange={(id) => onCores({ ...cores, [system.id]: id })}
+                                />
+                            </div>
+                        );
+                    })}
+                    <p className="prose">
+                        同一个机种可以选不同的模拟器核心。切换核心会拆掉当前机器，
+                        再用新核心把卡带重新装进去 —— 卡带没变，只是换了硬件。
+                    </p>
                 </Group>
-            </div>
+
+                );
+            case 'library':
+                return (
+                <Group title="游戏库">
+                    <Rows
+                        rows={[
+                            ['目录', library.directory === '' ? '—' : library.directory],
+                            ['数据库', library.database === '' ? '—' : 'library.sqlite'],
+                            ['游戏', `${library.games.length} 个`],
+                            ['置顶', `${pinned} 个`],
+                            ['截图', `${screenshots} 张`],
+                        ]}
+                    />
+                    <div className="panel-actions">
+                        <button type="button" className="button" onClick={onChooseDirectory}>
+                            <FolderCog size={13} />
+                            选择游戏库文件夹
+                        </button>
+                    </div>
+                    <p className="prose">
+                        游戏库是一个文件夹：ROM、截图
+                        （<code>screenshots/</code>）、它们的元数据
+                        （<code>library.sqlite</code>）都在里面。换一个文件夹就是换一个游戏库。
+                    </p>
+                </Group>
+
+                );
+        }
+    })();
+
+    return (
+        <section className="play settings-pane" aria-label="设置">
+            <header className="play-head">
+                <div className="play-titles">
+                    <span className="play-name">{settingsGroup(group).label}</span>
+                    <span className="play-summary">设置</span>
+                </div>
+            </header>
+
+            <div className="settings-body">{content}</div>
         </section>
     );
 }

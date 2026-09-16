@@ -31,7 +31,13 @@
 // letter.
 // ---------------------------------------------------------------------------
 
-import type { GamepadButtonName } from '../shared/api';
+import {
+    DEFAULT_COMMAND_BINDINGS, commandKeyId, isHeldCommand,
+    type CommandName as CommandNameFromContract,
+    type GamepadButtonName,
+    type HeldCommandName as HeldCommandNameFromContract,
+} from '../shared/api.ts';
+import { commandForKey, type CommandMaps } from './commands.ts';
 import type { ResolvedBinding } from './bindings';
 
 /**
@@ -59,67 +65,52 @@ export function padSource(index: number): InputSource {
 /** One key on the keyboard, and where it goes. See bindings.ts. */
 export type KeyMap = ReadonlyMap<string, ResolvedBinding>;
 
-/** Keys that do something other than press a switch. */
-export type CommandName =
-    | 'pause'
-    | 'reset'
-    | 'screenshot'
-    | 'screenshot-cover'
-    | 'save1' | 'save2' | 'save3'
-    | 'load1' | 'load2' | 'load3'
-    | 'quicksave' | 'quickload';
-
-export const KEY_COMMANDS: Readonly<Record<string, CommandName>> = Object.freeze({
-    // Escape and P both pause. Escape is what everybody reaches for; P is what
-    // everybody's hands already know.
-    Escape: 'pause',
-    KeyP: 'pause',
-
-    KeyR: 'reset',
-
-    // F12 is what every emulator has used for a screenshot since DOSBox, and
-    // the screenshots section is where they end up.
-    F12: 'screenshot',
-
-    F1: 'save1',
-    F2: 'save2',
-    F3: 'save3',
-
-    F5: 'quicksave',
-    F6: 'quickload',
-});
-
 /**
- * Commands whose meaning is "while the key is down" rather than "when it goes
- * down".
+ * Keys that do something other than press a switch.
  *
- * Rewinding is the only one. It cannot be a toggle: holding the key has to walk
- * backwards through the snapshots at a steady rate, and letting go has to stop
- * exactly where it is. That needs to know about the release, which the
- * one-shot commands above never do.
+ * The commands and their defaults live in the contract (see
+ * `DEFAULT_COMMAND_BINDINGS` in shared/api.ts), because the saved file holds
+ * them and the settings screen edits them. What the *listener* uses is the
+ * player's own list, read through `handlers.commands()`; the three tables
+ * below are the defaults, derived from that one list so that the two cannot
+ * disagree, and kept because the settings screen needs to know which keys are
+ * spoken for.
  */
-export type HeldCommandName = 'rewind';
+export type CommandName = CommandNameFromContract;
+export type HeldCommandName = HeldCommandNameFromContract;
+export { isHeldCommand };
 
-export const HELD_KEY_COMMANDS: Readonly<Record<string, HeldCommandName>> = Object.freeze({
-    Backspace: 'rewind',
-});
+/** The defaults, as a key-at-a-time table without Shift. */
+export const KEY_COMMANDS: Readonly<Record<string, CommandName>> = Object.freeze(
+    Object.fromEntries(
+        DEFAULT_COMMAND_BINDINGS
+            .filter((binding) => binding.key !== null && !binding.key.shift
+                && !isHeldCommand(binding.command))
+            .map((binding) => [binding.key!.code, binding.command as CommandName]),
+    ),
+);
 
-/**
- * The same keys with Shift held mean the other direction.
- *
- * F1 saves and Shift+F1 loads, which is what every emulator has done since the
- * DOS ones and what hands already expect.
- */
-export const KEY_COMMANDS_SHIFTED: Readonly<Record<string, CommandName>> = Object.freeze({
-    F1: 'load1',
-    F2: 'load2',
-    F3: 'load3',
+/** The same with Shift, which is how twelve commands fit on six keys. */
+export const KEY_COMMANDS_SHIFTED: Readonly<Record<string, CommandName>> = Object.freeze(
+    Object.fromEntries(
+        DEFAULT_COMMAND_BINDINGS
+            .filter((binding) => binding.key !== null && binding.key.shift)
+            .map((binding) => [binding.key!.code, binding.command as CommandName]),
+    ),
+);
 
-    // Shift+F12 takes a screenshot *and* puts it on the game's card, which is
-    // the difference between keeping a picture and replacing the one people
-    // see.
-    F12: 'screenshot-cover',
-});
+/** And the held one, which is not a table the others could be part of. */
+export const HELD_KEY_COMMANDS: Readonly<Record<string, HeldCommandName>> = Object.freeze(
+    Object.fromEntries(
+        DEFAULT_COMMAND_BINDINGS
+            .filter((binding) => binding.key !== null && isHeldCommand(binding.command))
+            .map((binding) => [binding.key!.code, binding.command as HeldCommandName]),
+    ),
+);
+
+
+
+
 
 /**
  * The single place that decides what the sixteen switches are doing.
@@ -231,6 +222,14 @@ export interface KeyboardHandlers {
      * the bindings an hour later.
      */
     bindings: () => KeyMap;
+    /**
+     * The commands in force, read afresh for every event.
+     *
+     * The same shape as `bindings` above and for the same reason: the player
+     * may rebind a command an hour into a session, and the listeners were
+     * installed once.
+     */
+    commands?: () => CommandMaps;
     /** A key that does something once, when it goes down. */
     onCommand?: (command: CommandName) => void;
     /** A key that does something for as long as it is held. */
@@ -245,10 +244,11 @@ export interface KeyboardHandlers {
  * makes one game feel wrong to fix another.
  */
 export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers): () => void {
-    // Which held commands are down, so that the browser repeating a held key --
-    // which it does thirty times a second -- is reported once rather than
-    // thirty times.
-    const heldCommands = new Set<HeldCommandName>();
+    // Which held commands are down, by the key that is holding them: the
+    // browser repeats a held key thirty times a second and the command has to
+    // be reported once, and the keyup has to release the command the keydown
+    // started even if the player rebound the key in between.
+    const heldKeys = new Map<string, HeldCommandName>();
 
     // Which binding each held key went down with. Kept so that a keyup
     // releases exactly the switch its keydown pressed: the player may change
@@ -300,6 +300,12 @@ export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers
     const bindingFor = (event: KeyboardEvent): ResolvedBinding | undefined =>
         handlers.bindings().get(event.code);
 
+    /** The command a key event means, or null. See commands.ts. */
+    const commandFor = (event: KeyboardEvent): CommandName | HeldCommandName | null => {
+        const maps = handlers.commands?.();
+        return maps === undefined ? null : commandForKey(maps, event.code, event.shiftKey);
+    };
+
     const onKeyDown = (event: KeyboardEvent): void => {
         if (isTyping(event.target) || keyboardTaken()) {
             return;
@@ -308,21 +314,21 @@ export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers
         // Commands first, so a rebinding cannot take Escape or a function key
         // away from the application. The two lists are kept disjoint by the
         // settings screen anyway; this is the second lock on the same door.
-        const held = HELD_KEY_COMMANDS[event.code];
-        if (held !== undefined) {
+        const command = commandFor(event);
+        if (command !== null) {
             event.preventDefault();
-            if (!heldCommands.has(held)) {
-                heldCommands.add(held);
-                handlers.onCommandState?.(held, true);
+            if (isHeldCommand(command)) {
+                // Once per hold, not once per repeat. And the command is
+                // remembered by key, so the release resolves to it even if the
+                // binding changed while the key was down.
+                const id = commandKeyId({ code: event.code, shift: event.shiftKey });
+                if (!heldKeys.has(id)) {
+                    heldKeys.set(id, command);
+                    handlers.onCommandState?.(command, true);
+                }
+            } else {
+                handlers.onCommand?.(command);
             }
-            return;
-        }
-
-        const command = (event.shiftKey ? KEY_COMMANDS_SHIFTED[event.code] : undefined)
-            ?? KEY_COMMANDS[event.code];
-        if (command !== undefined) {
-            event.preventDefault();
-            handlers.onCommand?.(command);
             return;
         }
 
@@ -341,12 +347,15 @@ export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers
             return;
         }
 
-        const held = HELD_KEY_COMMANDS[event.code];
+        // The command the key went *down* with, for the same reason the switch
+        // bindings below are resolved that way: a rebinding while the key is
+        // held must not leave the machine walking backwards forever.
+        const heldId = commandKeyId({ code: event.code, shift: event.shiftKey });
+        const held = heldKeys.get(heldId);
         if (held !== undefined) {
             event.preventDefault();
-            if (heldCommands.delete(held)) {
-                handlers.onCommandState?.(held, false);
-            }
+            heldKeys.delete(heldId);
+            handlers.onCommandState?.(held, false);
             return;
         }
 
@@ -372,10 +381,10 @@ export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers
 
         // And anything that was being held down. Losing focus mid rewind would
         // otherwise leave the machine walking backwards forever.
-        for (const command of heldCommands) {
+        for (const command of heldKeys.values()) {
             handlers.onCommandState?.(command, false);
         }
-        heldCommands.clear();
+        heldKeys.clear();
     };
 
     window.addEventListener('keydown', onKeyDown);

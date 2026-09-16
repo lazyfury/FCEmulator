@@ -102,6 +102,23 @@ PadButtons readButtons(const XINPUT_GAMEPAD& pad) {
     buttons.LEFT = (mask & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
     buttons.RIGHT = (mask & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
 
+    // The ones the game cannot see, and the reason they are read at all: a
+    // command -- pause, screenshot, save, load -- wants a button that does not
+    // also press something in the game. XInput has no guide button (it is the
+    // one thing the API deliberately does not hand over), so GUIDE stays up.
+    buttons.FACE_X = (mask & XINPUT_GAMEPAD_X) != 0;
+    buttons.FACE_Y = (mask & XINPUT_GAMEPAD_Y) != 0;
+    buttons.L1 = (mask & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
+    buttons.R1 = (mask & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
+    buttons.L3 = (mask & XINPUT_GAMEPAD_LEFT_THUMB) != 0;
+    buttons.R3 = (mask & XINPUT_GAMEPAD_RIGHT_THUMB) != 0;
+
+    // Triggers are bytes, not switches. Half way down is where a command
+    // starts, because the alternative is one that fires on a brush against the
+    // shoulder.
+    buttons.L2 = pad.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD;
+    buttons.R2 = pad.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD;
+
     // The full range is -32768..32767. The asymmetry at the bottom is real
     // and costs half a step at worst, which no deadzone cares about.
     const float x = static_cast<float>(pad.sThumbLX) / 32767.0f;

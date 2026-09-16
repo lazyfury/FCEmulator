@@ -27,7 +27,10 @@ namespace fc {
 /// The eight names, in the order of the protocol and of the C enum on the
 /// emulator's side. The whole chain -- helper, main process, renderer, core --
 /// agrees on which switch is which because this is the one list.
-extern const char* const kButtonNames[8];
+/** Every name a reading carries: the console's eight, then the nine a command
+ *  may be bound to. The order is the protocol's order and the renderer's. */
+constexpr int kButtonCount = 17;
+extern const char* const kButtonNames[kButtonCount];
 
 /// One pad with its slot, as the renderer sees it.
 struct PadReading {

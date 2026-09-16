@@ -40,6 +40,7 @@ import {
     DEFAULT_INPUT_SETTINGS, type Cheat, type CoreSelection, type InputSettings,
 } from '../shared/api';
 import { resolveBindings, padPort } from './bindings';
+import { commandMaps } from './commands';
 import { INITIAL_STATUS, unloaded, type EngineStatus } from './engineStatus';
 import {
     GamepadSource, NativeGamepadSource, NO_PADS, samePads,
@@ -130,6 +131,22 @@ export interface EmulatorHandlers {
      * the listeners or the machine.
      */
     input?: InputSettings;
+    /**
+     * Whether commands are being accepted at all.
+     *
+     * False while the console is not the thing on screen -- a settings group
+     * in its place, or a screenshot over it -- and asked on every command
+     * rather than remembered, because the answer changes as the player moves
+     * around the window.
+     *
+     * It is not the same question as "is the machine paused". Pausing stops
+     * the *game*; this stops the *application*, and the difference is a
+     * screenshot preview where the arrows are walking through pictures: the
+     * pad button bound to 存档 must not save while somebody is binding it in
+     * the settings screen, and it must not save while they are looking at a
+     * picture either. Nobody is playing, so nothing is commanded.
+     */
+    commandsAllowed?: () => boolean;
     /**
      * The core the player chose for each console.
      *
@@ -259,6 +276,7 @@ export function useEmulator(
 
         detachKeyboard = attachKeyboard(manager, {
             bindings: () => resolveBindings(inputSettings()),
+            commands: () => commandMaps(inputSettings()),
             onCommand: (command) => commandHandler?.(command),
             onCommandState: (command, held) => {
                 if (command === 'rewind') {
@@ -286,10 +304,20 @@ export function useEmulator(
         // and a source that started and found nothing, both produce no
         // `gamepad:` lines at all.
         if (window.fc.gamepadNative) {
-            gamepad = new NativeGamepadSource(manager, (index) => padPort(inputSettings(), index));
+            gamepad = new NativeGamepadSource(
+                manager,
+                (index) => padPort(inputSettings(), index),
+                () => commandMaps(inputSettings()),
+                (command) => commandHandler?.(command),
+            );
             console.log('gamepad: native source started, watching for a pad');
         } else if (window.fc.gamepadEnabled) {
-            gamepad = new GamepadSource(manager, (index) => padPort(inputSettings(), index));
+            gamepad = new GamepadSource(
+                manager,
+                (index) => padPort(inputSettings(), index),
+                () => commandMaps(inputSettings()),
+                (command) => commandHandler?.(command),
+            );
             console.log('gamepad: browser source started, watching for a pad');
         } else {
             console.log('gamepad: not enabled -- see the main process log for why');
@@ -1016,6 +1044,21 @@ export function useEmulator(
             };
 
             commandHandler = (command: CommandName): void => {
+                // Nothing is commanded while the console is not on screen.
+                // See `commandsAllowed`: the settings screen takes the pad for
+                // its tester and its bindings, and a command that fired there
+                // would be a save nobody asked for.
+                // Logged before anything acts on it, so that "it fired twice"
+                // can be told apart from "the second one came from somewhere
+                // else" with the terminal open. The pads log their own line on
+                // the way in; this one is the delivery.
+                console.log(`command: ${command}`);
+
+                if (!(outward.current.commandsAllowed?.() ?? true)) {
+                    console.log(`command: ${command} refused -- the console is not on screen`);
+                    return;
+                }
+
                 switch (command) {
                 case 'pause':
                     paused = !paused;

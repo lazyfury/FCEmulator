@@ -94,7 +94,10 @@ int main() {
             fc::padsMessage(pads),
             "{\"type\":\"pads\",\"pads\":[{\"index\":0,\"id\":\"Xbox Controller\","
             "\"buttons\":{\"A\":true,\"B\":false,\"SELECT\":false,\"START\":false,"
-            "\"UP\":false,\"DOWN\":false,\"LEFT\":false,\"RIGHT\":false}}]}",
+            "\"UP\":false,\"DOWN\":false,\"LEFT\":false,\"RIGHT\":false,"
+            "\"L1\":false,\"R1\":false,\"L2\":false,\"R2\":false,"
+            "\"L3\":false,\"R3\":false,\"FACE_X\":false,\"FACE_Y\":false,"
+            "\"GUIDE\":false}}]}",
             "a whole pads message");
     }
 

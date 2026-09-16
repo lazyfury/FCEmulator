@@ -47,7 +47,19 @@ import GameController
 /// The eight names, and the order is the order of the protocol. It is also the
 /// order packages/fc-core/src/ffi/emulator_api.h's enum uses, so the whole chain
 /// -- helper, main process, renderer, core -- agrees on which switch is which.
-private let buttonNames = ["A", "B", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT"]
+/// Everything the helper reports: the console's eight, and the ones the
+/// console has no switch for -- the shoulders, the triggers, the stick clicks,
+/// the two extra face buttons and the home button.
+///
+/// The second group exists so that a *command* (pause, screenshot, save) can be
+/// bound to a button that does not also press something in the game. They are
+/// reported all the same, on every line, because a reading is a fixed shape and
+/// a missing key is a key the renderer would have to defend against.
+private let buttonNames = [
+    "A", "B", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT",
+    "L1", "R1", "L2", "R2", "L3", "R3",
+    "FACE_X", "FACE_Y", "GUIDE",
+]
 
 /// Everything up, which is also the starting state and the "pad has gone" state.
 private func allReleased() -> [String: Bool] {
@@ -210,6 +222,23 @@ private final class PadReporter {
             buttons["B"] = pad.buttonB.isPressed
             buttons["START"] = pad.buttonMenu.isPressed
             buttons["SELECT"] = pad.buttonOptions?.isPressed ?? false
+
+            // The ones the game cannot see. A trigger is analog; half way down
+            // is the honest point to call it pressed, because the alternative
+            // is a command that fires on a brush against the shoulder.
+            buttons["FACE_X"] = pad.buttonX.isPressed
+            buttons["FACE_Y"] = pad.buttonY.isPressed
+            buttons["L1"] = pad.leftShoulder.isPressed
+            buttons["R1"] = pad.rightShoulder.isPressed
+            buttons["L2"] = pad.leftTrigger.isPressed || pad.leftTrigger.value > 0.5
+            buttons["R2"] = pad.rightTrigger.isPressed || pad.rightTrigger.value > 0.5
+            buttons["L3"] = pad.leftThumbstickButton?.isPressed ?? false
+            buttons["R3"] = pad.rightThumbstickButton?.isPressed ?? false
+            // macOS keeps the home button for itself on every pad anybody has,
+            // so this reads as up forever. It is reported anyway rather than
+            // left out: a reading with a hole in it is a reading the renderer
+            // has to branch on.
+            buttons["GUIDE"] = pad.buttonHome?.isPressed ?? false
             return buttons
         }
 

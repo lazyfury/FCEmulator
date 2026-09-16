@@ -21,7 +21,15 @@
 // when something changes, so that source sits and waits to be told.
 // ---------------------------------------------------------------------------
 
-import type { GamepadReading, PadReading } from '../shared/api';
+import type { GamepadReading, PadReading } from '../shared/api.ts';
+import {
+    EXTRA_PAD_BUTTONS, GAMEPAD_SWITCHES, PAD_BUTTONS,
+    type CommandName, type PadButtonName,
+} from '../shared/api.ts';
+import {
+    arbitrateChords, CHORD_WAIT_MS, NO_CHORDS,
+    type ChordState, type CommandMaps,
+} from './commands.ts';
 import type { ButtonName, InputManager, InputSource } from './input';
 
 /**
@@ -45,12 +53,23 @@ const DEADZONE = 0.5;
 export const PAD_INDICES = {
     A: 0,
     B: 1,
+    // 2 and 3 are the other two face buttons, which the console has no switch
+    // for -- see ExtraPadButtonName: they are command buttons, not game ones.
+    FACE_X: 2,
+    FACE_Y: 3,
+    L1: 4,
+    R1: 5,
+    L2: 6,
+    R2: 7,
     SELECT: 8,
     START: 9,
+    L3: 10,
+    R3: 11,
     UP: 12,
     DOWN: 13,
     LEFT: 14,
     RIGHT: 15,
+    GUIDE: 16,
 } as const;
 
 /** The parts of a Gamepad this looks at. A real one has far more. */
@@ -59,10 +78,9 @@ export interface PadState {
     axes: readonly number[];
 }
 
-/** The eight names, so a reading can be walked without trusting its key order. */
-const BUTTONS: readonly ButtonName[] = [
-    'A', 'B', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT',
-];
+/** The eight that reach the console. The rest of a reading is for commands --
+ *  see PadHoldings.apply. */
+const SWITCHES: readonly ButtonName[] = [...GAMEPAD_SWITCHES];
 
 /**
  * One pad, as the status line and the settings screen see it.
@@ -80,6 +98,16 @@ export interface PadSummary {
     mapping: string;
     /** The port it drives, or -1 when it is ignored. */
     port: number;
+    /**
+     * What is down on it right now, all seventeen names.
+     *
+     * Carried up to the status line so that the settings screen can be a
+     * *tester*: a player who does not know which physical button the helper
+     * calls L2 finds out by pressing it and watching a chip light up. Without
+     * this the only way to discover it is to bind a command and see whether
+     * something happens.
+     */
+    buttons: Record<PadButtonName, boolean>;
 }
 
 /** Every pad that is connected right now. */
@@ -97,20 +125,32 @@ export const NO_PADS: PadsReport = { pads: [] };
  * second that change nothing. Compared field by field rather than by identity,
  * because a poll builds a fresh object every frame.
  */
+/**
+ * Whether two reports say the same thing.
+ *
+ * Used to decide whether the status -- and with it the settings screen's pad
+ * tester -- has to be redrawn, so it compares everything one of them draws:
+ * which pads, where they are assigned, and *which buttons are down*. The last
+ * one is what makes the lights light: a report that ignored buttons would be
+ * "the same" every time a button was pressed, and the tester would sit there
+ * dark while somebody pressed every button on the controller wondering why.
+ */
 export function samePads(a: PadsReport, b: PadsReport): boolean {
     if (a.pads.length !== b.pads.length) {
         return false;
     }
     return a.pads.every((pad, position) => {
         const other = b.pads[position];
-        return other !== undefined
-            && pad.index === other.index
-            && pad.id === other.id
-            && pad.mapping === other.mapping
-            && pad.port === other.port;
+        if (other === undefined
+            || pad.index !== other.index
+            || pad.id !== other.id
+            || pad.mapping !== other.mapping
+            || pad.port !== other.port) {
+            return false;
+        }
+        return PAD_BUTTONS.every((button) => pad.buttons[button] === other.buttons[button]);
     });
 }
-
 /**
  * Which of the console's eight switches a pad has down.
  *
@@ -120,7 +160,7 @@ export function samePads(a: PadsReport, b: PadsReport): boolean {
  * paragraph in FcBridge.gamepadEnabled. The mapping is the part with decisions
  * in it, so the mapping is the part that is a plain function.
  */
-export function mapPad(pad: PadState): Record<ButtonName, boolean> {
+export function mapPad(pad: PadState): Record<PadButtonName, boolean> {
     const pressed = (index: number): boolean => pad.buttons[index]?.pressed ?? false;
     const axis = (index: number): number => pad.axes[index] ?? 0;
 
@@ -141,8 +181,22 @@ export function mapPad(pad: PadState): Record<ButtonName, boolean> {
         A: pressed(PAD_INDICES.A),
         B: pressed(PAD_INDICES.B),
 
-        START: pressed(PAD_INDICES.START),
         SELECT: pressed(PAD_INDICES.SELECT),
+        START: pressed(PAD_INDICES.START),
+
+        // The ones the console has no switch for. They are reported so that a
+        // command can be bound to them; nothing in the game can see them.
+        FACE_X: pressed(PAD_INDICES.FACE_X),
+        FACE_Y: pressed(PAD_INDICES.FACE_Y),
+        L1: pressed(PAD_INDICES.L1),
+        R1: pressed(PAD_INDICES.R1),
+        L2: pressed(PAD_INDICES.L2),
+        R2: pressed(PAD_INDICES.R2),
+        L3: pressed(PAD_INDICES.L3),
+        R3: pressed(PAD_INDICES.R3),
+        // The home button. macOS may keep it to itself, in which case it reads
+        // as up forever and the player binds a command to something else.
+        GUIDE: pressed(PAD_INDICES.GUIDE),
     };
 }
 
@@ -185,10 +239,26 @@ const QUIET_POLLS = 120;
 class PadHoldings {
     readonly #held = new Map<number, Set<ButtonName>>();
     readonly #ports = new Map<number, number>();
+    /**
+     * What each pad's buttons have meant so far.
+     *
+     * A chord needs more state than "what is down": it needs how long the set
+     * has been the same (to wait for a longer chord) and what has already fired
+     * (so a hold fires once). See `arbitrateChords`.
+     */
+    readonly #chords = new Map<number, ChordState>();
     readonly #manager: InputManager;
+    readonly #commands: () => CommandMaps;
+    readonly #onCommand: (command: CommandName) => void;
 
-    constructor(manager: InputManager) {
+    constructor(
+        manager: InputManager,
+        commands: () => CommandMaps,
+        onCommand: (command: CommandName) => void,
+    ) {
         this.#manager = manager;
+        this.#commands = commands;
+        this.#onCommand = onCommand;
     }
 
     /** Which indices are currently holding something. */
@@ -196,8 +266,24 @@ class PadHoldings {
         return [...this.#held.keys()];
     }
 
-    /** Put a pad's current switches into the manager on `port`. */
-    apply(index: number, port: number, wanted: Record<ButtonName, boolean>, log: (text: string) => void): void {
+    /**
+     * Put a pad's current switches into the manager on `port`, and fire the
+     * commands its other buttons are bound to.
+     *
+     * One reading, two destinations, and the split is the whole point: the
+     * console's eight go to the game, and the shoulders, triggers, stick
+     * clicks and extra face buttons -- which the console has no switch for --
+     * go to the application. Nothing a player binds a command to can be
+     * pressed by accident while playing.
+     */
+    apply(
+        index: number,
+        port: number,
+        wanted: Record<PadButtonName, boolean>,
+        log: (text: string) => void,
+    ): void {
+        this.#fireCommands(index, wanted, log);
+
         if (port < 0) {
             this.release(index);
             return;
@@ -218,7 +304,7 @@ class PadHoldings {
         }
         this.#ports.set(index, port);
 
-        for (const button of BUTTONS) {
+        for (const button of SWITCHES) {
             const on = wanted[button];
             const was = held.has(button);
             if (on !== was) {
@@ -233,7 +319,48 @@ class PadHoldings {
         }
     }
 
-    /** Let go of everything one pad was holding. */
+    /**
+     * Decide what this pad's buttons mean, and fire the commands it decided on.
+     *
+     * The decision is not made here: it is `arbitrateChords`, which knows that
+     * a three button chord beats a two button chord and that a one button chord
+     * has to wait a moment for the longer one it might be part of. All this
+     * does is feed it the reading once a frame and carry its state from one
+     * frame to the next.
+     */
+    #fireCommands(
+        index: number,
+        wanted: Record<PadButtonName, boolean>,
+        log: (text: string) => void,
+    ): void {
+        const held = EXTRA_PAD_BUTTONS.filter((button) => wanted[button]);
+        const maps = this.#commands();
+        const step = arbitrateChords(
+            this.#chords.get(index) ?? NO_CHORDS,
+            held,
+            performance.now(),
+            maps.combos,
+            CHORD_WAIT_MS,
+        );
+        this.#chords.set(index, step.state);
+
+        for (const command of step.fire) {
+            log(`command  pad ${index}  ${held.join('+')}  ->  ${command}`);
+            this.#onCommand(command);
+        }
+    }
+
+    /**
+     * Let go of the switches one pad was holding.
+     *
+     * Called every frame for a pad that is assigned to nothing, and that is why
+     * it does *not* touch the chord state: a pad whose port is 关闭 still has
+     * buttons, and somebody binding a command to it is holding exactly the pad
+     * that is assigned to nothing. Forgetting what they pressed every frame
+     * would leave a one button chord waiting for a longer one forever -- the
+     * state resets before the wait is up -- which is silence, not a bug you can
+     * see.
+     */
     release(index: number): void {
         const held = this.#held.get(index);
         const port = this.#ports.get(index);
@@ -247,9 +374,15 @@ class PadHoldings {
         this.#ports.delete(index);
     }
 
+    /** A pad that has gone: its switches and what its buttons meant. */
+    forget(index: number): void {
+        this.release(index);
+        this.#chords.delete(index);
+    }
+
     releaseAll(): void {
-        for (const index of [...this.#held.keys()]) {
-            this.release(index);
+        for (const index of [...new Set([...this.#held.keys(), ...this.#chords.keys()])]) {
+            this.forget(index);
         }
     }
 }
@@ -268,6 +401,7 @@ function summarise(
                 id: pad.id,
                 mapping,
                 port: portFor(pad.index),
+                buttons: pad.buttons,
             })),
     };
 }
@@ -283,9 +417,14 @@ export class GamepadSource implements GamepadInput {
     #polls = 0;
     #saidNothing = false;
 
-    constructor(manager: InputManager, portFor: (index: number) => number) {
+    constructor(
+        manager: InputManager,
+        portFor: (index: number) => number,
+        commands: () => CommandMaps,
+        onCommand: (command: CommandName) => void,
+    ) {
         this.#portFor = portFor;
-        this.#holdings = new PadHoldings(manager);
+        this.#holdings = new PadHoldings(manager, commands, onCommand);
 
         // A pad that was already plugged in sends no connect event when the
         // page loads, but polling finds it on the first frame regardless.
@@ -317,13 +456,13 @@ export class GamepadSource implements GamepadInput {
         // that runs out of battery mid jump does not leave the jump held.
         for (const index of this.#holdings.indices) {
             if (!present.has(index)) {
-                this.#holdings.release(index);
+                this.#holdings.forget(index);
                 say(`disconnected  pad ${index}`);
             }
         }
 
         const settings = this.#portFor;
-        const mapped = new Map<number, Record<ButtonName, boolean>>();
+        const mapped = new Map<number, Record<PadButtonName, boolean>>();
         const pads: PadReading[] = [];
         for (const [index, pad] of present) {
             const buttons = mapPad(pad);
@@ -405,9 +544,14 @@ export class NativeGamepadSource implements GamepadInput {
     /** The pads the last reading described, so a connect can be logged once. */
     #known = new Set<number>();
 
-    constructor(manager: InputManager, portFor: (index: number) => number) {
+    constructor(
+        manager: InputManager,
+        portFor: (index: number) => number,
+        commands: () => CommandMaps,
+        onCommand: (command: CommandName) => void,
+    ) {
         this.#portFor = portFor;
-        this.#holdings = new PadHoldings(manager);
+        this.#holdings = new PadHoldings(manager, commands, onCommand);
 
         // Ask first, then listen. The helper may already have a reading from
         // before this page existed -- a pad that was connected while the
@@ -442,7 +586,7 @@ export class NativeGamepadSource implements GamepadInput {
         // Pads that have gone.
         for (const index of this.#holdings.indices) {
             if (!present.has(index)) {
-                this.#holdings.release(index);
+                this.#holdings.forget(index);
             }
         }
 
@@ -459,5 +603,5 @@ export class NativeGamepadSource implements GamepadInput {
     }
 }
 
-/** The eight names, exported so the status code can walk a reading. */
-export const PAD_BUTTON_NAMES = BUTTONS;
+/** Every name a reading carries, exported so the status code can walk one. */
+export const PAD_BUTTON_NAMES: readonly PadButtonName[] = [...PAD_BUTTONS];

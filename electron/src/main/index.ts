@@ -29,9 +29,9 @@ import { GameLibrary, SCREENSHOT_DIRECTORY, collectGames, isInside } from './lib
 import {
     IpcChannel, LIBRARY_HOST, ROM_EXTENSIONS, CORES_BY_SYSTEM,
     type BootRom, type Cheat, type CoreId, type CoreSelection, type GamepadButtonName,
-    type GamepadReading, type InputSettings, type KeyBinding, type LibraryState,
+    type CommandBinding, type GamepadReading, type InputSettings, type KeyBinding, type LibraryState,
     type LibraryViewSettings, type Preferences, type SortKey, type SystemId,
-    DEFAULT_INPUT_SETTINGS, DEFAULT_LIBRARY_VIEW, SORT_KEYS, directionOf,
+    DEFAULT_INPUT_SETTINGS, DEFAULT_LIBRARY_VIEW, SORT_KEYS, directionOf, normaliseBinding,
 } from '../shared/api';
 import { bootLog, bootOrigin, setBootOrigin } from '../shared/boot';
 
@@ -758,13 +758,23 @@ function normaliseInput(raw: unknown): InputSettings {
         });
     }
 
+    // The command bindings, through the same normaliser the renderer resolves
+    // with: a binding this side keeps and the other drops is a command that
+    // does nothing, and the two would drift the moment one of them changed.
+    let commands: CommandBinding[] | null = null;
+    if (Array.isArray(value.commands)) {
+        commands = value.commands
+            .map(normaliseBinding)
+            .filter((binding): binding is CommandBinding => binding !== null);
+    }
+
     const padPorts: number[] = Array.isArray(value.padPorts)
         ? value.padPorts.map((port) => (
             port === 0 || port === 1 || port === -1 ? port : -1
         ))
         : [];
 
-    return { keyboard, keyboardPlayer, bindings, padPorts };
+    return { keyboard, keyboardPlayer, bindings, padPorts, commands };
 }
 
 /**

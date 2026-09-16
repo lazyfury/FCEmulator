@@ -190,6 +190,16 @@ rather than a set of edits scattered through the components, and it lives in
 the bug it was written for was an eject that stopped the machine but left the
 game on screen in five different places at once.
 
+**Settings live in the play column.** The rail's 设置 leaves the middle column
+as an *index* -- one line per group, and clicking one switches the tab the play
+column is showing (`TabsView`, the same component that swaps the console for a
+screenshot). The values want room and the middle column is the narrow one, so
+the index says what there is to set and the play column shows it. The console
+stays mounted while a group is up, and the game is paused for as long as it is
+hidden -- which is the same rule the screenshot preview follows, and the reason
+display settings are worth having next to the picture rather than in a dialog:
+switch back to 游戏画面 and see what changed.
+
 **The interface is three columns.** A function rail on the left (icons with
 their names under them, like VS Code's activity bar), the middle column the
 rail selects, and the play area on the right. The canvas lives in the play
@@ -851,10 +861,18 @@ was made under. The main process validates it on the way in, so a config file
 somebody edited by hand cannot make the application start with a binding that
 means nothing.
 
-### Keys
+### Keys and pads
 
-These are the defaults. The settings panel is where they are changed, and where
-the keyboard is set to one player or two.
+Two different kinds of binding, and the difference matters:
+
+* the console has **eight switches** -- A, B, Select, Start and the d-pad --
+  and those are what the game reads;
+* everything else the player asks for is a **command**: pause, screenshot,
+  save, load, reset, rewind. A command needs a button that does not also press
+  something in the game, or taking a screenshot would be jumping.
+
+The keyboard's switches are set in 设置 → 输入, where the keyboard is also set
+to one player or two. These are the defaults:
 
 | Key | |
 |---|---|
@@ -863,12 +881,80 @@ the keyboard is set to one player or two.
 | X / K | A |
 | Enter, Space | Start |
 | Tab, Right Shift | Select |
+
+The commands are on the same screen, and every one of them can be rebound --
+Shift is captured as part of the key, which is how twelve commands fit on six
+keys:
+
+| Key | |
+|---|---|
 | Escape, P | pause |
 | R | reset |
+| F12 | screenshot |
+| Shift + F12 | screenshot, and make it the cover |
 | F1, F2, F3 | save to slot 1, 2, 3 |
 | Shift + F1, F2, F3 | load from slot 1, 2, 3 |
 | F5, F6 | quick save, quick load (slot 0) |
 | Backspace (hold) | rewind |
+
+**Commands can be on the pad too**, and this is why a pad reports more than the
+console's eight buttons. Both helpers report the shoulders, the triggers, the
+stick clicks, the two extra face buttons and the guide button -- buttons the
+console has no switch for, so a command bound to one of them cannot fire while
+the player is playing. `ExtraPadButtonName` in src/shared/api.ts is the list.
+
+A pad binding is a **chord**: the buttons that have to be down *together*.
+A single button is a chord of one (`PadCombo` is a list of buttons, sorted so
+that equal chords compare equal), and "L1+R1" is a chord of two, which is how
+a pad with only a few spare buttons still has room for thirteen commands. It is
+the *set* that is down at once that counts: pressing L1, letting go, then
+pressing R1 is not L1+R1.
+
+**Which chord the player meant** is the part with a decision in it, and it is
+`arbitrateChords` in src/renderer/commands.ts:
+
+* **the longest chord wins.** L1 is 暂停 and L1+R1 is 存档, so a three button
+  chord beats a two button chord that fits inside it -- the shorter one is
+  *part* of the longer, not a second command;
+* **and the shorter one waits.** Pressing L1+R1 starts with L1 already down, so
+  the naive answer fires 暂停 on the way to 存档 and the player gets both. While
+  a longer chord could still complete -- every button that is down is part of
+  one -- nothing fires yet. If the longer one arrives it wins; if the player
+  lets go first, what they held is what they meant and it fires the moment they
+  let go.
+
+The wait is only paid when there is something to wait *for*: with one chord
+bound, or with the longest chord already complete, it fires on the frame it
+happens. A delay on every pad hotkey would be a delay on the point of having
+one.
+
+The settings screen can bind a chord two ways: click the small chips, or press
+**按下来绑** and hold the buttons on the pad and let go. The second is the one
+to use for a chord, and the button says what it has collected while it waits, so
+nobody has to guess what is about to be saved.
+
+**Nothing is commanded while the console is not on screen.** The settings screen
+takes the pad for its tester and its bindings, and a screenshot can be over the
+picture; a command that fired then would be a save nobody asked for -- which is
+exactly what binding a pad button to 存档 and pressing it in the settings screen
+would do. `commandsAllowed` (App → useEmulator) is the one rule, asked on every
+command rather than remembered, and the keyboard and the pads both go through it.
+The console's eight switches are a different question and are not gated: they
+reach a machine that is paused, which is what "nobody is playing" means for a
+game.
+
+**The pad tester.** Under 设置 → 输入 → 手柄 each connected pad shows two rows of
+lights: the console's eight, then the nine a command may use. They light up as
+buttons are pressed, which is the only quick way to find out which physical
+button the helper calls `L2`. The rows are also the rule, drawn: a command can
+be bound to the second row and not the first, because the first is the game's.
+
+There is deliberately no default pad binding: pads differ (a DualSense has a
+touchpad where an Xbox pad has nothing, and a small pad may have no shoulders
+at all), so the pad side starts empty and the player fills in what their pad
+has. The pad *switches* -- which pad drives player 1, and which button is
+which -- are unchanged: those are the game's, and every pad reports them by the
+name the console uses.
 
 ### Cheats
 

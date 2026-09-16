@@ -35,11 +35,21 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
-import type { GamepadButtonName, GamepadReading, PadReading } from '../shared/api';
+import type { GamepadReading, PadButtonName, PadReading } from '../shared/api';
 
-/** The eight switches, in the order the C enum uses. */
-export const GAMEPAD_BUTTONS: readonly GamepadButtonName[] = [
+/**
+ * Every name a reading carries, in the order the settings screen lists them:
+ * the console's eight, then the nine a command may be bound to.
+ *
+ * Written out rather than imported from shared/api because this module is
+ * loaded by a plain Node test, and Node cannot resolve the extensionless
+ * import of another `.ts` file at run time. A test asserts that the two lists
+ * are the same one.
+ */
+export const GAMEPAD_BUTTONS: readonly PadButtonName[] = [
     'A', 'B', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT',
+    'L1', 'R1', 'L2', 'R2', 'L3', 'R3',
+    'FACE_X', 'FACE_Y', 'GUIDE',
 ];
 
 /**
@@ -98,7 +108,7 @@ function parsePad(raw: unknown): PadReading | null {
     }
 
     const source = (pad.buttons ?? {}) as Record<string, unknown>;
-    const buttons = {} as Record<GamepadButtonName, boolean>;
+    const buttons = {} as Record<PadButtonName, boolean>;
     for (const button of GAMEPAD_BUTTONS) {
         // Exactly true, so a missing key, a null, or a string is "not pressed"
         // rather than something the renderer has to defend against.

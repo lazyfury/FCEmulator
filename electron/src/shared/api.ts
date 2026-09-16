@@ -274,6 +274,44 @@ export type GamepadButtonName =
     | 'A' | 'B' | 'SELECT' | 'START'
     | 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 
+/** The eight, in the order the C enum lists them. */
+export const GAMEPAD_SWITCHES: readonly GamepadButtonName[] = Object.freeze([
+    'A', 'B', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT',
+]);
+
+/**
+ * The buttons a pad reports that the console has no switch for: the shoulders,
+ * the triggers, the stick clicks, the two extra face buttons, and the system
+ * keys.
+ *
+ * They exist for one reason. A *command* -- pause, screenshot, save, load --
+ * needs a button that does not also press something in the game, and every one
+ * of the console's eight is the game's. Binding screenshot to A would take a
+ * picture every time the player jumped.
+ *
+ * Named after where they are rather than after what is printed on them: the
+ * same physical shoulder is L on a DualSense, LB on an Xbox pad and L1 on a
+ * Super NES pad, and the helper's job is to report the button, not the legend.
+ */
+export type ExtraPadButtonName =
+    | 'FACE_X' | 'FACE_Y'
+    | 'L1' | 'R1' | 'L2' | 'R2' | 'L3' | 'R3'
+    | 'GUIDE';
+
+/** The nine, in the order the settings screen offers them. */
+export const EXTRA_PAD_BUTTONS: readonly ExtraPadButtonName[] = Object.freeze([
+    'L1', 'R1', 'L2', 'R2', 'L3', 'R3',
+    'FACE_X', 'FACE_Y', 'GUIDE',
+]);
+
+/** Everything a pad reports: the game's eight, and the nine that are not. */
+export type PadButtonName = GamepadButtonName | ExtraPadButtonName;
+
+export const PAD_BUTTONS: readonly PadButtonName[] = Object.freeze([
+    ...GAMEPAD_SWITCHES,
+    ...EXTRA_PAD_BUTTONS,
+]);
+
 /**
  * One physical pad, as the helper or the browser sees it.
  *
@@ -286,8 +324,10 @@ export interface PadReading {
     index: number;
     /** The framework's or browser's name for the pad. */
     id: string;
-    /** Which of the eight are down. */
-    buttons: Record<GamepadButtonName, boolean>;
+    /** Which of them are down. Every name is present; a pad that has no
+     *  trigger reports that trigger as up rather than leaving it out, so the
+     *  reading is the same shape whatever is plugged in. */
+    buttons: Record<PadButtonName, boolean>;
 }
 
 /**
@@ -339,6 +379,8 @@ export interface InputSettings {
      * pad 1 to player 2, everything after that unused.
      */
     padPorts: number[];
+    /** What fires each command, or null for the built-in defaults. */
+    commands: CommandBinding[] | null;
 }
 
 /** Everything at its default, which is also what a fresh config file means. */
@@ -347,7 +389,214 @@ export const DEFAULT_INPUT_SETTINGS: InputSettings = {
     keyboardPlayer: 0,
     bindings: null,
     padPorts: [],
+    commands: null,
 };
+
+/**
+ * Things the player asks the application to do, rather than pressing a switch
+ * on the console.
+ *
+ * Here rather than in the renderer because the saved file holds them: a
+ * binding is a line in config.json, and a command name only the renderer knows
+ * is a line that silently does nothing after an upgrade.
+ */
+export type CommandName =
+    | 'pause'
+    | 'reset'
+    | 'screenshot'
+    | 'screenshot-cover'
+    | 'save1' | 'save2' | 'save3'
+    | 'load1' | 'load2' | 'load3'
+    | 'quicksave' | 'quickload';
+
+/**
+ * Commands whose meaning is "while the button is down" rather than "when it
+ * goes down".
+ *
+ * Rewinding is the only one. It cannot be a toggle: holding has to walk
+ * backwards through the snapshots at a steady rate, and letting go has to stop
+ * exactly where it is -- which needs to know about the release, and none of the
+ * one-shot commands above ever do.
+ */
+export type HeldCommandName = 'rewind';
+
+/**
+ * Which of the two a command is.
+ *
+ * A property of the command, not of the binding: "screenshot" is a thing that
+ * happens and "rewind" is a thing you hold, whoever's finger is on it.
+ */
+export function isHeldCommand(command: CommandName | HeldCommandName): command is HeldCommandName {
+    return command === 'rewind';
+}
+
+/** A key, and whether Shift is part of it. */
+export interface CommandKey {
+    /** A DOM `KeyboardEvent.code`, e.g. `KeyP` or `F12`. */
+    code: string;
+    /** Shift is part of the binding, not a modifier on the way to it: F1 saves
+     *  and Shift+F1 loads, which is how twelve commands fit on six keys. */
+    shift: boolean;
+}
+
+/**
+ * Buttons that have to be held *together* to mean something.
+ *
+ * One button is a chord of one, which is why there is no separate case for it:
+ * a list of chords covers "R1", "L1+R1" and "hold L2 and press R2" with the
+ * same shape. The order does not matter -- a chord is a set that is down at
+ * once, not a sequence -- and it is stored sorted so that two equal chords
+ * compare equal.
+ */
+export type PadCombo = ExtraPadButtonName[];
+
+/**
+ * One command, and what fires it.
+ *
+ * Two devices because a player may have either: the keyboard is always there,
+ * a pad may not be. A binding with no key is a command that is only on the pad
+ * (or on neither, which is how a player un-binds something).
+ */
+export interface CommandBinding {
+    command: CommandName | HeldCommandName;
+    /** The key, or null for "not on the keyboard". */
+    key: CommandKey | null;
+    /**
+     * The chords that fire it, on any connected pad.
+     *
+     * Only the *extra* buttons: the console's eight belong to the game, and a
+     * command bound to one of them would fire every time the player pressed
+     * it. The pad indices are deliberately not part of this -- a command is
+     * something the application does, not something player 1 does.
+     *
+     * A list, though the settings screen edits only the first: a hand-edited
+     * file may want two ways to reach the same command, and dropping the
+     * second would be a silent surprise.
+     */
+    pads: PadCombo[];
+}
+
+/** Whether this is a pad button a command may be bound to. */
+function isExtraButton(name: unknown): name is ExtraPadButtonName {
+    return typeof name === 'string' && (EXTRA_PAD_BUTTONS as readonly string[]).includes(name);
+}
+
+/** A chord, sorted and deduplicated, so that two equal chords are equal. */
+export function normaliseCombo(raw: unknown): PadCombo {
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+    return [...new Set(raw.filter(isExtraButton))].sort();
+}
+
+/** `{ code, shift }` in one value, so a map can be keyed by it. */
+export function commandKeyId(key: CommandKey): string {
+    return `${key.shift ? 'Shift+' : ''}${key.code}`;
+}
+
+/** The commands the settings screen lists, in the order it lists them. */
+export const COMMAND_ORDER: readonly (CommandName | HeldCommandName)[] = Object.freeze([
+    'pause',
+    'screenshot',
+    'screenshot-cover',
+    'quicksave',
+    'quickload',
+    'reset',
+    'save1', 'save2', 'save3',
+    'load1', 'load2', 'load3',
+    'rewind',
+]);
+
+/** Whether this is a command the application knows. */
+function isKnownCommand(name: unknown): name is CommandName | HeldCommandName {
+    return typeof name === 'string' && (COMMAND_ORDER as readonly string[]).includes(name);
+}
+
+/** A key that is a key: a code and a flag, or null. */
+function normaliseKey(raw: unknown): CommandKey | null {
+    if (raw === null || typeof raw !== 'object') {
+        return null;
+    }
+    const key = raw as Partial<CommandKey>;
+    if (typeof key.code !== 'string' || key.code === '' || key.code.length > 32) {
+        return null;
+    }
+    return { code: key.code, shift: key.shift === true };
+}
+
+/**
+ * One binding out of the saved file, or null if there is nothing usable in it.
+ *
+ * The pad list is deduplicated and filtered; a binding that ends up with
+ * neither a key nor a button is kept, because "this command is bound to
+ * nothing" is a thing a player can mean -- it is how a command is turned off.
+ */
+export function normaliseBinding(raw: unknown): CommandBinding | null {
+    if (raw === null || typeof raw !== 'object') {
+        return null;
+    }
+    const binding = raw as Partial<CommandBinding>;
+    if (!isKnownCommand(binding.command)) {
+        return null;
+    }
+    // Two shapes are accepted, on purpose. The screen writes chords -- a list
+    // of lists -- and a person editing config.json by hand is much more likely
+    // to write a button name than a list of one name. Reading the second as a
+    // chord of one is the same meaning, spelled shorter.
+    const pads = Array.isArray(binding.pads)
+        ? binding.pads
+            .map((entry) => (typeof entry === 'string' ? normaliseCombo([entry]) : normaliseCombo(entry)))
+            .filter((combo) => combo.length > 0)
+        : [];
+    return { command: binding.command, key: normaliseKey(binding.key), pads };
+}
+
+/**
+ * The bindings in force, defaults included.
+ *
+ * `null` means "the player has never touched this", which is what a config file
+ * from before commands existed means as well. An empty *array* means the player
+ * deleted every binding, and is respected: the two are not the same thing.
+ */
+export function commandBindings(settings: InputSettings): readonly CommandBinding[] {
+    if (settings.commands === null) {
+        return DEFAULT_COMMAND_BINDINGS;
+    }
+    return settings.commands
+        .map(normaliseBinding)
+        .filter((binding): binding is CommandBinding => binding !== null);
+}
+
+/**
+ * What fires what, out of the box.
+ *
+ * Unchanged from the keys the application hard-coded before they could be
+ * changed, because those are the ones hands already know: Escape or P to
+ * pause, the F row for the slots, F12 for a screenshot. What is new is that
+ * they are a *list* rather than a switch statement, so the settings screen can
+ * show them and the file can hold them.
+ *
+ * No pad buttons by default. Every pad is different -- a DualSense has a
+ * touchpad where an Xbox pad has nothing, and a small pad may have no
+ * shoulders at all -- so the pad side starts empty and the player fills it in
+ * with the buttons their pad actually has.
+ */
+export const DEFAULT_COMMAND_BINDINGS: readonly CommandBinding[] = Object.freeze([
+    { command: 'pause', key: { code: 'Escape', shift: false }, pads: [] },
+    { command: 'pause', key: { code: 'KeyP', shift: false }, pads: [] },
+    { command: 'reset', key: { code: 'KeyR', shift: false }, pads: [] },
+    { command: 'screenshot', key: { code: 'F12', shift: false }, pads: [] },
+    { command: 'screenshot-cover', key: { code: 'F12', shift: true }, pads: [] },
+    { command: 'quicksave', key: { code: 'F5', shift: false }, pads: [] },
+    { command: 'quickload', key: { code: 'F6', shift: false }, pads: [] },
+    { command: 'save1', key: { code: 'F1', shift: false }, pads: [] },
+    { command: 'save2', key: { code: 'F2', shift: false }, pads: [] },
+    { command: 'save3', key: { code: 'F3', shift: false }, pads: [] },
+    { command: 'load1', key: { code: 'F1', shift: true }, pads: [] },
+    { command: 'load2', key: { code: 'F2', shift: true }, pads: [] },
+    { command: 'load3', key: { code: 'F3', shift: true }, pads: [] },
+    { command: 'rewind', key: { code: 'Backspace', shift: false }, pads: [] },
+]);
 
 /**
  * Which console a cartridge is for.

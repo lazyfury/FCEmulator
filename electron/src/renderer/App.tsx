@@ -45,7 +45,8 @@ import TabsView from './components/TabsView';
 import SavesPanel from './components/SavesPanel';
 import ScreenshotsPanel from './components/ScreenshotsPanel';
 import ScreenshotPreview from './components/ScreenshotPreview';
-import SettingsPanel from './components/SettingsPanel';
+import SettingsIndex from './components/SettingsIndex';
+import SettingsPanes from './components/SettingsPanes';
 import Sidebar from './components/Sidebar';
 import StatusBar from './components/StatusBar';
 import TitleBar from './components/TitleBar';
@@ -56,6 +57,7 @@ import {
 } from './libraryView';
 import type { CommandName } from './input';
 import { SECTION_BY_ID, type SectionId } from './sections';
+import { DEFAULT_SETTINGS_GROUP, SETTINGS_GROUPS, type SettingsGroupId } from './settings';
 import { useEmulator } from './useEmulator';
 import { useFileDrop } from './useFileDrop';
 import { useFullscreen } from './useFullscreen';
@@ -157,8 +159,40 @@ export default function App() {
      * up again for every render instead.
      */
     const [previewId, setPreviewId] = useState<number | null>(null);
+
+    /**
+     * Which group of settings the play column is showing.
+     *
+     * Here with the preview rather than inside the index, because two columns
+     * need it: the index marks the chosen group and the play column renders it.
+     */
+    const [settingsTab, setSettingsTab] = useState<SettingsGroupId>(DEFAULT_SETTINGS_GROUP);
     const previewIndex = state.screenshots.findIndex((shot) => shot.id === previewId);
     const previewing = previewIndex >= 0;
+
+    /**
+     * Which pane of the play column is showing.
+     *
+     * The preview first: a screenshot that is open is what the column is for,
+     * wherever the rail happens to be. Then the settings group the index asked
+     * for, and otherwise the console -- which is the case the column exists for
+     * and the one every other section puts back.
+     */
+    const activePane = previewing
+        ? 'preview'
+        : (section === 'settings' ? settingsTab : 'console');
+
+    /**
+     * Whether the console is the thing on screen.
+     *
+     * It decides two things, and they are the same decision: the machine stops
+     * while it is false (`setPictureHidden`), and commands are refused while it
+     * is false. Neither a game nor a screenshot nor a setting is being *played*
+     * when the picture is not there, and a save that fired from the settings
+     * screen -- where somebody is holding a pad to bind it -- would be a save
+     * nobody asked for.
+     */
+    const consoleOnScreen = activePane === 'console';
 
     // How wide the middle column is. The divider between it and the picture is
     // the drag; see usePanelWidth for why it is written out by hand.
@@ -213,6 +247,7 @@ export default function App() {
             input,
             cheats,
             cores,
+            commandsAllowed: () => consoleOnScreen,
         onScreenshot: (png, asCover) => void saveScreenshot(png, asCover),
     });
 
@@ -477,8 +512,8 @@ export default function App() {
      * look for in a close button.
      */
     useEffect(() => {
-        setPictureHidden(previewing);
-    }, [previewing, setPictureHidden]);
+        setPictureHidden(!consoleOnScreen);
+    }, [consoleOnScreen, setPictureHidden]);
 
     /**
      * Walking to another section closes the preview.
@@ -716,23 +751,7 @@ export default function App() {
                 />
             );
         case 'settings':
-            return (
-                <SettingsPanel
-                    status={status}
-                    picture={picture}
-                    scanlines={scanlines}
-                    onScanlines={changeScanlines}
-                    input={input}
-                    onInput={changeInput}
-                    cores={cores}
-                    onCores={changeCores}
-                    gamepadEnabled={window.fc.gamepadEnabled}
-                    gamepadNative={window.fc.gamepadNative}
-                    library={library}
-                    screenshots={state.screenshots.length}
-                    onChooseDirectory={() => void chooseDirectory()}
-                />
-            );
+            return <SettingsIndex active={settingsTab} onSelect={setSettingsTab} />;
         case 'about':
             return <AboutPanel />;
         }
@@ -780,7 +799,7 @@ export default function App() {
                         TabsView); which one is showing is which screenshot is
                         open. */}
                     <TabsView
-                        active={previewing ? 'preview' : 'console'}
+                        active={activePane}
                         panes={[
                             {
                                 id: 'console',
@@ -801,6 +820,27 @@ export default function App() {
                                 ),
                             },
                             { id: 'preview', content: preview },
+                            ...SETTINGS_GROUPS.map((group) => ({
+                                id: group.id,
+                                content: (
+                                    <SettingsPanes
+                                        group={group.id}
+                                        status={status}
+                                        picture={picture}
+                                        scanlines={scanlines}
+                                        onScanlines={changeScanlines}
+                                        input={input}
+                                        onInput={changeInput}
+                                        cores={cores}
+                                        onCores={changeCores}
+                                        gamepadEnabled={window.fc.gamepadEnabled}
+                                        gamepadNative={window.fc.gamepadNative}
+                                        library={library}
+                                        screenshots={state.screenshots.length}
+                                        onChooseDirectory={() => void chooseDirectory()}
+                                    />
+                                ),
+                            })),
                         ]}
                     />
                 </div>

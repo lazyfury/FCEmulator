@@ -6,8 +6,10 @@
 
 namespace fc {
 
-const char* const kButtonNames[8] = {
+const char* const kButtonNames[kButtonCount] = {
     "A", "B", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT",
+    "L1", "R1", "L2", "R2", "L3", "R3",
+    "FACE_X", "FACE_Y", "GUIDE",
 };
 
 namespace {
@@ -24,7 +26,17 @@ bool buttonAt(const PadButtons& buttons, int index) {
         case 4: return buttons.UP;
         case 5: return buttons.DOWN;
         case 6: return buttons.LEFT;
-        default: return buttons.RIGHT;
+        case 7: return buttons.RIGHT;
+
+        case 8: return buttons.L1;
+        case 9: return buttons.R1;
+        case 10: return buttons.L2;
+        case 11: return buttons.R2;
+        case 12: return buttons.L3;
+        case 13: return buttons.R3;
+        case 14: return buttons.FACE_X;
+        case 15: return buttons.FACE_Y;
+        default: return buttons.GUIDE;
     }
 }
 
@@ -77,7 +89,10 @@ std::string padsMessage(const std::vector<PadReading>& pads) {
         out << "{\"index\":" << pad.index
             << ",\"id\":" << jsonString(pad.id)
             << ",\"buttons\":{";
-        for (int button = 0; button < 8; ++button) {
+        // Every name the protocol has, not only the console's eight: a reading
+        // is a fixed shape, and the renderer's map for the extra buttons is
+        // what a command is bound to.
+        for (int button = 0; button < kButtonCount; ++button) {
             if (button != 0) {
                 out << ',';
             }

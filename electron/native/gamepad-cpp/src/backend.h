@@ -35,6 +35,7 @@ namespace fc {
 /// comparison the compiler writes, rather than a field-by-field check that
 /// somebody will eventually forget to extend when a ninth name appears.
 struct PadButtons {
+    // The console's eight. These are the game's.
     bool A = false;
     bool B = false;
     bool SELECT = false;
@@ -43,6 +44,21 @@ struct PadButtons {
     bool DOWN = false;
     bool LEFT = false;
     bool RIGHT = false;
+
+    // And the ones the console has no switch for: the shoulders, the triggers,
+    // the stick clicks, the two extra face buttons and the guide button. They
+    // exist so that a command -- pause, screenshot, save, load -- can be bound
+    // to a button that does not also press something in the game. Nothing in
+    // the console can see them.
+    bool FACE_X = false;
+    bool FACE_Y = false;
+    bool L1 = false;
+    bool R1 = false;
+    bool L2 = false;
+    bool R2 = false;
+    bool L3 = false;
+    bool R3 = false;
+    bool GUIDE = false;
 
     bool operator==(const PadButtons& other) const = default;
 };
