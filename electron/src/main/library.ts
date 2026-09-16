@@ -57,7 +57,7 @@ export const SCREENSHOT_DIRECTORY = 'screenshots';
 
 /** What this build understands. A database with a higher number was written by
  *  a newer build, and guessing at its columns would corrupt it. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 /**
  * Schema 1: the games, and what the database knows about them.
@@ -121,6 +121,64 @@ CREATE INDEX IF NOT EXISTS screenshots_by_date
     ON screenshots (created_at DESC);
 `;
 
+/**
+ * Schema 3: the tags, and the total play time.
+ *
+ * A tag is a word and a row rather than a column on `games`, because a game
+ * has as many as the player cares to give it, and two games labelled "RPG"
+ * should share one word rather than two spellings of it. `COLLATE NOCASE` on
+ * the name is what makes those one word: "RPG" and "rpg" cannot both exist,
+ * so the table cannot grow a second copy of a tag when somebody types it in
+ * differently on a different day. The colour is deliberately *not* stored --
+ * it is derived from the word (see src/renderer/libraryView.ts), so a tag is a
+ * word everywhere and a colour only where it is drawn, and there is no colour
+ * picker to add one.
+ *
+ * `play_seconds` is a column on `games` for the opposite reason: it is one
+ * number per game, and nothing ever reads it without the game it belongs to.
+ *
+ * ON DELETE CASCADE on both columns of `game_tags`, so a deleted game takes
+ * its labels with it. A tag left pointing at nothing is deleted by setTags(),
+ * which is the only code that can make one unused.
+ */
+const TAGS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS tags (
+    id   INTEGER PRIMARY KEY,
+    name TEXT    NOT NULL UNIQUE COLLATE NOCASE
+);
+
+CREATE TABLE IF NOT EXISTS game_tags (
+    game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    tag_id  INTEGER NOT NULL REFERENCES tags(id)   ON DELETE CASCADE,
+    PRIMARY KEY (game_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS game_tags_by_tag ON game_tags (tag_id);
+`;
+
+/**
+ * How a library at each version becomes the next one.
+ *
+ * `MIGRATIONS[n]` is what a library whose `user_version` is `n` needs to run
+ * to reach `n + 1`: a fresh folder (0) runs all of them in order, and an
+ * existing library runs only the ones it is missing. Written as steps rather
+ * than as one create-everything schema because the old shapes have to keep
+ * working -- the ALTER of the last step is all an existing library gets, and
+ * re-creating the `games` table to add one column would throw away every pin
+ * and play count in it.
+ */
+const MIGRATIONS: readonly (readonly string[])[] = [
+    // 0 -> 1: the games.
+    [GAMES_SCHEMA],
+    // 1 -> 2: the screenshots.
+    [SCREENSHOTS_SCHEMA],
+    // 2 -> 3: the tags, and the play time.
+    [
+        'ALTER TABLE games ADD COLUMN play_seconds INTEGER NOT NULL DEFAULT 0',
+        TAGS_SCHEMA,
+    ],
+];
+
 /** A row, as SQLite hands it over: snake_case, integers for booleans. */
 interface Row {
     id: number;
@@ -131,6 +189,7 @@ interface Row {
     added_at: number;
     last_played_at: number;
     play_count: number;
+    play_seconds: number;
     pinned: number;
 }
 
@@ -148,9 +207,16 @@ interface GameRow {
     added_at: number;
     last_played_at: number;
     play_count: number;
+    play_seconds: number;
     pinned: number;
     cover: string | null;
     screenshots: number;
+}
+
+/** One row of `game_tags` joined to the word it points at. */
+interface GameTagRow {
+    game_file: string;
+    name: string;
 }
 
 /** A screenshot row, and the game it belongs to. */
@@ -194,6 +260,42 @@ const ROM_EXTENSIONS = ['nes', 'gba', 'gb', 'gbc'];
 function isRom(name: string): boolean {
     const lower = name.toLowerCase();
     return ROM_EXTENSIONS.some((extension) => lower.endsWith(`.${extension}`));
+}
+
+/** Long enough to be a word, short enough to fit on a card without wrapping. */
+export const MAX_TAG_LENGTH = 24;
+
+/**
+ * The tags a list of typed words amounts to.
+ *
+ * Trimmed, emptied out, and deduplicated case-insensitively -- "RPG" and
+ * "rpg" are one tag, and the first spelling seen is the one that is kept, so
+ * a word does not change case under the player. Done here rather than at the
+ * input, because it has to hold for every caller: the renderer sends the
+ * whole list, the tests send whatever they like, and the database's unique
+ * index is the last line of defence rather than the first.
+ */
+export function normaliseTags(tags: readonly string[]): string[] {
+    const seen = new Set<string>();
+    const kept: string[] = [];
+
+    for (const raw of tags) {
+        if (typeof raw !== 'string') {
+            continue;
+        }
+        const name = raw.trim().slice(0, MAX_TAG_LENGTH);
+        if (name === '') {
+            continue;
+        }
+        const key = name.toLocaleLowerCase();
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        kept.push(name);
+    }
+
+    return kept;
 }
 
 /** The eight bytes every PNG starts with. */
@@ -305,19 +407,18 @@ export class GameLibrary {
         const version = (db.prepare('PRAGMA user_version').get() as { user_version: number })
             .user_version;
 
-        if (version === 0) {
-            db.exec(GAMES_SCHEMA);
-            db.exec(SCREENSHOTS_SCHEMA);
-        } else if (version === 1) {
-            // A library from before screenshots existed. Adding a table is the
-            // whole migration; nothing already in it has to move.
-            db.exec(SCREENSHOTS_SCHEMA);
-        } else if (version > SCHEMA_VERSION) {
+        if (version > SCHEMA_VERSION) {
             db.close();
             throw new Error(
                 `${databasePath} was written by a newer version of Classic Game Box `
                 + `(schema ${version}, this build understands ${SCHEMA_VERSION})`,
             );
+        }
+
+        for (let from = version; from < SCHEMA_VERSION; from += 1) {
+            for (const statement of MIGRATIONS[from]) {
+                db.exec(statement);
+            }
         }
 
         if (version < SCHEMA_VERSION) {
@@ -429,6 +530,77 @@ export class GameLibrary {
         ).run(Date.now(), file);
     }
 
+    /**
+     * Add time to a game's total.
+     *
+     * The renderer counts emulated frames, because a frame is the only
+     * duration this application can honestly measure: a wall clock would
+     * count a paused game, a minimised window and a lunch break as play. So
+     * the number arrives already counted, and all this does is add it.
+     *
+     * Whole seconds, floored here, and a path outside the library does
+     * nothing -- the same rule as notePlayed, for the same reason: `--rom`
+     * can name any file on the machine, and a game that is not in the library
+     * is simply not in the library.
+     */
+    notePlaytime(path: string, seconds: number): void {
+        if (!Number.isFinite(seconds) || seconds <= 0) {
+            return;
+        }
+        const file = this.#fileOf(path);
+        if (file === null) {
+            return;
+        }
+        this.#db.prepare('UPDATE games SET play_seconds = play_seconds + ? WHERE file = ?')
+            .run(Math.floor(seconds), file);
+    }
+
+    /**
+     * Replace a game's tags with exactly these words.
+     *
+     * Replace rather than add one and remove one, because the caller has the
+     * whole list on screen: two verbs would be two round trips and two
+     * chances for the stored list to disagree with the drawn one.
+     *
+     * A word is created if it is new and shared if it is not, so "RPG" on ten
+     * games is one row. The words nobody points at any more are deleted at
+     * the end -- they would otherwise be rows the filter chips, which are
+     * built from the games, could never show.
+     */
+    setTags(path: string, tags: readonly string[]): boolean {
+        const file = this.#fileOf(path);
+        if (file === null) {
+            return false;
+        }
+        const id = this.#gameIdOf(file);
+        if (id === null) {
+            return false;
+        }
+
+        const wanted = normaliseTags(tags);
+        const find = this.#db.prepare('SELECT id FROM tags WHERE name = ?');
+        const link = this.#db.prepare(
+            'INSERT OR IGNORE INTO game_tags (game_id, tag_id) VALUES (?, ?)',
+        );
+
+        this.#transaction(() => {
+            this.#db.prepare('DELETE FROM game_tags WHERE game_id = ?').run(id);
+            for (const name of wanted) {
+                // INSERT OR IGNORE against the COLLATE NOCASE unique index: an
+                // existing "rpg" is found rather than duplicated, and the
+                // SELECT below then uses that row's own spelling.
+                this.#db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)').run(name);
+                const row = find.get(name) as { id: number } | undefined;
+                if (row !== undefined) {
+                    link.run(id, row.id);
+                }
+            }
+            this.#pruneTags();
+        });
+
+        return true;
+    }
+
     /** Pin a game to the top of the library, or unpin it. */
     setPinned(path: string, pinned: boolean): boolean {
         const file = this.#fileOf(path);
@@ -494,7 +666,10 @@ export class GameLibrary {
             if (id !== null) {
                 this.#db.prepare('DELETE FROM screenshots WHERE game_id = ?').run(id);
             }
+            // The game's tag links go with the row, by cascade; the words
+            // they used may now belong to nobody.
             this.#db.prepare('DELETE FROM games WHERE file = ?').run(file);
+            this.#pruneTags();
         });
 
         this.#unlink(pictures);
@@ -579,6 +754,31 @@ export class GameLibrary {
         });
 
         return this.#selectScreenshots().find((shot) => shot.file === relative) ?? null;
+    }
+
+    /**
+     * Where a screenshot's PNG is, absolute, or null if it has no business
+     * being opened.
+     *
+     * The renderer names a *row*, never a path -- and this is why. The path is
+     * built here and checked here, so a database whose rows were edited (or a
+     * renderer that asked for id 12 because it guessed) cannot reach a file
+     * outside the library. The caller is the one that shows it in the file
+     * browser; everything that decides *whether* it may is in this method.
+     */
+    screenshotPath(id: number): string | null {
+        const row = this.#db.prepare('SELECT file FROM screenshots WHERE id = ?')
+            .get(id) as { file: string } | undefined;
+        if (row === undefined) {
+            return null;
+        }
+
+        const absolute = resolve(this.root, row.file);
+        if (!isInside(this.root, absolute)) {
+            console.error(`refused to reveal ${row.file}: outside the library folder`);
+            return null;
+        }
+        return absolute;
     }
 
     /**
@@ -747,7 +947,7 @@ export class GameLibrary {
         // not unique stays a cosmetic problem instead of a duplicated row.
         const rows = this.#db.prepare(`
             SELECT g.file, g.title, g.size, g.added_at, g.last_played_at,
-                   g.play_count, g.pinned,
+                   g.play_count, g.play_seconds, g.pinned,
                    (SELECT s.file FROM screenshots s
                      WHERE s.game_id = g.id AND s.is_cover = 1
                      ORDER BY s.created_at DESC LIMIT 1) AS cover,
@@ -756,17 +956,57 @@ export class GameLibrary {
             ORDER BY g.pinned DESC, g.last_played_at DESC, g.title COLLATE NOCASE ASC
         `).all() as unknown as GameRow[];
 
+        const tags = this.#tagsByFile();
+
         return rows.map((row) => ({
             path: join(this.root, row.file),
             name: row.title,
             size: row.size,
             pinned: row.pinned === 1,
             playCount: row.play_count,
+            playSeconds: row.play_seconds,
             addedAt: row.added_at,
             lastPlayedAt: row.last_played_at,
             cover: row.cover,
             screenshots: row.screenshots,
+            tags: tags.get(row.file) ?? [],
         }));
+    }
+
+    /**
+     * Every game's tags, keyed by file name.
+     *
+     * One query for the whole library rather than one per game: the list is
+     * tens of rows and a query per card would be tens of queries for one
+     * screenful. Ordered here so that the cards and the filter chips agree on
+     * what order a game's tags are in.
+     */
+    #tagsByFile(): Map<string, string[]> {
+        const rows = this.#db.prepare(`
+            SELECT g.file AS game_file, t.name AS name
+            FROM game_tags gt
+            JOIN tags  t ON t.id = gt.tag_id
+            JOIN games g ON g.id = gt.game_id
+            ORDER BY t.name COLLATE NOCASE ASC
+        `).all() as unknown as GameTagRow[];
+
+        const tags = new Map<string, string[]>();
+        for (const row of rows) {
+            const list = tags.get(row.game_file);
+            if (list === undefined) {
+                tags.set(row.game_file, [row.name]);
+            } else {
+                list.push(row.name);
+            }
+        }
+        return tags;
+    }
+
+    /** Delete the tags that nothing points at any more. Called inside the
+     *  transaction that removed the last link, so a word is never briefly
+     *  invisible-but-there. */
+    #pruneTags(): void {
+        this.#db.exec('DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM game_tags)');
     }
 
     #selectScreenshots(): Screenshot[] {

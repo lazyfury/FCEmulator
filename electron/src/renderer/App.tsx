@@ -7,7 +7,6 @@
 //   │ 功能区  │ 中间栏              │ 游戏画面                       │
 //   │ 游戏库  │ 卡片 / 截图 / 存档  │ canvas + 控制条                │
 //   │ 置顶    │                     │                               │
-//   │ 最近    │                     │                               │
 //   │ 截图    │                     │                               │
 //   │ 存档    │                     │                               │
 //   │ 设置    │                     │                               │
@@ -40,15 +39,21 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import AboutPanel from './components/AboutPanel';
 import CheatsPanel from './components/CheatsPanel';
-import LibraryPanel, { type SortKey } from './components/LibraryPanel';
+import LibraryPanel from './components/LibraryPanel';
 import PlayPanel from './components/PlayPanel';
+import TabsView from './components/TabsView';
 import SavesPanel from './components/SavesPanel';
 import ScreenshotsPanel from './components/ScreenshotsPanel';
+import ScreenshotPreview from './components/ScreenshotPreview';
 import SettingsPanel from './components/SettingsPanel';
 import Sidebar from './components/Sidebar';
 import StatusBar from './components/StatusBar';
 import TitleBar from './components/TitleBar';
 import { gameTitle } from './format';
+import { neighbour } from './gallery';
+import {
+    NO_FILTER, newGames, type LibraryFilter, type LibraryViewSettings, type SortKey,
+} from './libraryView';
 import type { CommandName } from './input';
 import { SECTION_BY_ID, type SectionId } from './sections';
 import { useEmulator } from './useEmulator';
@@ -89,7 +94,39 @@ export default function App() {
     const [state, setState] = useState<LibraryState>(NOTHING_YET);
     const [loading, setLoading] = useState(true);
     const [query, setQuery] = useState('');
-    const [sort, setSort] = useState<SortKey>('recent');
+    /**
+     * Which end each order comes first, and which order is in effect.
+     *
+     * A direction per order rather than one for the list, because turning
+     * “尺寸” round to smallest-first should not also turn “名称” round: they
+     * are five different questions, and the answer to one is not the answer
+     * to another. Only the selected order's direction is ever applied -- the
+     * rest are remembered, not in effect, which is what the single-select
+     * control means.
+     *
+     * One value, coming from the main process before the first render (see
+     * `libraryView` on the bridge), so a list opens in the order it was closed
+     * in and never rearranges itself a moment after the first paint. The
+     * value the screen starts with is therefore the saved one, or the defaults
+     * if nothing has ever been saved.
+     */
+    const [view, setView] = useState<LibraryViewSettings>(window.fc.libraryView);
+    const sort = view.sort;
+    const directions = view.directions;
+
+    /**
+     * The same value, for the handlers.
+     *
+     * `view` is what a render depends on; this is what a handler reads. A
+     * handler that captured the state from the render it was built in would
+     * drop the second change made before React committed the first -- two
+     * presses of an arrow in one frame would keep only the second flip.
+     */
+    const viewRef = useRef(view);
+    // The emulator and tag filters. Held here with the sort rather than
+    // inside the panel, so that switching from 游戏库 to 置顶游戏 does not
+    // quietly throw away what the player had narrowed the list to.
+    const [filter, setFilter] = useState<LibraryFilter>(NO_FILTER);
     const [saves, setSaves] = useState<number[]>([]);
     // Off until the saved preference arrives, a fraction of a second later
     // and invisibly. The value lives in the main process; see the preferences
@@ -105,6 +142,23 @@ export default function App() {
     const [cores, setCores] = useState<CoreSelection>(window.fc.coreSelection);
     const [cheats, setCheats] = useState<Cheat[]>([]);
     const [notice, setNotice] = useState<string | null>(null);
+
+    /**
+     * Which screenshot is being looked at, by id, or null.
+     *
+     * Here rather than inside the screenshots panel, because two columns need
+     * it now: the middle one lists the pictures and marks this one, and the
+     * right one -- the play column -- is where the picture is shown. That is
+     * the rule this file has always had for shared state, and moving the
+     * preview into the play column is what made this state shared.
+     *
+     * An id and not an index, so that deleting or reordering the list beneath
+     * it cannot quietly turn it into a different picture; the index is looked
+     * up again for every render instead.
+     */
+    const [previewId, setPreviewId] = useState<number | null>(null);
+    const previewIndex = state.screenshots.findIndex((shot) => shot.id === previewId);
+    const previewing = previewIndex >= 0;
 
     // How wide the middle column is. The divider between it and the picture is
     // the drag; see usePanelWidth for why it is written out by hand.
@@ -154,10 +208,11 @@ export default function App() {
         flash(asCover ? '已更新封面' : '已保存截图');
     }, [flash]);
 
-    const { status, loadRom, reload, unload, command, poke, peek } = useEmulator(canvasRef, {
-        input,
-        cheats,
-        cores,
+    const { status, loadRom, reload, unload, command, poke, peek, setPictureHidden } =
+        useEmulator(canvasRef, {
+            input,
+            cheats,
+            cores,
         onScreenshot: (png, asCover) => void saveScreenshot(png, asCover),
     });
 
@@ -225,6 +280,11 @@ export default function App() {
                 }
                 setInput(preferences.input);
                 setCores(preferences.cores);
+                // The saved order again, because a second window -- or a hand
+                // edit of config.json -- may have changed it since start up.
+                // Nothing is written back in response: this is a read.
+                viewRef.current = preferences.libraryView;
+                setView(preferences.libraryView);
             })
             .catch((error: unknown) => {
                 bootLog('renderer', 'preferences FAILED', String(error));
@@ -369,7 +429,15 @@ export default function App() {
         if (next !== null) {
             setState(next);
             setQuery('');
+            // A filter names consoles and tags of the library that was just
+            // replaced; keeping it could leave the new one looking empty for
+            // no visible reason.
+            setFilter(NO_FILTER);
         }
+    }, []);
+
+    const setTags = useCallback(async (path: string, tags: string[]): Promise<void> => {
+        setState(await window.fc.setGameTags(path, tags));
     }, []);
 
     const togglePinned = useCallback(async (path: string, pinned: boolean): Promise<void> => {
@@ -396,6 +464,77 @@ export default function App() {
         if (next !== null) {
             setState(next);
             flash('已删除截图');
+        }
+    }, [flash]);
+
+    /**
+     * The machine stops while the preview is over the picture.
+     *
+     * An effect on the open/closed fact rather than something the two buttons
+     * remember to do, because there are four ways out of the preview -- the X,
+     * Escape, deleting what is on screen, and the list changing underneath it --
+     * and a game that stayed paused after one of them is a bug nobody would
+     * look for in a close button.
+     */
+    useEffect(() => {
+        setPictureHidden(previewing);
+    }, [previewing, setPictureHidden]);
+
+    /**
+     * Walking to another section closes the preview.
+     *
+     * Every other section is about something other than the picture being
+     * looked at, and the play column is the one column that never changes --
+     * so going to 游戏库 or 设置 and finding a screenshot where the game should
+     * be is a column that stopped following the rail. Closing it is also what
+     * puts the console back on screen, since the two are the same pane.
+     */
+    useEffect(() => {
+        setPreviewId(null);
+    }, [section]);
+
+    /**
+     * The other pane of the play column: a screenshot, at size.
+     *
+     * A sibling of PlayPanel in the workspace rather than a child of it, so it
+     * takes the whole column -- the strip with the game's name, the picture and
+     * the transport buttons all give way to it, and it is not a picture in a
+     * frame inside a console. Which of the two is shown is CSS's business: the
+     * TabsView below shows one and hides the other (see the stylesheet), and
+     * neither is ever unmounted.
+     */
+    const preview = previewIndex < 0 ? null : (
+        <ScreenshotPreview
+            shots={state.screenshots}
+            index={previewIndex}
+            onIndex={(next) => setPreviewId(state.screenshots[next]?.id ?? null)}
+            onReveal={(id) => void revealShot(id)}
+            onSetCover={(id) => void setCover(id)}
+            onRemove={(id) => {
+                // The picture being looked at is about to be gone; the one that
+                // takes its place in the list is the next one, which is what
+                // the grid shows too.
+                const next = state.screenshots[
+                    neighbour(previewIndex, 1, state.screenshots.length)
+                ];
+                void removeShot(id);
+                setPreviewId(next === undefined || next.id === id ? null : next.id);
+            }}
+            onClose={() => setPreviewId(null)}
+        />
+    );
+
+    /**
+     * Show one picture in the file browser.
+     *
+     * Nothing to update on the way back: the file browser is the operating
+     * system's, and the application has nothing to draw about it. The answer is
+     * only used to say that it did not work -- which happens when the row is
+     * gone, or when it led outside the library (see `screenshotPath`).
+     */
+    const revealShot = useCallback(async (id: number): Promise<void> => {
+        if (!await window.fc.revealScreenshot(id)) {
+            flash('找不到这个文件');
         }
     }, [flash]);
 
@@ -450,11 +589,63 @@ export default function App() {
     const loaded = status.romPath !== null;
     const title = loaded ? gameTitle(status.romPath as string) : null;
 
-    /** The three card sections, which differ only in what they filter to. */
+    /**
+     * The one writer for the library order.
+     *
+     * The order and the five directions are one remembered value, so there is
+     * one place that changes the screen and one place that writes the file --
+     * two setters writing two halves of one value would race each other, and
+     * a list that came back half in the new order would be worse than one that
+     * came back in the old one.
+     */
+    const changeView = useCallback((next: LibraryViewSettings): void => {
+        viewRef.current = next;
+        setView(next);
+        // Not awaited: the list is already in the new order on screen, and the
+        // file is a note for next time. A failure to write is the main
+        // process's to log, not this screen's to report.
+        void window.fc.saveLibraryView(next);
+    }, []);
+
+    /** Choose an order. The one that is already on is not a change. */
+    const changeSort = useCallback((next: SortKey): void => {
+        if (next !== viewRef.current.sort) {
+            changeView({ ...viewRef.current, sort: next });
+        }
+    }, [changeView]);
+
+    /**
+     * Turn one order round.
+     *
+     * Pressing the chip that is already on, not a separate button: the arrow
+     * is part of the chip, so the direction of an order is set where that
+     * order is chosen. Radix reports an empty value when the selected item is
+     * pressed again, which is the press this answers to.
+     */
+    const flipDirection = useCallback((key: SortKey): void => {
+        const current = viewRef.current;
+        changeView({
+            ...current,
+            directions: {
+                ...current.directions,
+                [key]: current.directions[key] === 'asc' ? 'desc' : 'asc',
+            },
+        });
+    }, [changeView]);
+
+    /**
+     * The three card sections, which differ only in what they filter to.
+     *
+     * `fresh` is passed only by the whole-library section: a game nobody has
+     * played is a fact about the library, and offering to start it from the
+     * pinned or recently-played list would be offering something those lists
+     * are not about.
+     */
     const cards = (
         panelTitle: string,
         shown: typeof games,
         emptyTitle: string,
+        fresh: typeof games = [],
     ) => (
         <LibraryPanel
             title={panelTitle}
@@ -464,12 +655,18 @@ export default function App() {
             query={query}
             onQuery={setQuery}
             sort={sort}
-            onSort={setSort}
+            onSort={changeSort}
+            directions={directions}
+            onFlip={flipDirection}
+            filter={filter}
+            onFilter={setFilter}
+            fresh={fresh}
             activePath={status.romPath}
             onPick={(path) => void play(path)}
             onAdd={() => void addGames()}
             onChooseDirectory={() => void chooseDirectory()}
             onOpenFolder={() => openFolder()}
+            onSetTags={(path, tags) => void setTags(path, tags)}
             onTogglePinned={(path, pinned) => void togglePinned(path, pinned)}
             onRemove={(path) => void removeGame(path)}
             emptyTitle={emptyTitle}
@@ -479,24 +676,21 @@ export default function App() {
     const middle = (() => {
         switch (section) {
         case 'library':
-            return cards('游戏库', games, '这个游戏库里还没有游戏。');
+            return cards('游戏库', games, '这个游戏库里还没有游戏。', newGames(games));
         case 'pinned':
             return cards(
                 '置顶游戏',
                 games.filter((game) => game.pinned),
                 '还没有置顶的游戏。在游戏库里点图钉，把它放到最上面。',
             );
-        case 'recent':
-            return cards(
-                '最近游玩',
-                games.filter((game) => game.lastPlayedAt > 0),
-                '还没有玩过任何游戏。',
-            );
         case 'screenshots':
             return (
                 <ScreenshotsPanel
                     screenshots={state.screenshots}
+                    previewId={previewId}
+                    onPreview={setPreviewId}
                     onOpenFolder={() => openFolder('screenshots')}
+                    onReveal={(id) => void revealShot(id)}
                     onSetCover={(id) => void setCover(id)}
                     onRemove={(id) => void removeShot(id)}
                 />
@@ -581,18 +775,33 @@ export default function App() {
                         {...panel.handleProps}
                     />
 
-                    <PlayPanel
-                        canvasRef={canvasRef}
-                        stageRef={stageRef}
-                        picture={picture}
-                        status={status}
-                        scanlines={scanlines}
-                        onCommand={command}
-                        onEject={eject}
-                        onGoToLibrary={() => setSection('library')}
-                        fullscreen={fullscreen}
-                        fullscreenAvailable={fullscreenAvailable}
-                        onToggleFullscreen={toggleFullscreen}
+                    {/* The play column is two tabs: the console, and a
+                        screenshot over it. Both are always mounted (see
+                        TabsView); which one is showing is which screenshot is
+                        open. */}
+                    <TabsView
+                        active={previewing ? 'preview' : 'console'}
+                        panes={[
+                            {
+                                id: 'console',
+                                content: (
+                                    <PlayPanel
+                                        canvasRef={canvasRef}
+                                        stageRef={stageRef}
+                                        picture={picture}
+                                        status={status}
+                                        scanlines={scanlines}
+                                        onCommand={command}
+                                        onEject={eject}
+                                        onGoToLibrary={() => setSection('library')}
+                                        fullscreen={fullscreen}
+                                        fullscreenAvailable={fullscreenAvailable}
+                                        onToggleFullscreen={toggleFullscreen}
+                                    />
+                                ),
+                            },
+                            { id: 'preview', content: preview },
+                        ]}
                     />
                 </div>
 

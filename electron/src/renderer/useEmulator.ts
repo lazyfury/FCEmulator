@@ -62,6 +62,17 @@ const MAX_CATCHUP_FRAMES = 4;
  *  update a text field is waste, and it shows up as jitter. */
 const STATUS_INTERVAL_MS = 250;
 
+/**
+ * How much play time is collected before it is written down.
+ *
+ * The write is a SQLite UPDATE in another process, and doing it every frame
+ * would be sixty of them a second to add sixteen milliseconds each. A few
+ * seconds of remainder lost to a power cut or a kill -9 is the price, and it
+ * is a small one: what has already been flushed can never be lost, because
+ * every write adds rather than replaces.
+ */
+const PLAY_FLUSH_SECONDS = 5;
+
 export interface EmulatorHandle {
     status: EngineStatus;
     /** Load a game by path. False if it could not be read or is not a ROM. */
@@ -85,6 +96,16 @@ export interface EmulatorHandle {
      * disagree about what "save" means.
      */
     command(command: CommandName): void;
+    /**
+     * Say that the picture is hidden -- the screenshot preview is over it.
+     *
+     * The machine pauses while it is, and lets go of everything the player was
+     * holding. It is not a courtesy: a game that kept running behind a picture
+     * nobody can see is a game playing itself, and a preview is exactly when a
+     * player stops watching. The player's *own* pause is separate and comes
+     * back the way it was.
+     */
+    setPictureHidden(hidden: boolean): void;
     /** Write one byte into the console's memory, now. */
     poke(address: number, value: number): void;
     /** Read one byte of console or cartridge RAM, or null with no machine. */
@@ -157,6 +178,7 @@ export function useEmulator(
         poke: (address: number, value: number) => void;
         peek: (address: number) => number | null;
         applyCheats: () => void;
+        setPictureHidden: (hidden: boolean) => void;
     }>({
         loadRom: async () => false,
         loadInto: async () => false,
@@ -166,6 +188,7 @@ export function useEmulator(
         poke: () => undefined,
         peek: () => null,
         applyCheats: () => undefined,
+        setPictureHidden: () => undefined,
     });
 
     useEffect(() => {
@@ -207,6 +230,17 @@ export function useEmulator(
         // loop state still lives in start().
         let nextFrameTime = performance.now() / 1000;
         let rewinding = false;
+        /**
+         * Whether the picture is hidden -- the screenshot preview is over it.
+         *
+         * Out here, with the two above, because it is a fact about the window
+         * and not about the console: a preview can be opened before any game
+         * is loaded, and a game loaded while it is open has to come up paused
+         * rather than running for as long as it takes something to notice.
+         * `start()` reads it when it is called; the machine's own handler keeps
+         * it up to date.
+         */
+        let pictureHidden = false;
         let engineApply: ((port: number, button: ButtonName, pressed: boolean) => void) | null = null;
 
         // The settings in force, read afresh each time they are needed. The
@@ -540,6 +574,17 @@ export function useEmulator(
             };
 
             let paused = false;
+            /**
+             * The same fact, as this machine sees it: the picture is not on
+             * screen, so the loop stops.
+             *
+             * Kept apart from `paused`, which is the player's own switch:
+             * closing the preview has to put the game back the way the player
+             * left it, and one flag could not remember that. It starts from
+             * `pictureHidden` rather than from false, because the preview may
+             * already be open.
+             */
+            let covered = pictureHidden;
             let windowFrames = 0;
             let windowStartedAt = performance.now();
             let windowPeak = 0;
@@ -547,6 +592,33 @@ export function useEmulator(
             // Kept for the whole run, not just the current status window, so
             // `--audiotest` can ask whether the game ever made a sound.
             let peakSeen = 0;
+
+            /**
+             * Play time, counted in emulated frames.
+             *
+             * Counting frames rather than reading a clock is the whole
+             * design: a frame is a known number of seconds (see systems.ts),
+             * and frames are the only thing that actually happened. A paused
+             * game, a minimised window and a lunch break with the game on the
+             * title screen all add exactly zero.
+             *
+             * `playPath` is the game the seconds belong to, and it is set by
+             * applyRom; the remainder is flushed whenever a cartridge comes
+             * out *or* goes in, so the tail of one game is never credited to
+             * the next. Only the whole seconds are sent: the column is an
+             * integer and the fraction belongs to the game still running.
+             */
+            let playSeconds = 0;
+            let playPath: string | null = null;
+
+            const flushPlaytime = (): void => {
+                if (playPath === null || playSeconds < 1) {
+                    return;
+                }
+                const whole = Math.floor(playSeconds);
+                playSeconds -= whole;
+                void window.fc.notePlaytime(playPath, whole);
+            };
 
             const tick = (nowMs: number): void => {
                 animationFrame = requestAnimationFrame(tick);
@@ -575,7 +647,7 @@ export function useEmulator(
                 // Paused: keep the clock pinned to now rather than letting the
                 // backlog grow, so resuming runs the next frame immediately
                 // instead of running four frames to catch up.
-                if (paused || !loaded) {
+                if (paused || covered || !loaded) {
                     nextFrameTime = now;
                     return;
                 }
@@ -587,6 +659,9 @@ export function useEmulator(
                 let ran = 0;
                 while (now >= nextFrameTime && ran < MAX_CATCHUP_FRAMES) {
                     if (!engine.runFrame()) {
+                        // The loop is ending, so this is the last chance to
+                        // write down what this game has been played for.
+                        flushPlaytime();
                         setStatus((s) => ({
                             ...s,
                             state: 'halted',
@@ -619,6 +694,13 @@ export function useEmulator(
                     nextFrameTime = now;
                 }
 
+                if (ran > 0) {
+                    playSeconds += core.frameSeconds * ran;
+                    if (playSeconds >= PLAY_FLUSH_SECONDS) {
+                        flushPlaytime();
+                    }
+                }
+
                 blit();
 
                 windowFrames += ran;
@@ -634,7 +716,7 @@ export function useEmulator(
                         cpuPc: engine.cpuPc,
                         audioPeak: windowPeak,
                         held: manager.held,
-                        paused,
+                        paused: paused || covered,
                         rewinding,
                         rewind: rewind === null || !rewind.available ? null : {
                             depth: rewind.depth,
@@ -698,6 +780,10 @@ export function useEmulator(
 
                 loaded = true;
                 loadedPath = path;
+                // The previous game's tail belongs to the previous game.
+                flushPlaytime();
+                playPath = path;
+                playSeconds = 0;
                 paused = false;
                 // A rewind key held while the library was on screen must not
                 // carry into the game that just started.
@@ -805,6 +891,11 @@ export function useEmulator(
             };
 
             const unload = (): void => {
+                // Before the cartridge comes out: what was played is still
+                // owed to it, and after this line nobody knows whose it was.
+                flushPlaytime();
+                playPath = null;
+                playSeconds = 0;
                 loaded = false;
                 loadedPath = null;
                 paused = false;
@@ -827,7 +918,44 @@ export function useEmulator(
             actions.current = {
                 ...actions.current, loadRom, loadInto, reload, unload,
                 command: (c) => commandHandler?.(c),
+
+                /**
+                 * Stop for a picture, and start again when it is gone.
+                 *
+                 * Everything held is let go of on the way in. That is what
+                 * keeps a key held across the transition -- open the preview
+                 * with the arrow still down -- from arriving in a game that
+                 * resumes with Mario already walking, because the key-up will
+                 * be swallowed by the preview and the pad would otherwise stay
+                 * pressed for good.
+                 */
+                setPictureHidden: (hidden) => {
+                    pictureHidden = hidden;
+                    if (hidden === covered) {
+                        return;
+                    }
+                    covered = hidden;
+                    if (covered) {
+                        flushPlaytime();
+                        manager.releaseEverything();
+                        engine.releaseAllButtons();
+                        audio?.clear();
+                    } else {
+                        // Now, so the first frame after coming back runs at
+                        // once rather than four frames in a row catching up on
+                        // the time the preview was up.
+                        nextFrameTime = performance.now() / 1000;
+                    }
+                    setStatus((s) => ({ ...s, paused: paused || covered }));
+                },
             };
+
+            // A machine built while the preview was already open starts paused,
+            // which is what the status line has to say before anything else
+            // happens to it.
+            if (covered) {
+                setStatus((s) => ({ ...s, paused: true }));
+            }
 
             /** A short note in the status line, gone again in two seconds. */
             const flash = (text: string): void => {
@@ -892,6 +1020,10 @@ export function useEmulator(
                 case 'pause':
                     paused = !paused;
                     if (paused) {
+                        // A pause is where a session tends to end, so the
+                        // remainder is written down here rather than waiting
+                        // for a flush that may never come.
+                        flushPlaytime();
                         audio?.clear();
                     } else {
                         nextFrameTime = performance.now() / 1000;
@@ -1220,6 +1352,18 @@ export function useEmulator(
             setStatus({ ...INITIAL_STATUS, state: 'running' });
             actions.current = {
                 ...actions.current,
+
+                /**
+                 * There is no machine to stop yet, so this only remembers and
+                 * reports. It is not a wasted branch: the status line is what
+                 * says the picture is hidden, and the preview can be opened on
+                 * a library with no cartridge in it -- which is exactly what
+                 * `--list` does.
+                 */
+                setPictureHidden: (hidden) => {
+                    pictureHidden = hidden;
+                    setStatus((s) => ({ ...s, paused: hidden }));
+                },
                 loadRom: async (path: string) => {
                     // The machine may not exist yet. Build the right one for
                     // this game; the loader it installs does the load itself.
@@ -1269,6 +1413,7 @@ export function useEmulator(
         reload: () => actions.current.reload(),
         unload: () => actions.current.unload(),
         command: (command: CommandName) => actions.current.command(command),
+        setPictureHidden: (hidden: boolean) => actions.current.setPictureHidden(hidden),
         poke: (address: number, value: number) => actions.current.poke(address, value),
         peek: (address: number) => actions.current.peek(address),
     };

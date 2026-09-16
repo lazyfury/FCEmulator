@@ -45,6 +45,32 @@ export function formatWhen(timestamp: number): string {
     return new Date(timestamp).toLocaleDateString();
 }
 
+/**
+ * A total play time, in the units an interface has room for.
+ *
+ * Seconds only under a minute -- "0 秒" for a game that was opened and closed
+ * is honest, and a rounded "1 分" would not be -- then minutes, then hours and
+ * minutes, then hours alone once the minutes are noise.
+ */
+export function formatDuration(seconds: number): string {
+    const whole = Math.max(0, Math.floor(seconds));
+    if (whole < 60) {
+        return `${whole} 秒`;
+    }
+
+    const minutes = Math.floor(whole / 60);
+    if (minutes < 60) {
+        return `${minutes} 分`;
+    }
+
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    if (hours >= 100 || rest === 0) {
+        return `${hours} 时`;
+    }
+    return `${hours} 时 ${rest} 分`;
+}
+
 export function formatCycles(cycles: number): string {
     if (cycles < 1_000_000) {
         return cycles.toLocaleString('en-US');

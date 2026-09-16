@@ -12,16 +12,28 @@
 // second column pointing at a second copy -- so "设为封面" moves one flag and
 // nothing else, and deleting the cover just leaves the game with a different
 // picture on its card.
+//
+// A thumbnail is a button: pressing it shows the picture at size in the play
+// column, where the game's own picture goes -- see ScreenshotPreview, which is
+// a component of that column and not of this one. The grid is for finding a
+// picture; the preview is for looking at it, and a 256x240 frame drawn 90px
+// wide is a colour rather than a picture.
 // ---------------------------------------------------------------------------
 
-import { Camera, FolderOpen, Image, Star, Trash2 } from 'lucide-react';
+import { Camera, FolderSearch, FolderOpen, Image, Star, Trash2 } from 'lucide-react';
 
 import { libraryAssetUrl, type Screenshot } from '../../shared/api';
 
 interface ScreenshotsPanelProps {
     screenshots: Screenshot[];
+    /** Which picture the preview is showing, so the grid can mark it. */
+    previewId: number | null;
+    /** Show one at size, in the play column. */
+    onPreview: (id: number) => void;
     /** Open the screenshots folder in the Finder. */
     onOpenFolder: () => void;
+    /** Show one picture in the file browser, selected. */
+    onReveal: (id: number) => void;
     onSetCover: (id: number) => void;
     onRemove: (id: number) => void;
 }
@@ -40,7 +52,10 @@ function formatTaken(timestamp: number): string {
 
 export default function ScreenshotsPanel({
     screenshots,
+    previewId,
+    onPreview,
     onOpenFolder,
+    onReveal,
     onSetCover,
     onRemove,
 }: ScreenshotsPanelProps) {
@@ -82,16 +97,28 @@ export default function ScreenshotsPanel({
                     {screenshots.map((shot) => (
                         <li
                             key={shot.id}
-                            className={shot.isCover ? 'card-cell card-pinned' : 'card-cell'}
+                            className={[
+                                'card-cell',
+                                shot.isCover ? 'card-pinned' : '',
+                                shot.id === previewId ? 'card-previewing' : '',
+                            ].filter(Boolean).join(' ')}
                         >
                             <figure className="shot">
-                                <img
-                                    className="shot-image"
-                                    src={libraryAssetUrl(shot.file)}
-                                    alt={`${shot.game} 的截图`}
-                                    loading="lazy"
-                                    draggable={false}
-                                />
+                                <button
+                                    type="button"
+                                    className="shot-open"
+                                    onClick={() => onPreview(shot.id)}
+                                    title="在右侧放大查看"
+                                    aria-label={`放大查看 ${shot.game} 的截图`}
+                                >
+                                    <img
+                                        className="shot-image"
+                                        src={libraryAssetUrl(shot.file)}
+                                        alt=""
+                                        loading="lazy"
+                                        draggable={false}
+                                    />
+                                </button>
                                 <figcaption className="shot-caption">
                                     <span className="shot-game" title={shot.gamePath}>
                                         {shot.game}
@@ -120,6 +147,15 @@ export default function ScreenshotsPanel({
                                 <button
                                     type="button"
                                     className="icon-button"
+                                    onClick={() => onReveal(shot.id)}
+                                    title="在访达中显示"
+                                    aria-label="在访达中显示"
+                                >
+                                    <FolderSearch size={12} />
+                                </button>
+                                <button
+                                    type="button"
+                                    className="icon-button"
                                     onClick={() => onRemove(shot.id)}
                                     title="删除截图"
                                     aria-label="删除截图"
@@ -131,6 +167,7 @@ export default function ScreenshotsPanel({
                     ))}
                 </ul>
             </div>
+
         </section>
     );
 }

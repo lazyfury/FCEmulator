@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-import { DATABASE_FILE, GameLibrary, collectGames, isInside } from '../src/main/library.ts';
+import { DATABASE_FILE, GameLibrary, MAX_TAG_LENGTH, collectGames, isInside } from '../src/main/library.ts';
 
 /** A fresh folder, and the two or three things a test does to it. */
 function scratch() {
@@ -573,6 +573,58 @@ test('the library refuses bytes that are not a PNG, and files outside itself', (
     }
 });
 
+test('a version 2 library upgrades to tags and play time', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+
+        // A library from before either existed: the games table without
+        // play_seconds, and the screenshots table as schema 2 wrote it.
+        const db = new DatabaseSync(join(box.root, DATABASE_FILE));
+        db.exec(`
+            CREATE TABLE games (
+                id INTEGER PRIMARY KEY, file TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+                size INTEGER NOT NULL, mtime_ms INTEGER NOT NULL, added_at INTEGER NOT NULL,
+                last_played_at INTEGER NOT NULL DEFAULT 0,
+                play_count INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE screenshots (
+                id INTEGER PRIMARY KEY,
+                game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                file TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL,
+                is_cover INTEGER NOT NULL DEFAULT 0
+            );
+        `);
+        db.prepare(
+            'INSERT INTO games (file, title, size, mtime_ms, added_at, play_count, pinned) '
+            + 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ).run('Mario.nes', 'Mario', 3, 1, 1, 4, 1);
+        db.exec('PRAGMA user_version = 2');
+        db.close();
+
+        const library = GameLibrary.open(box.root);
+        const [game] = library.scan();
+        // The pin and the count are still the point: the column was added,
+        // not rebuilt, so nothing already in the table moved.
+        assert.equal(game.pinned, true);
+        assert.equal(game.playCount, 4);
+        // And the two new things start empty rather than missing.
+        assert.equal(game.playSeconds, 0);
+        assert.deepEqual(game.tags, []);
+
+        // Both work immediately, which is the half a migration test usually
+        // forgets to check.
+        library.notePlaytime(path, 30);
+        library.setTags(path, ['RPG']);
+        assert.equal(library.scan()[0].playSeconds, 30);
+        assert.deepEqual(library.scan()[0].tags, ['RPG']);
+
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
 test('a version 1 library upgrades without losing anything', () => {
     const box = scratch();
     try {
@@ -607,6 +659,42 @@ test('a version 1 library upgrades without losing anything', () => {
         const shot = library.saveScreenshot(path, PNG);
         assert.ok(shot !== null);
         assert.equal(shot.isCover, true);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('a screenshot can be located, and only inside the library', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+        const shot = library.saveScreenshot(path, PNG);
+
+        // The row names the picture; the model turns that into a path, and the
+        // promise is that the path is inside the library folder.
+        const absolute = library.screenshotPath(shot.id);
+        assert.equal(absolute, join(box.root, shot.file));
+        assert.ok(existsSync(absolute), 'the file the row names is not there');
+
+        // A row that is not there has no path. The renderer names an id, so an
+        // id it made up is an ordinary thing to happen.
+        assert.equal(library.screenshotPath(shot.id + 1000), null);
+
+        // And a row that was edited to point out of the folder is refused too.
+        // The check is on the path, not on the row having come from us.
+        const db = new DatabaseSync(join(box.root, DATABASE_FILE));
+        db.prepare('UPDATE screenshots SET file = ? WHERE id = ?')
+            .run('../../etc/passwd', shot.id);
+        db.close();
+        assert.equal(library.screenshotPath(shot.id), null);
+
+        // Deleted rows have no path either.
+        assert.equal(library.removeScreenshot(shot.id), true);
+        assert.equal(library.screenshotPath(shot.id), null);
+
         library.close();
     } finally {
         box.cleanup();
@@ -649,6 +737,146 @@ test('saving as a cover works when there was none', () => {
         const shot = library.saveScreenshot(path, PNG, true);
         assert.equal(shot.isCover, true);
         assert.equal(library.scan()[0].cover, shot.file);
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+// -- tags and play time ------------------------------------------------------
+
+test('a tag is a word the whole library shares, and typing it again does not make two', () => {
+    const box = scratch();
+    try {
+        const mario = box.place('Mario.nes');
+        const zelda = box.place('Zelda.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        const tagsOf = (name) => library.scan().find((game) => game.name === name).tags;
+
+        assert.equal(library.setTags(mario, ['RPG', 'Platformer']), true);
+        assert.equal(library.setTags(zelda, ['rpg']), true);
+
+        // One word, two games, and the spelling that was typed first is the
+        // one that survives -- "rpg" did not become a second tag and did not
+        // change "RPG" into itself lower-cased. Alphabetical, because that is
+        // the order the cards and the filter chips both state.
+        assert.deepEqual(tagsOf('Mario'), ['Platformer', 'RPG']);
+        assert.deepEqual(tagsOf('Zelda'), ['RPG']);
+
+        // Replace, not add: the next call is the whole list, not one more
+        // word on the end of it.
+        assert.equal(library.setTags(mario, ['Platformer']), true);
+        assert.deepEqual(tagsOf('Mario'), ['Platformer']);
+        assert.deepEqual(tagsOf('Zelda'), ['RPG']);
+
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('tags arrive trimmed, deduplicated and short enough to fit on a card', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        library.setTags(path, ['  RPG  ', '', '   ', 'rpg', 'RPG', 'a'.repeat(64)]);
+
+        // NOCASE order, which is what the database sorts by: the long
+        // lower-case word comes before the short upper-case one.
+        assert.deepEqual(library.scan()[0].tags, ['a'.repeat(MAX_TAG_LENGTH), 'RPG']);
+
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('a word nothing points at any more is forgotten', () => {
+    const box = scratch();
+    try {
+        const mario = box.place('Mario.nes');
+        const zelda = box.place('Zelda.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+        library.setTags(mario, ['RPG']);
+        library.setTags(zelda, ['Adventure']);
+
+        // Read through a second connection: the words left over after the
+        // last game drops one are the point, and they are on no game.
+        const words = () => {
+            const db = new DatabaseSync(join(box.root, DATABASE_FILE));
+            const rows = db.prepare('SELECT name FROM tags ORDER BY name').all();
+            db.close();
+            return rows.map((row) => row.name);
+        };
+
+        assert.deepEqual(words(), ['Adventure', 'RPG']);
+
+        library.setTags(mario, []);
+        assert.deepEqual(words(), ['Adventure']);
+
+        // And a game that leaves takes its words with it -- which here is
+        // nothing, because no other game was using its tag either.
+        library.remove(zelda);
+        assert.deepEqual(words(), []);
+
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('tags survive a rescan, and a game outside the library has none to give', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+        library.setTags(path, ['RPG']);
+
+        assert.deepEqual(library.scan()[0].tags, ['RPG']);
+        assert.deepEqual(library.scan()[0].tags, ['RPG']);
+
+        // The same rule as the pin: `--rom` can name any file on the machine,
+        // and a game that is not in the library is not in the library.
+        assert.equal(library.setTags(box.outside('Elsewhere.nes'), ['RPG']), false);
+
+        library.close();
+    } finally {
+        box.cleanup();
+    }
+});
+
+test('play time accumulates in whole seconds, and only for this library', () => {
+    const box = scratch();
+    try {
+        const path = box.place('Mario.nes');
+        const library = GameLibrary.open(box.root);
+        library.scan();
+
+        assert.equal(library.scan()[0].playSeconds, 0);
+
+        library.notePlaytime(path, 12.7);
+        library.notePlaytime(path, 0.5);
+        // Added, not replaced, and floored: the column is whole seconds and
+        // the renderer sends whole seconds anyway. The remainders are gone.
+        assert.equal(library.scan()[0].playSeconds, 12);
+
+        // Nothing that means anything gets in.
+        library.notePlaytime(path, 0);
+        library.notePlaytime(path, -5);
+        library.notePlaytime(path, Number.NaN);
+        library.notePlaytime(box.outside('Elsewhere.nes'), 600);
+        assert.equal(library.scan()[0].playSeconds, 12);
+
+        // It is a clock, not a counter: playing says nothing about the count.
+        assert.equal(library.scan()[0].playCount, 0);
+
         library.close();
     } finally {
         box.cleanup();

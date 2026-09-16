@@ -80,7 +80,7 @@ at some confusing later moment.
 | `pnpm run selftest` | run the app headlessly for 300 frames, print a hash of the picture, screenshot it to `selftest.png` |
 | `pnpm run keytest` | press real keys at the window and check what the emulator heard |
 | `pnpm run audiotest` | play in real time for eight seconds and report the audio ring |
-| `electron . --list` | print the library and exit. A screen cannot be hashed, so this is how it gets checked |
+| `electron . --list` | print the library, through the renderer's own path, and exit | A screen cannot be hashed; this reads what the window was given |
 | `electron . --gamepad` | force the gamepad source on. On this machine the native helper is on by default, so this is only needed when the helper was not built |
 | `electron . --browser-gamepad` | use the browser's Gamepad API instead of the native helper. The old path; on macOS it stops the app quitting |
 | `electron . --no-gamepad` | start with no gamepad source at all |
@@ -243,6 +243,7 @@ CREATE TABLE games (
     added_at       INTEGER NOT NULL,
     last_played_at INTEGER NOT NULL DEFAULT 0,
     play_count     INTEGER NOT NULL DEFAULT 0,
+    play_seconds   INTEGER NOT NULL DEFAULT 0,  -- emulated, not wall-clock
     pinned         INTEGER NOT NULL DEFAULT 0
 );
 
@@ -253,12 +254,172 @@ CREATE TABLE screenshots (
     created_at INTEGER NOT NULL,
     is_cover   INTEGER NOT NULL DEFAULT 0    -- at most one per game
 );
+
+CREATE TABLE tags (
+    id   INTEGER PRIMARY KEY,
+    name TEXT    NOT NULL UNIQUE COLLATE NOCASE  -- one word, however it is typed
+);
+
+CREATE TABLE game_tags (
+    game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    tag_id  INTEGER NOT NULL REFERENCES tags(id)  ON DELETE CASCADE,
+    PRIMARY KEY (game_id, tag_id)
+);
 ```
 
-`file` is relative, so moving the folder does not invalidate every row. The
-rows are ordered in the query by pin and play date; the panel reorders the
-name tiebreak in JavaScript, because SQLite has no ICU and `localeCompare`
-is what puts Chinese titles in pinyin order rather than by code point.
+The shape of the database is a list of steps (`MIGRATIONS` in
+`src/main/library.ts`), one per version: a fresh folder runs all of them and an
+existing library runs only the ones it is missing. That is what makes adding
+the tags a `CREATE TABLE` and adding `play_seconds` an `ALTER TABLE` rather
+than a copy of every row through a new table — a migration that recreated
+`games` would throw away every pin and play count in it, and there is a test
+for each old shape that checks they survive.
+
+`file` is relative, so moving the folder does not invalidate every row.
+
+**Tags and play time.** A tag is a word and a row, not a column on `games`: a
+game can have as many as the player cares to give it, and two games labelled
+“RPG” share one word rather than two spellings of it. `COLLATE NOCASE` on the
+name is what makes those one word — the database may hold one spelling, and
+`setTags()` keeps the first one typed. The colour is deliberately *not* stored:
+it is hashed from the word (`tagHue` in `src/renderer/libraryView.ts`), so a tag
+is a word everywhere and a colour only where it is drawn, the same tag is the
+same colour in every run, and there is no colour picker to add. A word nobody
+points at any more is deleted, so the filter chips — which are built from the
+games — and the table cannot disagree about which tags exist.
+
+`play_seconds` is the one number here that is *not* the main process’s own
+observation. The renderer counts emulated frames, because a frame is a known
+number of seconds and the only thing that actually happened: a paused game, a
+minimised window and a lunch break with the title screen on all add zero, where
+a wall clock would count all three. It flushes whole seconds every few seconds
+and once more when the cartridge comes out or a game is paused
+(`useEmulator.ts`), and every write is an addition — so a window that closes
+can lose at most the few seconds since the last flush, and can never lose what
+was already stored.
+
+**What the list shows.** `src/renderer/libraryView.ts` is everything about
+which games are visible and in what order: the search box, the emulator filter
+(a game’s console is derived from its extension, never stored), the tag filter
+(any-of, so two pressed chips ask for “these kinds of game” rather than “games
+that are both”), and five orders — recent, added, name, play time, size. It is
+a module of its own so that a Node test can reach the decisions without a
+window; the panel that draws the result is markup around it. Pinned games come
+first in every order, because the pin *is* the instruction not to sort them
+away, and the name breaks every tie, so a list does not rearrange itself
+between renders.
+
+Each order carries its own direction, and each chip shows it, but the group is
+single-select: exactly one order is ever in effect, and the others’ arrows are
+remembered rather than applied. Pressing the chip that is already on turns that
+one round (Radix reports that press as an empty value, which is what the
+handler answers to), because the direction of an order is set where the order
+is chosen rather than in a second control beside it. Each order starts at the
+end its name means — most recent first in one case, A to Z in another — and the
+one that made the arrows worth having is “added”: a ROM folder sorted so the
+newest arrival is at the *bottom* is the awkward case.
+
+One order has no arrow, because it has only one end. “Recently played” means
+most-recent-first and only that: oldest-first is not the other view of the
+list, it is the same view read backwards, and it would bury exactly the games
+somebody has been playing. So the chip carries no arrow, pressing it again does
+nothing, and a direction for it in `config.json` is ignored rather than obeyed
+— which matters, because a build that offered the arrow could have saved one,
+and the wrong answer there is silent. The rule is `isReversible` and
+`directionOf` in `src/shared/api.ts`, applied in one place and used by all
+three of the list, the file and the control.
+
+The consequence is checked in `test/libraryView.test.mjs` rather than by
+looking at the window: `recent` with a saved direction of `asc` sorts the same
+as `recent` with `desc`, which is the whole of the rule.
+
+The orders are chips that wrap rather than a segmented bar. Five of them, four
+of those with an arrow, do not fit on one line of the middle column, and a
+control that cannot wrap either clips its labels or shrinks them. There is
+deliberately no
+card around the row: nothing needs enclosing, because the chip that is in
+effect is the only one with a background of its own, and that background is the
+primary colour — it is a state, and the other four are things you might pick.
+
+**The order is remembered.** `config.json` gains a `libraryView` key (see
+`LibraryViewSettings` in src/shared/api.ts) holding the order and the direction
+of all five, written whole on every press — a value in two halves is a list
+that could come back in an order nobody chose. The main process validates it
+against `SORT_KEYS`, so a damaged file means the default order rather than an
+order that does not exist, and hands it to the preload down the same argument
+chain the core selection uses (`--fc-library-view=`). `directionOf` runs on the
+way in as well, so a direction stored for a one-ended order is neither obeyed
+nor kept: it becomes the order’s own the next time anything is written. That is
+why the list
+opens in the right order instead of rearranging itself a moment after the first
+paint, and why a start up killed before the first write cannot overwrite the
+setting with the default: the screen never holds the default to write.
+
+The filters are *not* remembered, on purpose. A library that opens filtered to
+a tag looks empty for no visible reason, and the search box is a question
+somebody asked once. The order is different: it is how the library is set up,
+not what was being looked for in it.
+
+**A grid of small tiles.** The games are laid out `repeat(auto-fill,
+minmax(100px, 1fr))`, which is three columns at the middle column’s usual width
+and two at its narrowest — the number matters because the panel is resizable,
+and the old 128px minimum dropped to a *single* column per row when the panel
+was dragged thin, which is the opposite of the dense list a library wants. The
+tiles are deliberately tight: 4px of padding, an 11px name, a 10px meta line,
+and 6px tag squares.
+
+That tightness is why a card shows one tag word and counts the rest (`+2`,
+with all of them in its tooltip). At two words, a card carrying two Chinese
+tags wrapped onto a second line and made every cell in its grid row 17px
+taller; rows of slightly different heights read as broken rather than as
+compact. The full list is one press away in the editor, which is also the one
+thing on a card that needs room: the cell widens to two columns while its
+editor is open, because a text field in a 100px tile is five characters wide.
+
+**And a toolbar to match.** The middle column’s header is 119px tall at its
+usual width — 9px of padding above the title, 7px between the rows of the
+controls, 6px between the chips — where it used to be 139px, and the search
+field and the chips are 3px shorter each. At the panel’s narrowest width the
+header is taller — the wrapping chips doing what they were changed to do —
+which is why the numbers above are the ones measured at an ordinary width.
+
+The two rows of chips are labelled (筛选, 排序). The word and the chips are
+children of the *same* wrapping flex row — not a word with a chip container
+beside it — and that is what makes the group wrap as one thing rather than two:
+as one flow, a wrapped chip lands at the left edge of the row, under the word,
+where a chip container beside the label indents the second line by the width of
+the label and reads as a second block.
+
+The label costs no height, which is why it is inline rather than a line above
+the chips: the toolbar measured 119px with the labels and 119px without them.
+And the group is named *by* that element through `aria-labelledby`, not by a
+second copy of the same two characters in `aria-label`: one string, so the two
+cannot say different things.
+
+The rail is trimmed the same way: 47px per section instead of 56 (5px of pad
+above the icon, 3px between icon and label, 4px below), so the seven sections
+are 349px of stack. The **icon stays 20px and the label stays
+10.5px**, which is the point — the padding is what was spare, and a smaller
+icon would buy four more pixels at the cost of the thing you actually aim at.
+Below a 1000px window the labels go (see the media query) and a section is a
+34px square.
+
+There is no 最近 in that rail any more. It showed the library filtered to the
+games with a play date, ordered by it — the same rule as the library’s own
+“recently played” order, written a second time, and a second list to keep in
+step with the first. The order belongs to the list, so the section went;
+`sections.ts` says so where it used to be.
+
+**The card at the top of the grid.** When there is a game nobody has played,
+the first thing in the list is a full-width card offering it with a 立即游玩
+button, plus the covers of up to three more. “New” is defined as “never
+played” rather than “added in the last week”: nothing in the model remembers
+having *seen* a game, so a window of days would be a second, weaker copy of
+what the library already knows. A game stops being new when it is played,
+which is exactly when the card offering to play it has done its job. The card
+is hidden while a search or a filter is on — it belongs to the library, not to
+the list somebody is narrowing — and it is only ever drawn by the whole-library
+section: a game nobody has played is not a fact about the pinned list.
 
 **Screenshots, and why the cover is a flag.** A screenshot is a PNG in
 `screenshots/`, named `<milliseconds>-<four random bytes>.png` — opaque on
@@ -282,7 +443,7 @@ The cover is not a second picture and not a path stored on `games`. It is
 work: there is one copy of every picture, so setting a cover cannot leave a
 stale one behind; deleting the cover is not a special case — the row goes and
 the newest remaining picture is promoted; and `games` never changes shape,
-which is why upgrading a version 1 library is a `CREATE TABLE` rather than a
+which is why adding `play_seconds` was an `ALTER TABLE` rather than a
 copy of every row through a new table. Deleting a game deletes its pictures,
 from the database and from disk both, and the test for it deletes the ROM in
 the Finder rather than through the application, because that path has to work
@@ -297,6 +458,67 @@ protocol handler serves exactly one directory and exactly one file type
 (`screenshots/*.png`), so it is a picture frame rather than a window into the
 disk: a ROM, the database, and anything reachable with `..` are refused, and
 the suite checks each of those.
+
+**Looking at one, and showing it to the Finder.** A thumbnail in the 截图
+section is a button, and pressing it shows the picture at size **in the play
+column, where the game's picture goes** — the same column, the same box, with
+the console hidden rather than taken away. Three things follow from that shape,
+and the third is why the code is arranged the way it is:
+
+* it is the largest space in the window, and the picture is the thing worth
+  looking at;
+* a screenshot is *about* the picture, so standing in the picture's place is
+  the comparison — the shot then the game, rather than two small boxes side by
+  side;
+* the canvas underneath **is hidden, and not unmounted** — the same trick
+  `:fullscreen` uses on the columns that are about choosing a game. A
+  `TabsView` holds both panes and shows one by hiding the other (`display:
+  none`, which also takes it out of the tab order), and it keeps the element: the canvas is bound to the emulator for the lifetime of the
+  page, so unmounting it to show a picture would rebuild the WebAssembly module
+  and power the console off. The cost is that the canvas has no box while it is
+  hidden, which `usePixelScale` handles — it ignores a container measuring under
+  a pixel, and re-measures when the box comes back.
+
+Walking to another section closes the preview. Every other section is about
+something other than the picture being looked at, and the play column is the
+one column that never changes, so finding a screenshot where the game should be
+is a column that has stopped following the rail.
+
+The preview is **the play column itself**, not a picture in a frame inside it:
+`TabsView` holds the two panes and the preview takes the whole column, so the
+strip with the game's name, the picture and the transport buttons all give way
+to it. Its own bars take a sliver at the top and the bottom and the picture gets
+everything else, fitted with `object-fit: contain` so it is scaled up to touch
+one side and never stretched.
+
+**And the machine stops while the picture is hidden.** `setPictureHidden` on
+the emulator handle is called from an effect on the open/closed fact — not from
+the close button, because there are four ways out of a preview (the X, Escape,
+deleting what is on screen, the list changing underneath it) and a game left
+paused after one of them is a bug nobody would look for in a close button. The
+flag itself lives with the window rather than with the console, so a game loaded
+while the preview is already open comes up paused instead of running until
+something notices. Everything held is released on the way in, which is what
+keeps an arrow held across the transition from arriving in a game that resumes
+with Mario already walking. The player's own pause is separate from the
+preview's, so closing it puts the game back the way it was.
+
+The preview owns the keyboard while it is up, in two places: it handles Escape
+and the arrows itself and stops everything else from propagating, and the page
+marks itself with `data-keyboard-captured` — which is what `input.ts` looks for
+before deciding to ignore a key. Two locks on one door, because the failure is a
+pad button stuck down. Deliberately not `aria-modal`: the preview is not modal
+— the list beside it is still usable — and roles are for people, not for the
+emulator.
+
+**在访达中显示** asks the main process to select that file in the file browser,
+and it names a *row*, never a path. The main process looks the PNG up
+(`screenshotPath`) and builds the path itself, checking it is inside the
+library before handing it to the operating system — so a renderer that guessed
+an id, or a database whose rows were edited, still cannot make the Finder select
+`/etc/passwd`. The test for that one edits a row to point outside the folder and
+asserts the model refuses it; the side effect itself (`shell.showItemInFolder`)
+is one line on top.
 
 **Importing a game, and why the renderer may name a path.** Two ways in — the
 open panel, and a drop — and one implementation: both produce a list of paths,

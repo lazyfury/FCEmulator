@@ -17,9 +17,9 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 
 import {
-    IpcChannel,
+    DEFAULT_LIBRARY_VIEW, IpcChannel,
     type BootRom, type Cheat, type CoreSelection, type FcBridge, type GamepadReading,
-    type InputSettings, type LibraryState, type Preferences,
+    type InputSettings, type LibraryState, type LibraryViewSettings, type Preferences,
 } from '../shared/api';
 import { bootLog, setBootOrigin } from '../shared/boot';
 
@@ -63,6 +63,32 @@ function bootCoreSelection(): CoreSelection
     }
 }
 
+/**
+ * The saved library order, as the main process read it from config.json.
+ *
+ * Parsed defensively for the same reason the selection above is: a malformed
+ * value costs the remembered order, not the window. The default is complete,
+ * so the renderer never has to ask whether a field arrived -- it is what the
+ * list uses when nobody has ever sorted it.
+ */
+function bootLibraryView(): LibraryViewSettings
+{
+    const prefixed = process.argv.find((argument) => argument.startsWith('--fc-library-view='));
+    if (prefixed === undefined) {
+        return DEFAULT_LIBRARY_VIEW;
+    }
+    try {
+        const parsed: unknown = JSON.parse(
+            decodeURIComponent(prefixed.slice('--fc-library-view='.length)),
+        );
+        return parsed !== null && typeof parsed === 'object'
+            ? { ...DEFAULT_LIBRARY_VIEW, ...parsed as LibraryViewSettings }
+            : DEFAULT_LIBRARY_VIEW;
+    } catch {
+        return DEFAULT_LIBRARY_VIEW;
+    }
+}
+
 bootLog('preload', 'script started');
 
 /**
@@ -87,6 +113,12 @@ const bridge: FcBridge = {
 
     notePlayed: (path) =>
         ipcRenderer.invoke(IpcChannel.NotePlayed, path) as Promise<void>,
+
+    notePlaytime: (path, seconds) =>
+        ipcRenderer.invoke(IpcChannel.NotePlaytime, { path, seconds }) as Promise<void>,
+
+    setGameTags: (path, tags) =>
+        ipcRenderer.invoke(IpcChannel.SetGameTags, { path, tags }) as Promise<LibraryState>,
 
     loadState: (slot) =>
         ipcRenderer.invoke(IpcChannel.LoadState, slot) as Promise<Uint8Array | null>,
@@ -125,6 +157,9 @@ const bridge: FcBridge = {
     saveCoreSelection: (selection: CoreSelection) =>
         ipcRenderer.invoke(IpcChannel.WriteCoreSelection, selection) as Promise<void>,
 
+    saveLibraryView: (view: LibraryViewSettings) =>
+        ipcRenderer.invoke(IpcChannel.WriteLibraryView, view) as Promise<void>,
+
     readCheats: (romPath) =>
         ipcRenderer.invoke(IpcChannel.ReadCheats, romPath) as Promise<Cheat[]>,
 
@@ -142,12 +177,16 @@ const bridge: FcBridge = {
     removeScreenshot: (id) =>
         ipcRenderer.invoke(IpcChannel.RemoveScreenshot, id) as Promise<LibraryState | null>,
 
+    revealScreenshot: (id) =>
+        ipcRenderer.invoke(IpcChannel.RevealScreenshot, id) as Promise<boolean>,
+
     // The main process appends this through webPreferences.additionalArguments
     // when it was started with --selftest. Reading it here rather than over
     // IPC keeps the renderer from having to wait for an answer before it can
     // decide whether to start running frames.
     bootT0: bootTimestamp(),
     coreSelection: bootCoreSelection(),
+    libraryView: bootLibraryView(),
     selftestOnly: process.argv.includes('--fc-selftest'),
     eager: process.argv.includes('--fc-eager'),
     gamepadEnabled: process.argv.includes('--fc-gamepad'),

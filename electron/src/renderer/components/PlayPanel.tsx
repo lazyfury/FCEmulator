@@ -91,6 +91,15 @@ export default function PlayPanel({
                 has none, because usePixelScale sizes the picture to whatever
                 it is handed. */}
             <div className="stage-well">
+                {/*
+                 * One pane of the workspace, the other being the preview
+                 * below. Which one is shown is the shell's business, not this
+                 * component's: TabsView is what puts this out of the way (see
+                 * the stylesheet), exactly the way `:fullscreen` hides the
+                 * columns that are about choosing a game -- by hiding it, never
+                 * by unmounting it. The canvas in here is bound to the emulator
+                 * for the life of the page.
+                 */}
                 <div className="stage" ref={stageRef}>
                     <div className="screen-wrap" style={box}>
                         <canvas

@@ -127,10 +127,19 @@ export function systemForExtension(path: string): SystemId
  * them. A console with more than one core is a console the player can choose
  * an emulator for.
  */
-export const SYSTEMS: readonly { id: SystemId; name: string }[] = Object.freeze([
-    { id: 'nes', name: 'NES / FC' },
-    { id: 'gba', name: 'Game Boy Advance' },
-    { id: 'gb', name: 'Game Boy / Color' },
+/**
+ * The consoles the application knows, in the order the settings screen lists
+ * them. A console with more than one core is a console the player can choose
+ * an emulator for.
+ *
+ * `name` is for the settings screen, where there is room to spell a console
+ * out; `short` is for the badges on the library cards, where the whole word
+ * would be wider than the card.
+ */
+export const SYSTEMS: readonly { id: SystemId; name: string; short: string }[] = Object.freeze([
+    { id: 'nes', name: 'NES / FC', short: 'NES' },
+    { id: 'gba', name: 'Game Boy Advance', short: 'GBA' },
+    { id: 'gb', name: 'Game Boy / Color', short: 'GB' },
 ]);
 
 /**

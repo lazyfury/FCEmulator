@@ -57,7 +57,7 @@ const DEFAULT_WIDTH = 320;
 
 /** Narrower than this and the cards stop being cards; wider and the picture
  *  has nothing left to sit in. */
-const MIN_WIDTH = 240;
+const MIN_WIDTH = 280;
 const MAX_WIDTH = 720;
 
 /** One arrow key press. Small enough to be a nudge, large enough to see. */

@@ -24,6 +24,9 @@ export const IpcChannel = {
     /** Remember that a game was played, so the list can put it first next time. */
     NotePlayed: 'fc:note-played',
 
+    /** Add counted emulated seconds to a game's total play time. */
+    NotePlaytime: 'fc:note-playtime',
+
     /** Write save state bytes into a slot. Returns false if it could not. */
     SaveState: 'fc:save-state',
 
@@ -41,6 +44,9 @@ export const IpcChannel = {
 
     /** Pin a game to the top of the list, or unpin it. */
     TogglePinned: 'fc:toggle-pinned',
+
+    /** Replace a game's tags with exactly these words. */
+    SetGameTags: 'fc:set-game-tags',
 
     /** Delete a game from the library, after a native confirmation. */
     RemoveGame: 'fc:remove-game',
@@ -60,11 +66,17 @@ export const IpcChannel = {
     /** Delete a screenshot: its file, and its row. */
     RemoveScreenshot: 'fc:remove-screenshot',
 
+    /** Show one screenshot in the file browser, selected. */
+    RevealScreenshot: 'fc:reveal-screenshot',
+
     /** Rewrite the input settings: keyboard mode, bindings, pad assignment. */
     WriteInputSettings: 'fc:write-input-settings',
 
     /** Remember which emulator core to use for each console. */
     WriteCoreSelection: 'fc:write-core-selection',
+
+    /** Remember how the library list is ordered, and which way round. */
+    WriteLibraryView: 'fc:write-library-view',
 
     /** The cheats saved for one cartridge. */
     ReadCheats: 'fc:read-cheats',
@@ -85,6 +97,89 @@ export const IpcChannel = {
     GamepadState: 'fc:gamepad-state',
 } as const;
 
+/**
+ * The orders the library list can be put in.
+ *
+ * Here rather than in the renderer because both sides have to know them: the
+ * renderer draws them and the main process validates the remembered choice
+ * against them, and a key that only one side knows is a setting that silently
+ * falls back to the default.
+ */
+export type SortKey = 'recent' | 'added' | 'name' | 'playtime' | 'size';
+
+/** Which end of an order comes first. */
+export type SortDirection = 'asc' | 'desc';
+
+/** The orders, in the order the control lists them. */
+export const SORT_KEYS: readonly SortKey[] = Object.freeze([
+    'recent', 'added', 'name', 'playtime', 'size',
+]);
+
+/**
+ * The direction each order starts in, and the direction it means.
+ *
+ * Every one of these is the end a person means by the name alone: “most
+ * recent” first, not oldest first; “biggest” first, not smallest; names A to
+ * Z. The arrow on a chip is for the times that is the wrong end -- a ROM
+ * folder sorted so the newest addition is at the *bottom* is the awkward
+ * case, and it is the reason the arrow exists at all.
+ */
+export const DEFAULT_DIRECTION: Readonly<Record<SortKey, SortDirection>> = Object.freeze({
+    recent: 'desc',
+    added: 'desc',
+    name: 'asc',
+    playtime: 'desc',
+    size: 'desc',
+});
+
+/**
+ * Whether an order has a second end that means anything.
+ *
+ * “Recently played” does not. The list is *about* what was touched last, so
+ * oldest-first is not the other view of it -- it is the same view read
+ * backwards, and the games somebody actually plays are exactly the ones that
+ * would be pushed to the bottom. So the control offers no arrow for it, and
+ * whatever a remembered value says about it is ignored rather than obeyed.
+ */
+export function isReversible(sort: SortKey): boolean {
+    return sort !== 'recent';
+}
+
+/**
+ * The direction an order is actually applied in.
+ *
+ * A chosen direction for an order that has no other end is dropped here, at
+ * the one place every caller goes through -- the list, the saved file and the
+ * control all agree because there is one rule rather than three.
+ */
+export function directionOf(sort: SortKey, chosen: SortDirection): SortDirection {
+    return isReversible(sort) ? chosen : DEFAULT_DIRECTION[sort];
+}
+
+/**
+ * How the library list is ordered, as one remembered value.
+ *
+ * One object rather than a preference per field, and written whole, for the
+ * same reason the input settings are: the order and the five directions are
+ * one setting, and a file holding half of the old value and half of the new
+ * one would be a list that comes back in an order nobody chose.
+ *
+ * A direction per order, with only the selected one in effect: turning “尺寸”
+ * round should not also turn “名称” round. The others are remembered, not
+ * applied -- the sort control is single-select.
+ */
+export interface LibraryViewSettings {
+    sort: SortKey;
+    directions: Record<SortKey, SortDirection>;
+}
+
+/** What a library that has never been sorted looks like: the default order,
+ *  and every order at the end its name means. */
+export const DEFAULT_LIBRARY_VIEW: LibraryViewSettings = Object.freeze({
+    sort: 'recent',
+    directions: { ...DEFAULT_DIRECTION },
+});
+
 /** One game in the library. */
 export interface GameEntry {
     path: string;
@@ -98,6 +193,25 @@ export interface GameEntry {
     pinned: boolean;
     /** How many times the cartridge has been run. */
     playCount: number;
+    /**
+     * Total time played, in emulated seconds, across every run.
+     *
+     * Emulated rather than wall-clock: the renderer counts the frames it ran
+     * (see useEmulator), so a paused game and a minimised window add nothing.
+     * Whole seconds, accumulated by the main process -- a window that closes
+     * loses at most the few seconds since the last flush, and can never lose
+     * what was already stored, because every write is an addition.
+     */
+    playSeconds: number;
+    /**
+     * The words the player gave it, in alphabetical order, without
+     * duplicates and without regard to case. Empty is the common case.
+     *
+     * A word rather than a colour: the swatch's colour is derived from the
+     * name (see src/renderer/libraryView.ts), so two games labelled "RPG"
+     * share both the word and the colour without either being stored twice.
+     */
+    tags: string[];
     /** When it entered the library, and when it was last run. 0 means never. */
     addedAt: number;
     lastPlayedAt: number;
@@ -332,6 +446,8 @@ export interface Preferences {
     input: InputSettings;
     /** Which emulator core to run each console on. Empty means the defaults. */
     cores: CoreSelection;
+    /** How the library list is ordered, and how far each order was turned. */
+    libraryView: LibraryViewSettings;
 }
 
 /** Which preference a write is about. */
@@ -399,6 +515,25 @@ export interface FcBridge {
      * process has open.
      */
     notePlayed(path: string): Promise<void>;
+
+    /**
+     * Add to a game's total play time.
+     *
+     * The renderer counts the seconds because it is the only side that knows
+     * how much emulation happened; the main process does the adding because it
+     * owns the database. Called every few seconds while a game runs and once
+     * more when the cartridge comes out.
+     */
+    notePlaytime(path: string, seconds: number): Promise<void>;
+
+    /**
+     * Replace a game's tags with exactly these words.
+     *
+     * One verb for the whole list, like the input settings: the editor has
+     * every tag on screen, and adding one at a time would let the stored list
+     * disagree with the drawn one for as long as the second call took.
+     */
+    setGameTags(path: string, tags: readonly string[]): Promise<LibraryState>;
 
     /**
      * Save states on disk.
@@ -505,6 +640,19 @@ export interface FcBridge {
     removeScreenshot(id: number): Promise<LibraryState | null>;
 
     /**
+     * Show one screenshot in the file browser.
+     *
+     * The renderer names the screenshot's *row* and never a path, and that is
+     * the point: the main process looks the file up, checks that it is inside
+     * the library, and only then hands it to the operating system. A page that
+     * can name a path here is a page that can make the file browser select
+     * `/etc/passwd`.
+     *
+     * Returns false when the row is not there or led outside the folder.
+     */
+    revealScreenshot(id: number): Promise<boolean>;
+
+    /**
      * The window preferences: scanlines and the middle column width.
      *
      * Read once on start up. Unlike the library these are small and local, so
@@ -540,6 +688,15 @@ export interface FcBridge {
      * file disagree with the screen for as long as the second write took.
      */
     saveCoreSelection(selection: CoreSelection): Promise<void>;
+
+    /**
+     * Remember how the library list is ordered.
+     *
+     * Written whenever the order or one of its arrows is pressed, so the
+     * list comes back the way it was left. Same one-verb-for-the-whole-value
+     * shape as the two above: the order and the directions are one setting.
+     */
+    saveLibraryView(view: LibraryViewSettings): Promise<void>;
 
     /** The cheats saved for one cartridge, or an empty list. */
     readCheats(romPath: string): Promise<Cheat[]>;
@@ -607,6 +764,19 @@ export interface FcBridge {
      * and that is what a change made while the app is running goes through.
      */
     readonly coreSelection: CoreSelection;
+
+    /**
+     * The saved library order, known before the first render.
+     *
+     * Handed down the same way the core selection is, and for a related
+     * reason: the asynchronous `preferences()` call arrives a moment after the
+     * first paint, and a list that draws itself in the default order and then
+     * rearranges is a list that was never in the order the player chose. The
+     * alternative -- writing whatever the default was before the saved value
+     * came back -- would also overwrite the setting on a start up that was
+     * killed in between.
+     */
+    readonly libraryView: LibraryViewSettings;
 
     /**
      * Ask whether a gamepad source should be started, and which kind.

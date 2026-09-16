@@ -239,10 +239,10 @@ kbd,
    --------------------------------------------------------------------------- */
 
 .sidebar {
-    flex: 0 0 76px;
+    flex: 0 0 64px;
     display: flex;
     flex-direction: column;
-    padding: 8px 6px;
+    padding: 6px 5px;
     background: var(--rail);
     backdrop-filter: blur(30px) saturate(180%);
     -webkit-backdrop-filter: blur(30px) saturate(180%);
@@ -252,21 +252,25 @@ kbd,
 .rail {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 12px;
     /* Seven sections at a normal window height, and a scrollbar at a short
        one rather than a stack that walks off the bottom. */
     min-height: 0;
     overflow-y: auto;
 }
 
+/* The card around one section. Its height is the icon, the label and the two
+   pads, and the pads are the part that is tight: the icon (20px) and the
+   label (10.5px) are the sizes they should be, and shrinking them to save
+   room would make the rail harder to read for the sake of four pixels. */
 .rail-item {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 5px;
-    padding: 9px 2px 7px;
+    gap: 3px;
+    padding: 5px 2px 4px;
     border: 0;
-    border-radius: 9px;
+    border-radius: 8px;
     background: transparent;
     color: var(--text-dim);
     font: inherit;
@@ -317,6 +321,9 @@ kbd,
     display: flex;
     flex-direction: column;
     background: var(--panel);
+    /* The preview inside a panel is positioned against the panel, so that it
+       covers this column and leaves the game on the right alone. */
+    position: relative;
 }
 
 /* The divider between the middle column and the picture.
@@ -364,15 +371,15 @@ kbd,
 .panel-head {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 12px 14px 10px;
+    gap: 7px;
+    padding: 9px 10px 8px;
     border-bottom: 1px solid var(--border);
 }
 
 .panel-title {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
 }
 
@@ -383,15 +390,20 @@ kbd,
     flex: none;
 }
 
+.panel-title-actions .icon-button {
+    width: 22px;
+    height: 22px;
+}
+
 .panel-title h2 {
     margin: 0;
-    font-size: 15px;
+    font-size: 13.5px;
     font-weight: 600;
     letter-spacing: -0.01em;
 }
 
 .panel-count {
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--text-faint);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -401,14 +413,14 @@ kbd,
 .panel-tools {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
 }
 
 .panel-scroll {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 8px 8px 20px;
+    padding: 6px 6px 16px;
 }
 
 .panel-scroll::-webkit-scrollbar {
@@ -425,27 +437,27 @@ kbd,
 /* A short note about the last thing that happened to the library. Accent
    rather than green: it is news, not a success or a failure. */
 .notice {
-    margin: 4px 8px 10px;
-    padding: 7px 10px;
+    margin: 4px 6px 8px;
+    padding: 6px 8px;
     border-radius: var(--radius);
     background: var(--accent-soft);
     color: var(--accent);
-    font-size: 11.5px;
+    font-size: 11px;
 }
 
 .panel-actions {
     display: flex;
-    gap: 8px;
-    margin: 14px 4px 0;
+    gap: 6px;
+    margin: 10px 4px 0;
 }
 
 /* The search field: a small rounded well, accent ring only while focused. */
 .search {
     display: flex;
     align-items: center;
-    gap: 6px;
-    height: 26px;
-    padding: 0 8px;
+    gap: 5px;
+    height: 23px;
+    padding: 0 7px;
     border-radius: var(--radius);
     background: var(--panel-alt);
     border: 1px solid var(--border);
@@ -464,7 +476,7 @@ kbd,
     background: transparent;
     outline: none;
     font: inherit;
-    font-size: 12px;
+    font-size: 11.5px;
     color: var(--text);
 }
 
@@ -493,6 +505,10 @@ kbd,
 }
 
 .segment {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
     flex: 1;
     padding: 3px 0;
     border: 0;
@@ -520,6 +536,144 @@ kbd,
 .segment:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* The emulator filter and the tag filter, which are the same chip twice: the
+   gesture is the same -- press to narrow the list, press again to widen it --
+   and a second appearance would only suggest a second meaning. A pressed chip
+   is a state, so it is coloured rather than just a shade louder. */
+
+/* One labelled row of controls: the word, then the chips, all children of the
+   same wrapping flex container.
+
+   That last part is the whole point. With the word as a sibling of a chip
+   *container*, the chips wrap inside their own box -- the second line starts
+   under the first chip, leaving the word alone at the left and reading as two
+   blocks. As one flow, every line starts at the same edge and the row is one
+   thing. */
+.tool-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+}
+
+/* The word in front of a row of chips. Small and faint, because it names the
+   row rather than being one of the choices, and it never shrinks: "筛选" cut
+   down to an ellipsis would name nothing. */
+.tool-label {
+    flex: none;
+    color: var(--text-faint);
+    font-size: 10px;
+    letter-spacing: 0.02em;
+}
+
+/* `.filters` and `.sort-chips` carry no layout of their own: they are the
+   accessible groups (see LibraryPanel.tsx) and the handles the headless check
+   counts chips through. The flow is `.tool-row`'s. */
+
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 18px;
+    padding: 0 7px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--panel-alt);
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 10.5px;
+    cursor: pointer;
+}
+
+.filter-chip:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.filter-chip:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.filter-chip[aria-pressed='true'] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 500;
+}
+
+/* The orders, as chips that wrap rather than as one bar.
+
+   Five orders with an arrow each do not fit on one line of the middle column,
+   and a control that cannot wrap either clips its labels or shrinks them. The
+   row is deliberately not a card: there is nothing to enclose, because only
+   the chip that is in effect has a background of its own. */
+.sort-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 19px;
+    padding: 0 7px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--panel-alt);
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 10.5px;
+    cursor: pointer;
+}
+
+.sort-chip:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.sort-chip:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* The order in effect, in the primary colour. The other four are suggestions;
+   this one is what the list is doing, and it should be findable without
+   reading. */
+.sort-chip[data-state='on'] {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-text);
+    font-weight: 500;
+}
+
+/* The arrow belongs to its chip, so it is dimmer while its order is not the
+   one in effect: it says which end that order is set to, not which end the
+   list is at. Only the selected chip's arrow is the truth about the screen. */
+.sort-chip-arrow {
+    display: inline-flex;
+    align-items: center;
+    color: currentColor;
+    opacity: 0.45;
+}
+
+.sort-chip-arrow[data-active='true'] {
+    opacity: 0.9;
+}
+
+/* The one chip that is not a filter but the absence of one. */
+.filter-clear {
+    border-style: dashed;
+}
+
+/* One tag, everywhere on the screen: a small square of its own colour and the
+   word. The hue is a hash of the word (libraryView.tagHue), so the same tag is
+   the same colour on every card, in every chip and in every run -- which is
+   what makes it a label rather than decoration. */
+.tag-square {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: hsl(var(--tag-hue, 210) 62% 52%);
 }
 
 /* One icon on its own. The macOS toolbar button, at the two sizes the
@@ -556,10 +710,11 @@ kbd,
 /* ---------------------------------------------------------------------------
    The game cards
 
-   A grid, not a list, because a card has a picture in it. Two columns is what
-   fits in the middle column at its usual width; `auto-fill` widens or narrows
-   that as the window changes, and the picture keeps the console's own 256x240
-   proportions so nothing is ever stretched.
+   A grid, not a list, because a card has a picture in it. Three columns is
+   what fits in the middle column at its usual width -- small enough that a
+   screenful is a dozen games rather than four -- and `auto-fill` widens or
+   narrows that as the window changes. The picture keeps the console's own
+   256x240 proportions so nothing is ever stretched.
    --------------------------------------------------------------------------- */
 
 .cards {
@@ -567,8 +722,8 @@ kbd,
     margin: 0;
     padding: 0;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 7px;
 }
 
 /* A cell is the picture, the name and the controls. The controls float over
@@ -578,17 +733,17 @@ kbd,
     position: relative;
     display: flex;
     flex-direction: column;
-    border-radius: 10px;
+    border-radius: 8px;
 }
 
 .card {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 3px;
     width: 100%;
-    padding: 6px;
+    padding: 4px;
     border: 0;
-    border-radius: 10px;
+    border-radius: 8px;
     background: transparent;
     color: inherit;
     font: inherit;
@@ -610,7 +765,7 @@ kbd,
     display: block;
     aspect-ratio: 256 / 240;
     overflow: hidden;
-    border-radius: 6px;
+    border-radius: 5px;
     background: #000;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
@@ -635,7 +790,7 @@ kbd,
     justify-content: center;
     width: 100%;
     height: 100%;
-    padding: 8px;
+    padding: 5px;
     background: hsl(var(--cover-hue, 210) 42% 34%);
     color: #fdfdfd;
     text-align: center;
@@ -643,28 +798,45 @@ kbd,
 
 .cover-blank-name {
     display: -webkit-box;
-    -webkit-line-clamp: 4;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
     word-break: break-word;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
-    line-height: 1.35;
+    line-height: 1.3;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+/* Which console the file is for, in the corner of the picture. Top left,
+   because the controls are top right and a badge that moved with the pointer
+   would be a label you have to look for. */
+.card-system {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: rgba(28, 28, 32, 0.72);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 8px;
+    letter-spacing: 0.03em;
 }
 
 .card-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
 }
 
 .card-meta {
     display: flex;
-    gap: 8px;
-    font-size: 10.5px;
+    gap: 5px;
+    font-size: 10px;
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;
 }
@@ -677,13 +849,13 @@ kbd,
 
 .card-actions {
     position: absolute;
-    top: 8px;
-    right: 8px;
+    top: 5px;
+    right: 5px;
     display: flex;
     align-items: center;
-    gap: 2px;
-    padding: 2px;
-    border-radius: 8px;
+    gap: 1px;
+    padding: 1px;
+    border-radius: 6px;
     background: rgba(28, 28, 32, 0.72);
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
@@ -700,8 +872,8 @@ kbd,
 }
 
 .card-actions .icon-button {
-    width: 20px;
-    height: 20px;
+    width: 17px;
+    height: 17px;
     color: rgba(255, 255, 255, 0.75);
 }
 
@@ -717,18 +889,267 @@ kbd,
 .card-shots {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    height: 20px;
-    padding: 0 6px;
-    border-radius: 5px;
+    gap: 2px;
+    height: 17px;
+    padding: 0 4px;
+    border-radius: 4px;
     background: rgba(255, 255, 255, 0.14);
     color: rgba(255, 255, 255, 0.9);
-    font-size: 10px;
+    font-size: 9px;
     font-variant-numeric: tabular-nums;
 }
 
 .card-cover-flag {
     color: #ffd60a;
+}
+
+/* The tags on a card: the same square-and-word as the filter chips, smaller,
+   and never interactive. Pressing one is pressing the card it is on, which
+   opens the game -- the chips above the grid are how you filter by one. */
+.card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+}
+
+.card-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: 100%;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--panel-alt);
+    color: var(--text-dim);
+    font-size: 9px;
+    line-height: 1.6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.card-tag .tag-square {
+    width: 6px;
+    height: 6px;
+}
+
+/* The count of the tags a card had no room for, in the same chip and without a
+   square of its own -- it is not a tag. */
+.card-tag-more {
+    color: var(--text-faint);
+}
+
+.card-playtime {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+   The new-games card
+
+   The first thing in the grid, and the full width of it: a game that nobody
+   has played yet, offered with a button that starts it. It is a card rather
+   than a dialog because there is nothing to decide -- nothing is asked and
+   nothing has to be dismissed -- and it is *not* one of the grid's tiles,
+   because it is at the top of the list rather than sorted into it.
+   --------------------------------------------------------------------------- */
+
+.card-new {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 10px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--accent-soft);
+}
+
+.card-new-cover {
+    flex: none;
+    width: 56px;
+    aspect-ratio: 256 / 240;
+    overflow: hidden;
+    border-radius: 5px;
+    background: #000;
+    box-shadow: var(--shadow-sm);
+}
+
+.card-new-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+/* The one label in the interface that is a colour rather than a word alone,
+   because this card has exactly one thing to say. */
+.card-new-tag {
+    align-self: flex-start;
+    padding: 0 5px;
+    border-radius: 3px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 9px;
+    line-height: 1.6;
+    letter-spacing: 0.04em;
+}
+
+.card-new-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.card-new-when {
+    color: var(--text-dim);
+    font-size: 10px;
+}
+
+/* The other new games, as covers small enough that dropping a folder of ten
+   on the window does not turn the card into a list. */
+.card-new-others {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.card-new-other {
+    width: 24px;
+    aspect-ratio: 256 / 240;
+    padding: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    overflow: hidden;
+    background: #000;
+    cursor: pointer;
+}
+
+.card-new-other:hover {
+    border-color: var(--accent);
+}
+
+.card-new-other .cover-blank {
+    padding: 0;
+}
+
+/* A name in a 24px tile is not a label, it is noise; the title attribute and
+   the accessible name carry it instead. */
+.card-new-other .cover-blank-name {
+    display: none;
+}
+
+.card-new-more {
+    color: var(--text-dim);
+    font-size: 10px;
+}
+
+.card-new-play {
+    flex: none;
+    padding: 4px 9px;
+    font-size: 11px;
+}
+
+/* The tag editor, opened inside the cell the card lives in. It takes the row
+   under the picture, so the grid grows by one line rather than the card
+   covering its neighbour.
+
+   The cell widens to two columns while its editor is open, because the tiles
+   are small enough that three fit across the panel and a text field in one of
+   them would be about five characters wide; two columns is a field somebody
+   can read what they typed into. The panel's minimum width leaves room for two
+   columns, so this never pushes one off the edge. The picture keeps its tile
+   size, though -- it is the cell that grew, not the card. */
+.card-editing-tags {
+    grid-column: span 2;
+    background: var(--panel-alt);
+}
+
+.card-editing-tags .card-cover {
+    align-self: flex-start;
+    width: 86px;
+}
+
+.tag-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 5px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--panel-alt);
+}
+
+.tag-editor-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+}
+
+.tag-editor-empty {
+    font-size: 10px;
+    color: var(--text-faint);
+}
+
+.tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 2px 1px 5px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--text-dim);
+    font-size: 10px;
+}
+
+.tag-chip button {
+    display: grid;
+    place-items: center;
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+}
+
+.tag-chip button:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.tag-editor-input {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.tag-editor-input input {
+    flex: 1;
+    min-width: 0;
+    height: 20px;
+    padding: 0 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    font-size: 10.5px;
+    outline: none;
+}
+
+.tag-editor-input input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 /* The cartridge in the slot, marked the way a Finder selection is: fill,
@@ -749,7 +1170,13 @@ kbd,
 /* Wider cards: a screenshot is worth looking at, and the middle column is
    normally wide enough for two. */
 .cards-shots {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+
+/* The one being looked at in the play column, marked the way the cartridge in
+   the slot is marked in the game list: fill, colour and weight. */
+.card-previewing .shot-open {
+    box-shadow: 0 0 0 2px var(--accent);
 }
 
 .shot {
@@ -757,6 +1184,24 @@ kbd,
     display: flex;
     flex-direction: column;
     gap: 5px;
+}
+
+/* The thumbnail is a button, because pressing it opens the picture at size.
+   It carries no chrome of its own -- the picture is the control -- so the only
+   thing the button adds is a focus ring and a pointer. */
+.shot-open {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    cursor: zoom-in;
+}
+
+.shot-open:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .shot-image {
@@ -790,9 +1235,149 @@ kbd,
     font-variant-numeric: tabular-nums;
 }
 
-.panel-foot {
-    margin: 12px 8px 0;
+/* ---------------------------------------------------------------------------
+   The screenshot preview
+
+   The play column's other pane: the console gives way to it entirely, and the
+   picture fills what is left, with the name, the counter, the arrows and the
+   buttons floating over it. The console is hidden, not unmounted -- see
+   `.tab-pane-hidden` -- and the machine is paused while the picture is hidden
+   (see `setPictureHidden` in useEmulator).
+   --------------------------------------------------------------------------- */
+
+.preview {
+    display: flex;
+    flex-direction: column;
+    background: #000;
+    animation: fade-in 0.12s ease;
+}
+
+/* The two bars are in the flow, not over the picture: a name and a row of
+   buttons want solid ground under them, and a scrim over a bright Sky World is
+   a row of buttons nobody can read. The picture takes everything that is
+   left. */
+.preview-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+    padding: 6px 10px;
+    background: #0a0a0c;
+    color: #f2f2f5;
+}
+
+.preview-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background: #000;
+}
+
+/* Fit, and fit by growing: the frame is 256x240 and the column is much bigger,
+   so it is scaled up until one of its sides touches -- `object-fit: contain`
+   letterboxes it in the box rather than stretching it -- and never smoothed,
+   because it was drawn one pixel at a time and smoothing would invent detail
+   that was never there. */
+.preview-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+.preview-game {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.preview-when,
+.preview-count {
+    flex: none;
+    color: rgba(255, 255, 255, 0.55);
     font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.preview-head .icon-button {
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.preview-head .icon-button:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+}
+
+/* The two arrows sit on the picture, one at each edge, where a gallery's do. */
+.preview-step {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 56px;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: rgba(28, 28, 32, 0.7);
+    color: #ffffff;
+    cursor: pointer;
+}
+
+.preview-step:hover:not(:disabled) {
+    background: rgba(28, 28, 32, 0.9);
+}
+
+.preview-step:disabled {
+    opacity: 0.2;
+    cursor: default;
+}
+
+.preview-step:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.preview-prev {
+    left: 8px;
+}
+
+.preview-next {
+    right: 8px;
+}
+
+/* The buttons, in a bar of their own with a colour of its own -- and the note
+   that says why the game is not moving takes what is left, so the buttons are
+   always at the end of the row whatever the note says. */
+.preview-actions {
+    border-top: 1px solid var(--border);
+}
+
+.preview-note {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 10.5px;
+}
+
+.panel-foot {
+    margin: 9px 6px 0;
+    font-size: 10px;
     color: var(--text-faint);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -805,9 +1390,9 @@ kbd,
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 10px;
-    padding: 22px 12px;
-    font-size: 12.5px;
+    gap: 9px;
+    padding: 16px 10px;
+    font-size: 12px;
     color: var(--text-dim);
 }
 
@@ -871,6 +1456,19 @@ kbd,
 .button:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* The one button in the interface that is the thing to do: "play this". Every
+   other button is a verb of equal standing and keeps the neutral grey chrome. */
+.button-primary {
+    border-color: transparent;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-weight: 500;
+}
+
+.button-primary:hover:not(:disabled) {
+    filter: brightness(1.06);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1435,10 +2033,20 @@ kbd {
    The play area
    --------------------------------------------------------------------------- */
 
-.play {
+/* The play column, as one of two panes: the console, or a screenshot over it.
+   Exactly one of them is displayed at a time -- TabsView does that, and
+   `.tab-pane-hidden` is what hides the console -- and the hidden one keeps its
+   element, because the canvas inside it is bound to the emulator for the life
+   of the page. This is the box they share; what goes inside it is each pane's
+   own business. */
+.play,
+.preview {
     flex: 1 1 auto;
     min-width: 0;
     min-height: 0;
+}
+
+.play {
     display: flex;
     flex-direction: column;
     background: var(--bg);
@@ -1483,6 +2091,37 @@ kbd {
 .app:fullscreen .play-head,
 .app:fullscreen .transport {
     border-color: transparent;
+}
+
+/* The play column is a TabsView: the console, or a screenshot over it. All the
+   tabs are in the DOM; the one that is not showing is `display: none`, which
+   takes it out of the tab order as well as out of sight. The cost is that the
+   console's canvas has no box while it is hidden -- which is why usePixelScale
+   ignores a container measuring under a pixel, and re-measures when the box
+   comes back. */
+.tabs {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+}
+
+.tab-pane {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+}
+
+.tab-pane-hidden {
+    display: none;
+}
+
+.tab-pane > .play,
+.tab-pane > .preview {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
 }
 
 .app:fullscreen::backdrop {
@@ -1567,7 +2206,10 @@ kbd {
     background: #000;
 }
 
+
+
 .stage {
+    position: relative;
     width: 100%;
     height: 100%;
     min-width: 0;
@@ -1891,8 +2533,10 @@ kbd {
         display: none;
     }
 
+    /* No label, so the card is the icon and its pads -- a square rather than a
+       two-line block. */
     .rail-item {
-        padding: 10px 0;
+        padding: 7px 0;
     }
 }
 

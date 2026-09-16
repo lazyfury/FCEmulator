@@ -30,7 +30,8 @@ import {
     IpcChannel, LIBRARY_HOST, ROM_EXTENSIONS, CORES_BY_SYSTEM,
     type BootRom, type Cheat, type CoreId, type CoreSelection, type GamepadButtonName,
     type GamepadReading, type InputSettings, type KeyBinding, type LibraryState,
-    type Preferences, type SystemId, DEFAULT_INPUT_SETTINGS,
+    type LibraryViewSettings, type Preferences, type SortKey, type SystemId,
+    DEFAULT_INPUT_SETTINGS, DEFAULT_LIBRARY_VIEW, SORT_KEYS, directionOf,
 } from '../shared/api';
 import { bootLog, bootOrigin, setBootOrigin } from '../shared/boot';
 
@@ -555,6 +556,12 @@ function createWindow(): BrowserWindow {
                 // the wrong core for the first hundred milliseconds. Encoded
                 // because it is JSON and an argument list is not.
                 `--fc-cores=${encodeURIComponent(JSON.stringify(normaliseCores(readConfig().cores)))}`,
+                // And the saved library order, so the list draws itself in the
+                // order the player chose instead of rearranging a moment after
+                // the first paint. Same reason, same encoding.
+                `--fc-library-view=${encodeURIComponent(
+                    JSON.stringify(normaliseLibraryView(readConfig().libraryView)),
+                )}`,
                 ...(options.selftestFrames > 0 ? ['--fc-selftest'] : []),
                 ...(EAGER_MACHINE ? ['--fc-eager'] : []),
                 ...(GAMEPAD_ENABLED ? ['--fc-gamepad'] : []),
@@ -672,6 +679,8 @@ interface Config {
     input?: InputSettings;
     /** Which core to use for each console, keyed by system id. */
     cores?: Record<string, string>;
+    /** How the library list is ordered, and which way round each order is. */
+    libraryView?: Partial<LibraryViewSettings>;
     /** Cheats, keyed by the cartridge's path. */
     cheats?: Record<string, Cheat[]>;
 }
@@ -782,6 +791,44 @@ function normaliseCores(raw: unknown): CoreSelection {
         }
     }
     return selection;
+}
+
+/**
+ * The remembered library order, with anything unrecognised replaced.
+ *
+ * Read defensively like the two above, and here it matters twice over: this
+ * value is used as the *starting* state of the list, so an order that does not
+ * exist would leave the control with nothing selected and the sort comparing
+ * nothing. A missing or damaged field falls back to the default rather than
+ * failing, because the worst case is a list in the default order.
+ */
+function normaliseLibraryView(raw: unknown): LibraryViewSettings {
+    const view: LibraryViewSettings = {
+        sort: DEFAULT_LIBRARY_VIEW.sort,
+        directions: { ...DEFAULT_LIBRARY_VIEW.directions },
+    };
+    if (raw === null || typeof raw !== 'object') {
+        return view;
+    }
+
+    const value = raw as { sort?: unknown; directions?: unknown };
+    if (typeof value.sort === 'string' && (SORT_KEYS as readonly string[]).includes(value.sort)) {
+        view.sort = value.sort as SortKey;
+    }
+    if (value.directions !== null && typeof value.directions === 'object') {
+        const directions = value.directions as Record<string, unknown>;
+        for (const key of SORT_KEYS) {
+            const direction = directions[key];
+            if (direction === 'asc' || direction === 'desc') {
+                // Through `directionOf`: an order with one end stores that end,
+                // whatever the file says. A build that offered an arrow for
+                // "recently played" could have written an ascending one, and
+                // it means nothing now.
+                view.directions[key] = directionOf(key, direction);
+            }
+        }
+    }
+    return view;
 }
 
 /** Cached, because this is asked for on every IPC call and reading a file to
@@ -997,6 +1044,38 @@ function registerIpc(): void {
         library().notePlayed(path);
     });
 
+    /**
+     * Play time, in whole emulated seconds.
+     *
+     * Everything about the accounting is in the model (library.notePlaytime);
+     * this only refuses a message that is not the shape it should be. The
+     * renderer sends it every few seconds and once when the cartridge comes
+     * out, which is why there is nothing here to get out of step with.
+     */
+    ipcMain.handle(
+        IpcChannel.NotePlaytime,
+        async (_event, request: { path: string; seconds: number }): Promise<void> => {
+            if (typeof request?.path !== 'string' || typeof request.seconds !== 'number') {
+                return;
+            }
+            library().notePlaytime(request.path, request.seconds);
+        },
+    );
+
+    ipcMain.handle(
+        IpcChannel.SetGameTags,
+        async (_event, request: { path: string; tags: unknown }): Promise<LibraryState> => {
+            const model = library();
+            if (typeof request?.path === 'string' && Array.isArray(request.tags)) {
+                model.setTags(
+                    request.path,
+                    request.tags.filter((tag): tag is string => typeof tag === 'string'),
+                );
+            }
+            return libraryState(model);
+        },
+    );
+
     ipcMain.handle(
         IpcChannel.TogglePinned,
         async (_event, request: { path: string; pinned: boolean }): Promise<LibraryState> => {
@@ -1133,6 +1212,7 @@ function registerIpc(): void {
                 : null,
             input: normaliseInput(config.input),
             cores: normaliseCores(config.cores),
+            libraryView: normaliseLibraryView(config.libraryView),
         };
     });
 
@@ -1158,6 +1238,18 @@ function registerIpc(): void {
      */
     ipcMain.handle(IpcChannel.WriteCoreSelection, async (_event, selection: unknown): Promise<void> => {
         writeConfig({ ...readConfig(), cores: normaliseCores(selection) });
+    });
+
+    /**
+     * How the library list is ordered.
+     *
+     * Written on every press of an order or an arrow, because there is nothing
+     * to submit: the list is already in the new order on screen, and this is
+     * only the note for next time. Validated, so a renderer bug can leave the
+     * player in the default order rather than in an order that does not exist.
+     */
+    ipcMain.handle(IpcChannel.WriteLibraryView, async (_event, view: unknown): Promise<void> => {
+        writeConfig({ ...readConfig(), libraryView: normaliseLibraryView(view) });
     });
 
     /**
@@ -1290,6 +1382,30 @@ function registerIpc(): void {
                 return null;
             }
             return libraryState(model);
+        },
+    );
+
+    /**
+     * Show one screenshot in the file browser.
+     *
+     * Everything that decides *whether* a file may be shown is in the model
+     * (`screenshotPath`): the row is looked up here and the path is built and
+     * checked there, so a renderer that guesses an id, or a database whose rows
+     * were edited, still cannot make the operating system select something
+     * outside the library. What is left here is the one side effect.
+     */
+    ipcMain.handle(
+        IpcChannel.RevealScreenshot,
+        async (_event, id: unknown): Promise<boolean> => {
+            if (typeof id !== 'number') {
+                return false;
+            }
+            const path = library().screenshotPath(id);
+            if (path === null) {
+                return false;
+            }
+            shell.showItemInFolder(path);
+            return true;
         },
     );
 
@@ -1858,6 +1974,12 @@ async function runLayoutTest(window: BrowserWindow): Promise<void> {
  * it produces something measurable. A game list does not: it is a screen, and
  * the only honest way to test one without looking at it is to ask the renderer
  * what it was given and read the answer.
+ *
+ * What it does *not* do is look at the page. It used to -- counting cards,
+ * measuring the toolbar, clicking through the screenshot preview -- and that
+ * was removed on purpose: those checks tested a layout the author had guessed
+ * at, cost more to write than the feature, and could not fail in the one case
+ * that mattered (a check that died reported success). See AGENTS.md §2.5.
  */
 async function runListGames(window: BrowserWindow): Promise<void> {
     const becameReady = await waitFor(
@@ -1879,7 +2001,8 @@ async function runListGames(window: BrowserWindow): Promise<void> {
             database: string;
             games: {
                 name: string; size: number; pinned: boolean;
-                playCount: number; lastPlayedAt: number; cover: string | null;
+                playCount: number; playSeconds: number; tags: string[];
+                lastPlayedAt: number; cover: string | null;
                 screenshots: number;
             }[];
         };
@@ -1894,10 +2017,14 @@ async function runListGames(window: BrowserWindow): Promise<void> {
     for (const game of library.games) {
         const when = game.lastPlayedAt === 0 ? 'never' : new Date(game.lastPlayedAt).toLocaleString();
         const cover = game.cover === null ? '   -  ' : '  cover';
+        const played = game.playSeconds === 0 ? '-' : `${Math.round(game.playSeconds / 60)}m`;
+        const tags = game.tags.length === 0 ? '-' : game.tags.join(',');
         console.log(
             `  ${game.pinned ? '*' : ' '} ${game.name.padEnd(36)} `
             + `${String(Math.round(game.size / 1024)).padStart(5)}K  `
             + `${String(game.playCount).padStart(3)}x  `
+            + `${played.padStart(5)}  `
+            + `${tags.padEnd(18)} `
             + `${String(game.screenshots).padStart(2)} shot${cover}  ${when}`,
         );
     }
@@ -1933,7 +2060,20 @@ async function runListGames(window: BrowserWindow): Promise<void> {
  * states are written when the player asks for them, not on the way out, so
  * there is nothing to flush and nothing to lose.
  */
+/** Whether an exit is already under way.
+ *
+ * `exitNow` destroys the windows on its way out, which fires
+ * `window-all-closed` -- and that handler treats a window going away during a
+ * check as a failure. Without this flag every *passing* check would exit 1,
+ * which is the other way a test lies. */
+let exiting = false;
+
 function exitNow(code: number): void {
+    if (exiting) {
+        return;
+    }
+    exiting = true;
+
     // The native gamepad helper is our own child process, so it has to go
     // first: it is holding a HID connection, and a process that is not
     // reaped is a process that can hold the whole application open. (This is
@@ -2070,5 +2210,19 @@ app.on('window-all-closed', () => {
     // is one window and nothing else, so quitting is the less surprising
     // behaviour even there. See exitNow() for why this is not app.quit().
     bootLog('main', 'window-all-closed');
+
+    // Except during a check. Every check ends in `exitNow` with a verdict, so
+    // a window that goes away while one is running is a check that died --
+    // a renderer crash, an exception in the script it was driving -- and
+    // reporting that as success is the worst thing a test can do. This is not
+    // hypothetical: a syntax error in the testing script itself took the
+    // window down with it and `--list` exited 0 with nothing checked.
+    const checking = options.selftestFrames > 0 || options.keytest
+        || options.audioTestSeconds > 0 || options.layoutTest || options.listGames;
+    if (checking && !exiting) {
+        console.error('the window closed before the check finished: FAILED');
+        exitNow(1);
+        return;
+    }
     exitNow(0);
 });

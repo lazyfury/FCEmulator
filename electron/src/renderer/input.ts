@@ -276,11 +276,32 @@ export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers
             || target.tagName === 'SELECT';
     };
 
+    /**
+     * Whether something else has taken the keyboard for now.
+     *
+     * The screenshot preview is what this exists for: the picture on the right
+     * is covered by a preview, the game is paused, and the arrows are walking
+     * through pictures instead of through a level. It is not enough for the
+     * preview to stop the events itself -- that handler is one line away from
+     * being deleted by accident, and the failure is a button stuck down -- so
+     * the page can *say* who owns the keyboard and the console believes it.
+     *
+     * Deliberately not `aria-modal`: the preview is not modal (the list beside
+     * it is still usable), and roles are for people, not for the emulator. This
+     * attribute is the emulator's, and it means exactly one thing.
+     *
+     * Asked of the document rather than of `event.target`, because the target
+     * is whatever happens to be focused -- click the background and it is
+     * `body` -- and the answer has to be the same either way.
+     */
+    const keyboardTaken = (): boolean =>
+        document.querySelector('[data-keyboard-captured="true"]') !== null;
+
     const bindingFor = (event: KeyboardEvent): ResolvedBinding | undefined =>
         handlers.bindings().get(event.code);
 
     const onKeyDown = (event: KeyboardEvent): void => {
-        if (isTyping(event.target)) {
+        if (isTyping(event.target) || keyboardTaken()) {
             return;
         }
 
@@ -316,7 +337,7 @@ export function attachKeyboard(manager: InputManager, handlers: KeyboardHandlers
     };
 
     const onKeyUp = (event: KeyboardEvent): void => {
-        if (isTyping(event.target)) {
+        if (isTyping(event.target) || keyboardTaken()) {
             return;
         }
 
